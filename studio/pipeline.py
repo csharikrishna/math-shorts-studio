@@ -88,10 +88,24 @@ def run_pipeline(
     out_dir = PROJECT_ROOT / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    from studio.storage.cache import JobStore
+    from studio.timeline import MasterTimeline
+    from studio.qa.engine import verify_audio_loudness
+
+    jobs = JobStore(PROJECT_ROOT / "build" / "studio_jobs.db")
+    job_id = f"{stem}_{format_name}"
+    jobs.upsert_job(job_id, stem, "tts", "running")
+
     print(f"[1/5] Synthesizing beat-synced TTS ({len(scene_cls.BEATS)} beats, engine={tts_engine}, rate={rate})...")
     timeline = build_voice_timeline(
         scene_cls.BEATS, build_dir=build_dir, voice=voice, rate=rate, pitch=pitch, engine=tts_engine
     )
+    mt = MasterTimeline(audio=timeline)
+    tl_issues = mt.validate()
+    if tl_issues:
+        raise RuntimeError(f"Timeline validation failed: {tl_issues}")
+    mt.export_subtitles(build_dir, stem)
+    jobs.upsert_job(job_id, stem, "tts", "done", {"duration_s": timeline.total_duration})
     print(f"      -> Timeline duration: {timeline.total_duration:.2f}s")
 
     print("[2/5] Generating studio SFX library & duration-matched ambient BGM...")
@@ -136,6 +150,10 @@ def run_pipeline(
         look=look,
         lut_path=lut_path,
     )
+    loud_chk = verify_audio_loudness(final_mp4)
+    print(f"      -> QA {loud_chk.name}: {loud_chk.status} ({loud_chk.detail})")
+    jobs.upsert_job(job_id, stem, "master", "done", {"output": str(final_mp4), "loudness": loud_chk.detail})
+    jobs.close()
     print(f"DONE! Master video ready at: {final_mp4}")
     return final_mp4
 
@@ -160,7 +178,9 @@ def main() -> None:
     parser.add_argument("--prompt", type=str, help="Explicit concept for Gemini to script and stage")
     parser.add_argument("--ai", action="store_true", help="Use the Gemini director (implied by --topic/--prompt)")
     parser.add_argument("--plan", type=Path, help="Render an existing ShortPlan JSON (no Gemini call)")
-    parser.add_argument("--model", type=str, default=None, help="Gemini model (default: $GEMINI_MODEL, then gemini-3.5-flash-lite -> 3.1-flash-lite -> 3.5-flash -> 3.8-flash)")
+    parser.add_argument("--provider", type=str, default="gemini", choices=["gemini", "openrouter", "ollama", "llamacpp"], help="AI provider (default: gemini)")
+    parser.add_argument("--allow-paid", action="store_true", help="Disable strict free-only model enforcement")
+    parser.add_argument("--model", type=str, default=None, help="AI model override")
     parser.add_argument("--format", type=str, default="shorts_hd", choices=list(FORMATS))
     parser.add_argument("--theme", type=str, default="midnight_studio", choices=list(THEMES))
     parser.add_argument("--voice", type=str, default="en-US-AndrewNeural")
@@ -183,8 +203,14 @@ def main() -> None:
             parser.error("--ai needs --topic or --prompt")
         from studio.ai.director import create_plan
 
-        print("[0/5] Gemini creative director: concept -> beat plan -> validation...")
-        plan_path = create_plan(topic=args.topic, prompt=args.prompt, model=args.model)
+        print(f"[0/5] {args.provider} creative director: concept -> beat plan -> validation...")
+        plan_path = create_plan(
+            topic=args.topic,
+            prompt=args.prompt,
+            model=args.model,
+            provider_name=args.provider,
+            free_only=not args.allow_paid,
+        )
         print(f"      -> Plan saved: {plan_path}")
         run_plan(plan_path, **common)
     elif args.plan:

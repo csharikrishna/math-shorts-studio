@@ -320,16 +320,19 @@ def build_voice_timeline(
     async def _run_all(engine: str, active_voice: str) -> list[tuple[BeatSpec, Path, float, list[list]]]:
         results: list[tuple[BeatSpec, Path, float, list[list]]] = []
         for beat in beats:
+            from studio.audio.pronounce import normalize_for_speech
+
             clean, _, _ = parse_script(beat.narration)
-            key = hashlib.sha1(f"v3|{engine}|{active_voice}|{rate}|{pitch}|{clean}".encode("utf-8")).hexdigest()[:12]
+            spoken = normalize_for_speech(clean)
+            key = hashlib.sha1(f"v4|{engine}|{active_voice}|{rate}|{pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
             raw_path = segments_dir / f"{beat.id}_{key}.{'raw.wav' if engine == 'kokoro' else 'mp3'}"
             wav_path = segments_dir / f"{beat.id}_{key}.wav"
             words_path = segments_dir / f"{beat.id}_{key}.words.json"
             if not (wav_path.exists() and words_path.exists()):
                 if engine == "kokoro":
-                    raw_words = _synth_kokoro(clean, active_voice, _rate_to_speed(rate), raw_path)
+                    raw_words = _synth_kokoro(spoken, active_voice, _rate_to_speed(rate), raw_path)
                 else:
-                    raw_words = await _synth_edge_tts(clean, voice, rate, raw_path, pitch=pitch)
+                    raw_words = await _synth_edge_tts(spoken, voice, rate, raw_path, pitch=pitch)
                 dur, head_trim = _decode_and_trim_wav(ffmpeg_bin, raw_path, wav_path)
                 # Re-base word times onto the trimmed clip so captions lock to the audible syllables
                 words = [

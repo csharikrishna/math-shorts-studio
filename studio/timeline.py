@@ -63,8 +63,9 @@ class MasterTimeline:
         for idx, b in enumerate(self.audio.beats, 1):
             t0 = _fmt_srt_ts(b.start_time)
             t1 = _fmt_srt_ts(b.start_time + b.speech_duration)
-            srt_lines.extend([str(idx), f"{t0} --> {t1}", b.caption or b.narration, ""])
-            vtt_lines.extend([f"{_fmt_vtt_ts(b.start_time)} --> {_fmt_vtt_ts(b.start_time + b.speech_duration)}", b.caption or b.narration, ""])
+            text = b.narration or b.caption
+            srt_lines.extend([str(idx), f"{t0} --> {t1}", text, ""])
+            vtt_lines.extend([f"{_fmt_vtt_ts(b.start_time)} --> {_fmt_vtt_ts(b.start_time + b.speech_duration)}", text, ""])
             transcript_lines.append(b.narration)
             for w in b.words:
                 all_words.append({"beat_id": b.id, "word": w[0], "start": w[1], "end": w[2], "emphasis": bool(w[3]) if len(w) > 3 else False})

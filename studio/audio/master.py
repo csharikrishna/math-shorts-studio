@@ -75,16 +75,42 @@ def master_video(
     # Filtergraph:
     # 1. Split voice so it drives sidechaincompress on BGM (auto-ducking when narrator speaks).
     # 2. Mix SFX stream (0:a), boosted voice, and ducked BGM.
-    # 3. Apply soft limiter / loudnorm (-14 LUFS social video standard).
-    filter_complex = (
+    # 3. Two-pass EBU R128 loudness normalization (-14.0 LUFS, -1.0 dBTP, 48 kHz).
+    audio_mix = (
         f"[1:a]aresample=48000,aformat=channel_layouts=stereo,volume={voice_gain},asplit=2[voice_mix][voice_sc];"
         f"[2:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_gain}[bgm_pre];"
         f"[bgm_pre]extrastereo=m=1.15[bgm_wide];"
         f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
         f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
-        f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0,"
-        f"alimiter=limit=0.92,loudnorm=I=-14.0:TP=-1.0:LRA=7.0[master_a]"
+        f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.92"
     )
+
+    # Pass 1: measure integrated loudness, true peak, LRA, threshold, target offset
+    import json as _json
+    import re as _re
+    pass1 = subprocess.run(
+        [
+            ffmpeg_bin, "-y",
+            "-i", str(raw_video), "-i", str(voice_wav), "-i", str(bgm_wav),
+            "-filter_complex", f"{audio_mix},loudnorm=I=-14.0:TP=-1.0:LRA=7.0:print_format=json[m_a]",
+            "-map", "[m_a]", "-f", "null", "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    ln_filter = "loudnorm=I=-14.0:TP=-1.0:LRA=7.0"
+    m_json = _re.search(r"\{\s*\"input_i\"\s*:.*?\}", pass1.stderr, _re.DOTALL)
+    if pass1.returncode == 0 and m_json:
+        stats = _json.loads(m_json.group(0))
+        ln_filter = (
+            f"loudnorm=I=-14.0:TP=-1.0:LRA=7.0:"
+            f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+            f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+            f"offset={stats['target_offset']}:linear=true"
+        )
+
+    filter_complex = f"{audio_mix},{ln_filter}[master_a]"
 
     video_chain = cinematic_video_filter(look, lut_path)
     if video_chain:

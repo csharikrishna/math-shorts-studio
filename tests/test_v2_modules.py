@@ -8,7 +8,7 @@ from studio.ai.knowledge import KnowledgeClaim, KnowledgeNode, KnowledgeTree
 from studio.audio.pronounce import normalize_for_speech
 from studio.audio.tts import AudioTimeline, SyncedBeat
 from studio.providers import FreeOnlyPolicyError, OpenRouterProvider, get_provider
-from studio.qa.engine import verify_storyboard_image, verify_symbolic_derivative
+from studio.qa.engine import QualityReport, safe_sympy_from_expr, verify_storyboard_image, verify_symbolic_derivative
 from studio.storage.cache import JobStore
 from studio.timeline import MasterTimeline
 
@@ -79,6 +79,11 @@ class TestV2Modules(unittest.TestCase):
     def test_sympy_and_visual_qa(self):
         chk = verify_symbolic_derivative("sin(3*x)", "3*cos(3*x)")
         self.assertTrue(chk.passed)
+        # Malicious input must be rejected by AST whitelist
+        with self.assertRaises(ValueError):
+            safe_sympy_from_expr("__import__('os').system('echo pwn')")
+        # Empty QualityReport must never silently pass
+        self.assertFalse(QualityReport().passed)
         sb = Path("build/AI_explain_simply_step_by_step_how_adding_smooth_si_shorts_hd/AI_explain_simply_step_by_step_how_adding_smooth_si_raw.storyboard.png")
         if sb.exists():
             vchk = verify_storyboard_image(sb)

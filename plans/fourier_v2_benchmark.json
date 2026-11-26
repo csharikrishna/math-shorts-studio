@@ -1,0 +1,111 @@
+{
+  "schema_version": "2.0",
+  "topic": "Fourier Analysis Benchmark V2",
+  "title": "How Smooth Waves Build Sharp Corners",
+  "x_range": [-3.6, 3.6],
+  "y_range": [-1.6, 1.6],
+  "scenes": [
+    {
+      "scene_id": "s1_contrast",
+      "purpose": "Contrast smooth sine wave with sharp square wave",
+      "narration": "A smooth sine wave curves gently everywhere, while a square wave snaps vertically. Can smooth curves *ever* build sharp corners?",
+      "formula": "\\sin(x) \\overset{?}{\\longrightarrow} \\text{square}(x)",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "primitive": {
+        "kind": "contrast_waves",
+        "expr": "sin(x)",
+        "secondary_expr": "sign(sin(x))"
+      }
+    },
+    {
+      "scene_id": "s2_fundamental",
+      "purpose": "Introduce the fundamental sine wave",
+      "narration": "Start with the fundamental sine wave, scaled by four over pi. It matches the *rhythm* of the square wave, but not its flat top.",
+      "formula": "S_1(x) = \\tfrac{4}{\\pi}\\sin(x)",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "primitive": {
+        "kind": "single_wave",
+        "expr": "4/pi*sin(x)"
+      }
+    },
+    {
+      "scene_id": "s3_third_harmonic",
+      "purpose": "Show the third harmonic as a separate mathematical object",
+      "narration": "Now look at the third harmonic by itself: three times faster, and one-third as tall.",
+      "formula": "H_3(x) = \\tfrac{4}{3\\pi}\\sin(3x)",
+      "color_role": "tertiary",
+      "sfx_cue": "pop_marimba",
+      "primitive": {
+        "kind": "single_wave",
+        "expr": "4/(3*pi)*sin(3*x)"
+      }
+    },
+    {
+      "scene_id": "s4_addition",
+      "purpose": "Demonstrate point-by-point addition of component waves",
+      "narration": "Add them point by point. Where the third harmonic dips, it *flattens* the peak and steepens the sides.",
+      "formula": "S_3(x) = \\tfrac{4}{\\pi}\\left(\\sin x + \\tfrac{\\sin 3x}{3}\\right)",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "primitive": {
+        "kind": "stacked_addition",
+        "expr": "4/pi*sum(k, 1, 3, 2, sin(k*x)/k)",
+        "secondary_expr": "4/pi*sin(x)"
+      }
+    },
+    {
+      "scene_id": "s5_odd_harmonics",
+      "purpose": "Progressively introduce more odd harmonics",
+      "narration": "Keep adding odd harmonics: five x, seven x, nine x. Each finite sum is still completely *smooth*, yet the walls grow steeper.",
+      "formula": "S_7(x) = \\tfrac{4}{\\pi}\\sum_{k=1,3,5,7}\\tfrac{\\sin(kx)}{k}",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "primitive": {
+        "kind": "progressive_sum",
+        "expr": "4/pi*sum(k, 1, 7, 2, sin(k*x)/k)",
+        "secondary_expr": "sign(sin(x))"
+      }
+    },
+    {
+      "scene_id": "s6_approximations",
+      "purpose": "Compare increasingly accurate approximations",
+      "narration": "With fifteen nonzero odd terms—up to harmonic twenty-nine—the flat plateau locks in, hugging the square wave.",
+      "formula": "S_{29}(x) = \\tfrac{4}{\\pi}\\sum_{k=1}^{29}\\tfrac{\\sin(kx)}{k}",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "primitive": {
+        "kind": "progressive_sum",
+        "expr": "4/pi*sum(k, 1, 29, 2, sin(k*x)/k)",
+        "secondary_expr": "sign(sin(x))"
+      }
+    },
+    {
+      "scene_id": "s7_gibbs_zoom",
+      "purpose": "Zoom into the Gibbs overshoot (8.949%)",
+      "narration": "Zoom right into the corner. No matter how many terms we add, a *nine percent* Gibbs overshoot—eight point nine five percent—never disappears.",
+      "formula": "\\text{Gibbs overshoot} \\approx 8.949\\%",
+      "color_role": "danger",
+      "sfx_cue": "chime_reveal",
+      "y_range": [0.75, 1.30],
+      "primitive": {
+        "kind": "zoom_overshoot",
+        "expr": "4/pi*sum(k, 1, 39, 2, sin(k*x)/k)",
+        "secondary_expr": "sign(sin(x))"
+      }
+    },
+    {
+      "scene_id": "s8_spectrum",
+      "purpose": "Connect Fourier analysis to real audio waveforms and frequency spectra",
+      "narration": "That frequency recipe—amplitude shrinking as one over k—is how *every* synthesizer, MP3, and equalizer shapes real sound.",
+      "formula": "A_k = \\tfrac{4}{\\pi k} \\quad (k\\text{ odd})",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "primitive": {
+        "kind": "spectrum_bars",
+        "harmonics": [1, 3, 5, 7, 9, 11, 13]
+      }
+    }
+  ]
+}

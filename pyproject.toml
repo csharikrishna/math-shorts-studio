@@ -9,6 +9,8 @@ dependencies = [
     "numpy>=2.0.0",
     "google-genai>=1.0",
     "pydantic>=2.7",
+    "sympy>=1.13",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]

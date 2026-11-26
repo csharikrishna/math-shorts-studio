@@ -132,22 +132,19 @@ def slugify(text: str, limit: int = 48) -> str:
 
 
 class GeminiDirector:
-    """Thin, retrying wrapper around google-genai structured generation."""
+    """Provider-backed creative director using LLMProvider structured generation."""
 
-    def __init__(self, model: str | None = None, verbose: bool = True) -> None:
-        from google import genai  # imported lazily so offline renders never need the SDK
-        from google.genai import types
+    def __init__(
+        self,
+        model: str | None = None,
+        verbose: bool = True,
+        provider_name: str = "gemini",
+        free_only: bool = True,
+        provider: object | None = None,
+    ) -> None:
+        from studio.providers import get_provider
 
-        # Hard per-request timeout: an overloaded endpoint can otherwise hang forever instead of
-        # failing, which would bypass the retry/fallback chain entirely.
-        self.client = genai.Client(
-            api_key=gemini_api_key(),
-            http_options=types.HttpOptions(timeout=int(REQUEST_TIMEOUT_S * 1000)),
-        )
-        env_model = os.environ.get("GEMINI_MODEL")
-        chain = [model] if model else ([env_model] if env_model else [])
-        self.models = [m for m in [*chain, *DEFAULT_MODELS] if m]
-        self.models = list(dict.fromkeys(self.models))
+        self.provider = provider or get_provider(provider_name, free_only=free_only, model=model)
         self.verbose = verbose
 
     def _log(self, msg: str) -> None:
@@ -155,43 +152,15 @@ class GeminiDirector:
             print(f"      [director] {msg}", flush=True)
 
     def _generate(self, prompt: str, schema: type[BaseModel], temperature: float) -> BaseModel:
-        from google.genai import types
+        from studio.providers import ProviderError
 
-        last_error: Exception | None = None
-        for model in self.models:
-            for attempt in range(RETRIES_PER_MODEL):
-                started = time.monotonic()
-                self._log(f"{model}: requesting {schema.__name__} (attempt {attempt + 1}/{RETRIES_PER_MODEL})")
-                try:
-                    resp = self.client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=STYLE_GUIDE,
-                            response_mime_type="application/json",
-                            response_schema=schema,
-                            temperature=temperature,
-                        ),
-                    )
-                    self._log(f"{model}: answered in {time.monotonic() - started:.1f}s")
-                    parsed = getattr(resp, "parsed", None)
-                    if isinstance(parsed, schema):
-                        return parsed
-                    return schema.model_validate_json(resp.text or "")
-                except Exception as exc:  # noqa: BLE001 - classified below
-                    last_error = exc
-                    code = getattr(exc, "code", None)
-                    timed_out = "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
-                    transient = code in TRANSIENT_CODES or timed_out
-                    if transient and attempt + 1 < RETRIES_PER_MODEL:
-                        delay = BACKOFF_BASE_S * 2**attempt
-                        reason = "timed out" if timed_out else f"{code} (busy)"
-                        self._log(f"{model}: {reason}, retrying in {delay:.0f}s")
-                        time.sleep(delay)
-                        continue
-                    self._log(f"{model} failed ({type(exc).__name__}: {str(exc)[:120]}); trying next model")
-                    break
-        raise DirectorError(f"All Gemini models failed: {last_error}")
+        self._log(f"{self.provider.name}: requesting {schema.__name__}")
+        try:
+            parsed, resp = self.provider.generate_structured(prompt, schema, system=STYLE_GUIDE)
+            self._log(f"{resp.provider}/{resp.model}: answered in {resp.latency_s:.1f}s")
+            return parsed
+        except ProviderError as exc:
+            raise DirectorError(f"AI provider failed: {exc}") from exc
 
     # -- stage 1 ----------------------------------------------------------------
     def select_concept(self, field: str, count: int = 5) -> Concept:
@@ -265,11 +234,13 @@ def create_plan(
     prompt: str | None = None,
     model: str | None = None,
     out_dir: Path = PLANS_DIR,
+    provider_name: str = "gemini",
+    free_only: bool = True,
 ) -> Path:
     """Topic/field or explicit prompt -> validated plan JSON on disk (re-renderable with --plan)."""
     if not topic and not prompt:
         raise ValueError("Give a topic or a prompt.")
-    director = GeminiDirector(model=model)
+    director = GeminiDirector(model=model, provider_name=provider_name, free_only=free_only)
     looks_like_field = False
     if prompt:
         brief = f"Explicit concept from the user: {prompt}"
