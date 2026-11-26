@@ -90,7 +90,7 @@ def run_pipeline(
 
     from studio.storage.cache import JobStore
     from studio.timeline import MasterTimeline
-    from studio.qa.engine import verify_audio_loudness
+    from studio.qa.engine import verify_audio_loudness, verify_media_streams
 
     jobs = JobStore(PROJECT_ROOT / "build" / "studio_jobs.db")
     job_id = f"{stem}_{format_name}"
@@ -151,11 +151,13 @@ def run_pipeline(
         lut_path=lut_path,
     )
     loud_chk = verify_audio_loudness(final_mp4)
+    stream_chk = verify_media_streams(final_mp4)
     print(f"      -> QA {loud_chk.name}: {loud_chk.status} ({loud_chk.detail})")
-    if not loud_chk.passed:
-        jobs.upsert_job(job_id, stem, "qa", "failed", {"loudness": loud_chk.detail})
+    print(f"      -> QA {stream_chk.name}: {stream_chk.status} ({stream_chk.detail})")
+    if not loud_chk.passed or not stream_chk.passed:
+        jobs.upsert_job(job_id, stem, "qa", "failed", {"loudness": loud_chk.detail, "streams": stream_chk.detail})
         jobs.close()
-        raise RuntimeError(f"Audio QA failed: {loud_chk.detail}")
+        raise RuntimeError(f"Audio/Media QA failed: {loud_chk.detail}; {stream_chk.detail}")
     jobs.upsert_job(job_id, stem, "master", "done", {"output": str(final_mp4), "loudness": loud_chk.detail})
     jobs.close()
     print(f"DONE! Master video ready at: {final_mp4}")

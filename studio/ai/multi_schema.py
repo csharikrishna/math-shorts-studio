@@ -1,4 +1,4 @@
-"""Versioned multi-scene VideoPlan schema (V2) for composable educational filmmaking."""
+"""Versioned multi-scene VideoPlan schema (V2/V2.1) for composable educational filmmaking."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ PrimitiveKind = Literal[
     "progressive_sum",
     "zoom_overshoot",
     "spectrum_bars",
+    "bar_chart",
 ]
 
 
@@ -22,6 +23,12 @@ class ScenePrimitive(BaseModel):
     expr: Optional[str] = None
     secondary_expr: Optional[str] = None
     harmonics: list[int] = Field(default_factory=list)
+    values: list[float] = Field(default_factory=list)
+    bar_labels: list[str] = Field(default_factory=list)
+    log_scale: bool = False
+    reference_y: Optional[float] = None
+    reference_label: str = ""
+    highlight_x: Optional[float] = None
     label: str = ""
 
 

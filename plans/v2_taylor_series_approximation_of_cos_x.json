@@ -1,134 +1,116 @@
 {
-  "schema_version": "2.0",
+  "schema_version": "2.1",
   "topic": "Taylor series approximation of cos(x)",
-  "title": "Approximating Cosine with Polynomials",
-  "x_range": [
-    -6.28,
-    6.28
-  ],
-  "y_range": [
-    -2.0,
-    2.0
-  ],
+  "title": "Bending Polynomials to Match Cosine",
+  "x_range": [-3.4, 3.4],
+  "y_range": [-1.5, 1.5],
   "scenes": [
     {
-      "scene_id": "cosine_hook",
-      "purpose": "Introduce the wave of cosine",
-      "narration": "How do we compute complex curves using simple polynomials? Let us look at the *cosine* wave.",
-      "formula": "f(x) = \\cos(x)",
+      "scene_id": "s1_hook",
+      "purpose": "Pose the polynomial approximation question",
+      "narration": "Cosine waves forever, while polynomials eventually shoot to infinity. Can a simple polynomial ever *recreate* this wave?",
+      "formula": "\\cos(x) \\overset{?}{\\approx} P_n(x)",
       "color_role": "primary",
       "sfx_cue": "whoosh_soft",
       "primitive": {
-        "kind": "single_wave",
-        "expr": "cos(x)",
-        "secondary_expr": null,
-        "harmonics": [],
-        "label": "Cosine Wave"
-      },
-      "y_range": null
+        "kind": "contrast_waves",
+        "expr": "cos(x)"
+      }
     },
     {
-      "scene_id": "constant_intuition",
-      "purpose": "Approximate at x=0 with a flat line",
-      "narration": "At the origin, the best flat approximation is the constant *one*.",
+      "scene_id": "s2_anchor",
+      "purpose": "Highlight x = 0 where cos(0) = 1",
+      "narration": "Start at x equals zero, where cosine equals one. Our simplest approximation is the constant *one*.",
       "formula": "P_0(x) = 1",
       "color_role": "secondary",
       "sfx_cue": "tick_soft",
       "primitive": {
-        "kind": "contrast_waves",
-        "expr": "cos(x)",
-        "secondary_expr": "1 + 0*x",
-        "harmonics": [],
-        "label": "Degree Zero"
-      },
-      "y_range": null
+        "kind": "single_wave",
+        "expr": "1 + 0*x",
+        "secondary_expr": "cos(x)",
+        "highlight_x": 0.0
+      }
     },
     {
-      "scene_id": "quadratic_construction",
-      "purpose": "Add the first curvature term",
-      "narration": "To match the curve's downward bend, we add a negative *quadratic* term.",
-      "formula": "P_2(x) = 1 - \\frac{x^2}{2}",
-      "color_role": "highlight",
+      "scene_id": "s3_why_flat_fails",
+      "purpose": "Explain why constant 1 fails to bend",
+      "narration": "A flat line matches the height at zero, but it cannot *bend* downward as cosine curves away.",
+      "formula": "P_0''(0) = 0 \\neq \\cos''(0)",
+      "color_role": "danger",
       "sfx_cue": "pop_marimba",
       "primitive": {
         "kind": "contrast_waves",
-        "expr": "cos(x)",
-        "secondary_expr": "1 - x**2 / 2",
-        "harmonics": [],
-        "label": "Degree Two"
-      },
-      "y_range": null
+        "expr": "1 + 0*x",
+        "secondary_expr": "cos(x)",
+        "highlight_x": 0.0
+      }
     },
     {
-      "scene_id": "quartic_expansion",
-      "purpose": "Expand to fourth degree for wider fit",
-      "narration": "Adding a quartic term makes our polynomial hug the cosine wave *longer*.",
-      "formula": "P_4(x) = 1 - \\frac{x^2}{2} + \\frac{x^4}{24}",
-      "color_role": "success",
-      "sfx_cue": "chime_reveal",
+      "scene_id": "s4_quadratic",
+      "purpose": "Add the quadratic term to match curvature",
+      "narration": "Subtract x squared over two so the *curvature* matches at zero. Suddenly, the parabola hugs the peak.",
+      "formula": "P_2(x) = 1 - \\tfrac{x^2}{2}",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
       "primitive": {
-        "kind": "contrast_waves",
-        "expr": "cos(x)",
-        "secondary_expr": "1 - x**2 / 2 + x**4 / 24",
-        "harmonics": [],
-        "label": "Degree Four"
-      },
-      "y_range": null
+        "kind": "progressive_sum",
+        "expr": "1 - x**2/2",
+        "secondary_expr": "cos(x)",
+        "highlight_x": 0.0
+      }
     },
     {
-      "scene_id": "progressive_accumulation",
-      "purpose": "Show the sum building up term by term",
-      "narration": "Each higher term is a refined *correction* yielding greater precision.",
-      "formula": "\\sum_{n=0}^{\\infty} \\frac{(-1)^n x^{2n}}{(2n)!}",
+      "scene_id": "s5_quartic",
+      "purpose": "Add the quartic term for a wider fit",
+      "narration": "Add x to the fourth over twenty-four. That fourth-degree correction bends the tails back up along *cosine*.",
+      "formula": "P_4(x) = 1 - \\tfrac{x^2}{2} + \\tfrac{x^4}{24}",
       "color_role": "tertiary",
       "sfx_cue": "tick_soft",
       "primitive": {
         "kind": "progressive_sum",
-        "expr": "1 - x**2 / 2 + x**4 / 24 - x**6 / 720",
-        "secondary_expr": null,
-        "harmonics": [],
-        "label": "Taylor Series Sum"
-      },
-      "y_range": null
+        "expr": "1 - x**2/2 + x**4/24",
+        "secondary_expr": "cos(x)"
+      }
     },
     {
-      "scene_id": "spectrum_discovery",
-      "purpose": "Examine the factorial growth of coefficients",
-      "narration": "The coefficients shrink rapidly thanks to *factorials* in the denominator.",
-      "formula": "a_n = \\frac{(-1)^n}{(2n)!}",
-      "color_role": "highlight",
-      "sfx_cue": "chord_epiphany",
-      "primitive": {
-        "kind": "spectrum_bars",
-        "expr": null,
-        "secondary_expr": null,
-        "harmonics": [
-          1,
-          2,
-          6,
-          24,
-          120,
-          720
-        ],
-        "label": "Coefficient Magnitudes"
-      },
-      "y_range": null
-    },
-    {
-      "scene_id": "real_world_payoff",
-      "purpose": "Demonstrate the range of validity",
-      "narration": "Computers use these exact polynomials to evaluate *trigonometry* instantly.",
-      "formula": "\\cos(x) \\approx P_{10}(x)",
+      "scene_id": "s6_degree_eight",
+      "purpose": "Degree-8 polynomial hugs an entire period",
+      "narration": "Continue to degree eight, and the polynomial locks onto cosine across nearly a *full* oscillation.",
+      "formula": "P_8(x) = \\sum_{k=0}^{4} \\tfrac{(-1)^k x^{2k}}{(2k)!}",
       "color_role": "success",
       "sfx_cue": "chime_reveal",
       "primitive": {
-        "kind": "zoom_overshoot",
-        "expr": "cos(x)",
-        "secondary_expr": "1 - x**2/2 + x**4/24 - x**6/720 + x**8/40320",
-        "harmonics": [],
-        "label": "Global Approximation"
-      },
-      "y_range": null
+        "kind": "progressive_sum",
+        "expr": "sum(k, 0, 4, 1, (-1)**k * x**(2*k) / factorial(2*k))",
+        "secondary_expr": "cos(x)"
+      }
+    },
+    {
+      "scene_id": "s7_factorials",
+      "purpose": "Show factorial coefficient magnitudes on a log scale",
+      "narration": "Each term shrinks by one over two-k *factorial*—from one, to one-half, to one over forty thousand—taming the tails.",
+      "formula": "|c_{2k}| = \\tfrac{1}{(2k)!}",
+      "color_role": "primary",
+      "sfx_cue": "chime_reveal",
+      "primitive": {
+        "kind": "bar_chart",
+        "values": [1.0, 0.5, 0.04166667, 0.00138889, 0.00002480],
+        "bar_labels": ["1", "1/2!", "1/4!", "1/6!", "1/8!"],
+        "log_scale": true
+      }
+    },
+    {
+      "scene_id": "s8_payoff",
+      "purpose": "Practical value of local polynomial approximations",
+      "narration": "Paired with range reduction, compact polynomial approximations let calculators and graphics chips compute *fast*, accurate trigonometry.",
+      "formula": "\\cos(x) = \\sum_{k=0}^{\\infty} \\tfrac{(-1)^k x^{2k}}{(2k)!}",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "primitive": {
+        "kind": "progressive_sum",
+        "expr": "sum(k, 0, 4, 1, (-1)**k * x**(2*k) / factorial(2*k))",
+        "secondary_expr": "cos(x)"
+      }
     }
   ]
 }

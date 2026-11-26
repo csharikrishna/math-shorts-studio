@@ -293,12 +293,12 @@ class CaptionCard:
         TikTok / YouTube Shorts high-energy style). Great for fast-paced mathematics.
     """
 
-    MAX_WORDS = 4
+    MAX_WORDS = 6
     # Outline stroke width (scene units × 100) — keeps bare text crisp over grids and curves
     OUTLINE_WIDTH = 6.0
     # Caption text height as a fraction of caption zone height — governs overall text size.
     # Previously this was 2.3 × min_text_h which was huge; 1.5 × feels right for Shorts.
-    LINE_H_SCALE = 1.55
+    LINE_H_SCALE = 1.45
 
     def __init__(self, layout: SafeLayout, theme: Theme, initial_text: str, style: str | None = None) -> None:
         self.layout = layout

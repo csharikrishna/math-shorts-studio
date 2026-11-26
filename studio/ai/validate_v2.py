@@ -1,4 +1,4 @@
-"""Strict static validation for VideoPlan V2."""
+"""Strict static validation for VideoPlan V2/V2.1."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from studio.ai.multi_schema import VideoPlan
 
 
 def validate_video_plan(plan: VideoPlan) -> list[str]:
-    """Validate VideoPlan V2 before any TTS or GPU rendering."""
+    """Validate VideoPlan V2/V2.1 before any TTS or GPU rendering."""
     issues: list[str] = []
-    if plan.schema_version != "2.0":
-        issues.append(f"Unsupported schema_version {plan.schema_version!r}; expected '2.0'.")
+    if plan.schema_version not in ("2.0", "2.1"):
+        issues.append(f"Unsupported schema_version {plan.schema_version!r}; expected '2.0' or '2.1'.")
     if not plan.scenes:
         issues.append("VideoPlan must contain at least one scene.")
         return issues
@@ -45,6 +45,11 @@ def validate_video_plan(plan: VideoPlan) -> list[str]:
         if prim.kind == "spectrum_bars":
             if not prim.harmonics or any(k <= 0 for k in prim.harmonics):
                 issues.append(f"{where}: spectrum_bars requires positive harmonics.")
+        elif prim.kind == "bar_chart":
+            if not prim.values or any(not np.isfinite(v) for v in prim.values):
+                issues.append(f"{where}: bar_chart requires finite non-empty values.")
+            elif prim.log_scale and any(v <= 0 for v in prim.values):
+                issues.append(f"{where}: bar_chart with log_scale=True requires strictly positive values.")
         elif not prim.expr:
             issues.append(f"{where}: primitive {prim.kind!r} requires expr.")
 

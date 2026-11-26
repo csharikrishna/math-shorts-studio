@@ -1,4 +1,4 @@
-"""Multi-scene composable ManimGX renderer for VideoPlan V2."""
+"""Multi-scene composable ManimGX renderer for VideoPlan V2/V2.1."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import numpy as np
 from studio.ai.expr import compile_expr
 from studio.ai.multi_schema import VideoPlan
 from studio.audio.tts import BeatSpec
+from studio.config import CAPTION_FONT
 from studio.layout import CaptionCard, fit_mobject, glow
 from studio.scene import StoryScene
 
@@ -27,8 +28,49 @@ ROLE_TO_THEME = {
 }
 
 
+def plot_clipped_segments(
+    ax: m.Axes,
+    fn,
+    x_range: list[float],
+    y_range: list[float],
+    color: str,
+    stroke_width: float = 3.5,
+    n_samples: int = 360,
+) -> m.VGroup:
+    """Plot y=f(x) splitting at viewport bounds and jump discontinuities (never np.clip flat lines)."""
+    xs = np.linspace(x_range[0], x_range[1], n_samples)
+    ys = np.asarray(fn(x=xs), dtype=float)
+    y_lo, y_hi = y_range[0], y_range[1]
+    jump_thresh = 0.65 * (y_hi - y_lo)
+
+    segments: list[list[np.ndarray]] = []
+    cur: list[np.ndarray] = []
+    prev_y: float | None = None
+    for x_val, y_val in zip(xs, ys):
+        in_bounds = bool(np.isfinite(y_val) and (y_lo <= y_val <= y_hi))
+        is_jump = prev_y is not None and abs(float(y_val) - prev_y) > jump_thresh
+        if in_bounds and not is_jump:
+            cur.append(ax.c2p(float(x_val), float(y_val)))
+            prev_y = float(y_val)
+        else:
+            if len(cur) >= 2:
+                segments.append(cur)
+            cur = []
+            prev_y = float(y_val) if in_bounds else None
+    if len(cur) >= 2:
+        segments.append(cur)
+
+    grp = m.VGroup()
+    for pts in segments:
+        curve = m.VMobject()
+        curve.set_points_smoothly(pts)
+        curve.set_stroke(color=color, width=stroke_width)
+        grp.add(curve)
+    return grp
+
+
 class MultiSceneVideo(StoryScene):
-    """Composable multi-scene educational video renderer driven by VideoPlan V2."""
+    """Composable multi-scene educational video renderer driven by VideoPlan V2/V2.1."""
 
     BEATS = [
         BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, pause_after=0.30)
@@ -44,7 +86,7 @@ class MultiSceneVideo(StoryScene):
         stage_group: m.VGroup | None = None
         formula_mob: m.MathTex | None = None
 
-        for idx, sc in enumerate(V2_PLAN.scenes):
+        for sc in V2_PLAN.scenes:
             color = getattr(T, ROLE_TO_THEME[sc.color_role])
             new_stage, anim_mode, anim_targets = self._build_primitive(sc, color)
             anims: list[m.Animation] = []
@@ -52,6 +94,8 @@ class MultiSceneVideo(StoryScene):
                 anims.append(m.FadeOut(stage_group))
             if anim_mode == "grow_bars" and anim_targets:
                 anims.append(m.LaggedStart(*[m.GrowFromEdge(b, m.DOWN) for b in anim_targets], lag_ratio=0.12))
+                for extra in new_stage[1:]:
+                    anims.append(m.FadeIn(extra))
             elif anim_mode == "create_curves" and anim_targets:
                 anims.append(m.FadeIn(new_stage[0]))
                 for t_mob in anim_targets:
@@ -88,54 +132,76 @@ class MultiSceneVideo(StoryScene):
             tips=True,
         ).move_to(L.stage_center)
 
+    def _build_bars(self, values: list[float], labels: list[str], color: str, log_scale: bool) -> tuple[m.VGroup, str, list[m.Mobject]]:
+        L, T = self.layout, self.theme
+        if log_scale:
+            # Honest logarithmic magnitude mapping above min_val
+            logs = [float(np.log10(max(v, 1e-12))) for v in values]
+            lo = min(logs) - 0.5
+            hi = max(logs)
+            span = max(hi - lo, 1e-6)
+            norm = [(v - lo) / span for v in logs]
+        else:
+            hi = max(values) if values else 1.0
+            norm = [max(0.0, v) / max(hi, 1e-6) for v in values]
+
+        bars = m.VGroup()
+        lbl_grp = m.VGroup()
+        n = len(norm)
+        w = L.stage_w * 0.78 / max(1, n)
+        base_y = L.stage_center[1] - L.stage_h * 0.22
+        max_h = L.stage_h * 0.48
+        for i, frac in enumerate(norm):
+            h = max(0.03, frac * max_h)
+            bar = m.Rectangle(width=w * 0.62, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
+            x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
+            bar.move_to(np.array([x_pos, base_y + h * 0.5, 0.0]))
+            bars.add(bar)
+            if i < len(labels) and labels[i]:
+                lbl = m.Text(labels[i], font_size=24, font=CAPTION_FONT, color=T.text_muted)
+                fit_mobject(lbl, max_width=w * 1.18, min_height=L.min_text_h * 1.05)
+                lbl.next_to(bar, m.DOWN, buff=0.14)
+                lbl_grp.add(lbl)
+        return m.VGroup(bars, lbl_grp), "grow_bars", list(bars)
+
     def _build_primitive(self, sc, color: str) -> tuple[m.VGroup, str, list[m.Mobject]]:
         T = self.theme
         prim = sc.primitive
-        ax = self._axes(sc.y_range)
+
+        if prim.kind == "bar_chart" and prim.values:
+            return self._build_bars(prim.values, prim.bar_labels, color, prim.log_scale)
+        if prim.kind == "spectrum_bars" and prim.harmonics:
+            vals = [1.0 / k for k in prim.harmonics]
+            lbls = prim.bar_labels or [str(k) for k in prim.harmonics]
+            return self._build_bars(vals, lbls, color, False)
+
+        yr = sc.y_range or V2_PLAN.y_range
+        ax = self._axes(yr)
         group = m.VGroup(ax)
         curves: list[m.Mobject] = []
 
-        if prim.kind == "spectrum_bars" and prim.harmonics:
-            bars = m.VGroup()
-            n = len(prim.harmonics)
-            w = self.layout.stage_w * 0.70 / max(1, n)
-            for i, k in enumerate(prim.harmonics):
-                h = (1.0 / k) * self.layout.stage_h * 0.45
-                bar = m.Rectangle(width=w * 0.65, height=max(0.08, h), fill_color=color, fill_opacity=0.85, stroke_width=0)
-                x_pos = self.layout.stage_center[0] - self.layout.stage_w * 0.35 + (i + 0.5) * w
-                y_pos = self.layout.stage_center[1] - self.layout.stage_h * 0.22 + h * 0.5
-                bar.move_to(np.array([x_pos, y_pos, 0.0]))
-                bars.add(bar)
-            return m.VGroup(bars), "grow_bars", list(bars)
-
-        yr = sc.y_range or V2_PLAN.y_range
         if prim.expr:
             fn = compile_expr(prim.expr, ("x",))
-            curve = ax.plot(
-                lambda x, f=fn, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
-                x_range=V2_PLAN.x_range,
-                color=color,
-                stroke_width=3.5,
-            )
-            group.add(glow(curve, color=color), curve)
-            curves.append(curve)
+            seg_grp = plot_clipped_segments(ax, fn, V2_PLAN.x_range, yr, color=color, stroke_width=3.5)
+            group.add(glow(seg_grp, color=color), seg_grp)
+            curves.append(seg_grp)
+            if prim.highlight_x is not None:
+                hx = float(prim.highlight_x)
+                hy = float(fn(x=hx))
+                if np.isfinite(hy) and yr[0] <= hy <= yr[1]:
+                    dot = m.Dot(ax.c2p(hx, hy), radius=0.09, color=T.accent_highlight)
+                    group.add(dot)
 
         if prim.secondary_expr:
             fn2 = compile_expr(prim.secondary_expr, ("x",))
-            curve2 = ax.plot(
-                lambda x, f=fn2, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
-                x_range=V2_PLAN.x_range,
-                color=T.accent_primary if color != T.accent_primary else T.accent_secondary,
-                stroke_width=2.5,
-            )
-            group.add(curve2)
-            curves.append(curve2)
+            c2 = T.accent_primary if color != T.accent_primary else T.accent_secondary
+            seg2 = plot_clipped_segments(ax, fn2, V2_PLAN.x_range, yr, color=c2, stroke_width=2.4)
+            group.add(seg2)
+            curves.append(seg2)
 
-        if prim.kind == "zoom_overshoot":
-            gibbs_y = 1.17898
-            if yr[0] <= gibbs_y <= yr[1]:
-                p_left = ax.c2p(V2_PLAN.x_range[0], gibbs_y)
-                p_right = ax.c2p(V2_PLAN.x_range[1], gibbs_y)
-                group.add(m.DashedLine(p_left, p_right, color=T.accent_highlight, stroke_width=2.0))
+        if prim.reference_y is not None and yr[0] <= prim.reference_y <= yr[1]:
+            p_left = ax.c2p(V2_PLAN.x_range[0], prim.reference_y)
+            p_right = ax.c2p(V2_PLAN.x_range[1], prim.reference_y)
+            group.add(m.DashedLine(p_left, p_right, color=T.accent_highlight, stroke_width=2.0))
 
         return group, "create_curves", curves

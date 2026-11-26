@@ -283,10 +283,13 @@ Each scene has:
 - color_role: primary | secondary | tertiary | success | highlight | danger
 - sfx_cue: whoosh_soft | pop_marimba | tick_soft | chime_reveal | chord_epiphany
 - primitive:
-  - kind: contrast_waves | single_wave | stacked_addition | progressive_sum | zoom_overshoot | spectrum_bars
-  - expr: valid NumPy-whitelisted function of x (required for all except spectrum_bars)
+  - kind: contrast_waves | single_wave | stacked_addition | progressive_sum | zoom_overshoot | spectrum_bars | bar_chart
+  - expr: valid NumPy-whitelisted function of x (required for all except spectrum_bars and bar_chart)
   - secondary_expr: optional second function of x for comparison
-  - harmonics: list of positive integers (for spectrum_bars)
+  - harmonics: list of positive integers (for spectrum_bars ONLY)
+  - values: list of finite numbers (for bar_chart ONLY), bar_labels: matching labels, log_scale: bool
+  - reference_y: optional horizontal reference line value, highlight_x: optional x-coordinate dot
+Ensure displayed LaTeX formulas, degrees, and plotted expressions agree mathematically.
 Create 6 to 8 progressive scenes: hook -> intuition -> construction -> discovery -> real-world payoff.
 """
 

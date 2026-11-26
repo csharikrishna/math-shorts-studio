@@ -104,6 +104,34 @@ class TestV2Modules(unittest.TestCase):
         self.assertTrue(any("unique" in i for i in issues))
         self.assertTrue(any("positive harmonics" in i for i in issues))
 
+    def test_taylor_v21_math_consistency_and_bar_chart(self):
+        from studio.ai.multi_schema import VideoPlan
+        from studio.ai.validate_v2 import validate_video_plan
+
+        t_plan = VideoPlan.model_validate_json(
+            Path("plans/v2_taylor_series_approximation_of_cos_x.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(validate_video_plan(t_plan), [])
+        s6 = next(s for s in t_plan.scenes if s.scene_id == "s6_degree_eight")
+        self.assertIn("P_8", s6.formula or "")
+        s7 = next(s for s in t_plan.scenes if s.scene_id == "s7_factorials")
+        self.assertEqual(s7.primitive.kind, "bar_chart")
+        self.assertTrue(s7.primitive.log_scale)
+        self.assertAlmostEqual(s7.primitive.values[2], 1.0 / 24.0, places=6)
+
+        # Negative test: bar_chart with log_scale=True and non-positive value must fail
+        bad_bar = t_plan.model_copy(deep=True)
+        bad_bar.scenes[6].primitive.values = [1.0, 0.0]
+        self.assertTrue(any("strictly positive" in i for i in validate_video_plan(bad_bar)))
+
+    def test_media_streams_qa_on_existing_video(self):
+        from studio.qa.engine import verify_media_streams
+
+        v = Path("output/V2_fourier_v2_benchmark_shorts_hd.mp4")
+        if v.exists():
+            chk = verify_media_streams(v)
+            self.assertEqual(chk.name, "media_streams")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -92,7 +92,9 @@
       "primitive": {
         "kind": "zoom_overshoot",
         "expr": "4/pi*sum(k, 1, 39, 2, sin(k*x)/k)",
-        "secondary_expr": "sign(sin(x))"
+        "secondary_expr": "sign(sin(x))",
+        "reference_y": 1.17898,
+        "reference_label": "+8.949%"
       }
     },
     {

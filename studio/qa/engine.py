@@ -155,6 +155,45 @@ def verify_audio_loudness(video_path: Path, min_lufs: float = -16.5, max_lufs: f
     )
 
 
+def verify_media_streams(video_path: Path, expected_sr: int = 48000, max_av_drift_s: float = 0.75) -> QACheck:
+    """Verify final MP4 audio sample rate (48 kHz) and audio/video stream duration alignment via ffprobe."""
+    import json as _json
+    import shutil as _shutil
+
+    ffprobe = _shutil.which("ffprobe")
+    if not ffprobe:
+        ff_dir = Path(find_ffmpeg()).parent
+        cand = ff_dir / ("ffprobe.exe" if (ff_dir / "ffprobe.exe").exists() else "ffprobe")
+        ffprobe = str(cand) if cand.exists() else ""
+    if not ffprobe:
+        # Fallback: parse ffmpeg -i stderr
+        ff = find_ffmpeg()
+        proc = subprocess.run([ff, "-hide_banner", "-i", str(video_path)], capture_output=True, text=True, timeout=30)
+        sr_m = re.search(r"(\d+)\s*Hz,\s*stereo", proc.stderr)
+        sr = int(sr_m.group(1)) if sr_m else 0
+        ok = sr == expected_sr
+        return QACheck("media_streams", "passed" if ok else "failed", f"Audio sample rate={sr} Hz (expected {expected_sr} Hz)")
+
+    proc = subprocess.run(
+        [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return QACheck("media_streams", "failed", f"ffprobe exited {proc.returncode}")
+    streams = _json.loads(proc.stdout).get("streams", [])
+    v_dur = next((float(s.get("duration", 0)) for s in streams if s.get("codec_type") == "video"), 0.0)
+    a_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if not a_stream:
+        return QACheck("media_streams", "failed", "Missing audio stream")
+    sr = int(a_stream.get("sample_rate", 0))
+    a_dur = float(a_stream.get("duration", 0))
+    drift = abs(v_dur - a_dur)
+    ok = (sr == expected_sr) and (drift <= max_av_drift_s)
+    return QACheck("media_streams", "passed" if ok else "failed", f"sr={sr}Hz, v_dur={v_dur:.2f}s, a_dur={a_dur:.2f}s, drift={drift:.2f}s")
+
+
 def verify_storyboard_image(image_path: Path) -> QACheck:
     """Verify storyboard/frame is non-blank and has healthy contrast."""
     if not image_path.exists():
