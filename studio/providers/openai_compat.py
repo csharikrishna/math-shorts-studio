@@ -56,7 +56,7 @@ class OpenAICompatProvider(LLMProvider):
         except Exception as exc:
             raise ProviderError(f"{self.name} request failed: {exc}") from exc
 
-    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None) -> LLMResponse:
+    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None, temperature: float = 0.6) -> LLMResponse:
         m = model or self.default_model
         self._validate_model(m)
         messages = []
@@ -64,7 +64,7 @@ class OpenAICompatProvider(LLMProvider):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         t0 = time.perf_counter()
-        data = self._post({"model": m, "messages": messages, "temperature": 0.6})
+        data = self._post({"model": m, "messages": messages, "temperature": temperature})
         dt = time.perf_counter() - t0
         text = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
@@ -73,11 +73,11 @@ class OpenAICompatProvider(LLMProvider):
         return LLMResponse(text=text, model=m, provider=self.name, latency_s=dt, prompt_tokens=pt, completion_tokens=ct)
 
     def generate_structured(
-        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None
+        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None, temperature: float = 0.6
     ) -> tuple[T, LLMResponse]:
         schema_json = json.dumps(schema.model_json_schema(), indent=2)
         sys_prompt = f"{system}\n\nReturn ONLY valid JSON matching this schema:\n{schema_json}".strip()
-        resp = self.generate_text(prompt, system=sys_prompt, model=model)
+        resp = self.generate_text(prompt, system=sys_prompt, model=model, temperature=temperature)
         raw = resp.text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()

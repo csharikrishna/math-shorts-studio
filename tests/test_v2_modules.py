@@ -89,6 +89,21 @@ class TestV2Modules(unittest.TestCase):
             vchk = verify_storyboard_image(sb)
             self.assertTrue(vchk.passed)
 
+    def test_video_plan_v2_validation(self):
+        from studio.ai.multi_schema import VideoPlan
+        from studio.ai.validate_v2 import validate_video_plan
+
+        v2 = VideoPlan.model_validate_json(Path("plans/fourier_v2_benchmark.json").read_text(encoding="utf-8"))
+        self.assertEqual(validate_video_plan(v2), [])
+
+        # Negative test: duplicate scene_id and negative harmonic
+        bad = v2.model_copy(deep=True)
+        bad.scenes[1].scene_id = bad.scenes[0].scene_id
+        bad.scenes[-1].primitive.harmonics = [-1, 3]
+        issues = validate_video_plan(bad)
+        self.assertTrue(any("unique" in i for i in issues))
+        self.assertTrue(any("positive harmonics" in i for i in issues))
+
 
 if __name__ == "__main__":
     unittest.main()

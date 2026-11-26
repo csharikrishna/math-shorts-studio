@@ -152,19 +152,45 @@ def run_pipeline(
     )
     loud_chk = verify_audio_loudness(final_mp4)
     print(f"      -> QA {loud_chk.name}: {loud_chk.status} ({loud_chk.detail})")
+    if not loud_chk.passed:
+        jobs.upsert_job(job_id, stem, "qa", "failed", {"loudness": loud_chk.detail})
+        jobs.close()
+        raise RuntimeError(f"Audio QA failed: {loud_chk.detail}")
     jobs.upsert_job(job_id, stem, "master", "done", {"output": str(final_mp4), "loudness": loud_chk.detail})
     jobs.close()
     print(f"DONE! Master video ready at: {final_mp4}")
     return final_mp4
 
 
+V2_SCENE_SCRIPT = PROJECT_ROOT / "scenes" / "multi_scene.py"
+
+
 def run_plan(plan_path: Path, **kwargs) -> Path:
-    """Render a ShortPlan JSON through the template scene (3D class for surface plans)."""
+    """Schema-version-aware plan router: VideoPlan V2 -> MultiSceneVideo, legacy ShortPlan -> AIShort."""
     plan_path = plan_path.resolve()
-    os.environ["STUDIO_PLAN"] = str(plan_path)  # read by scenes/ai_short.py at import (here and in the render)
-    template = json.loads(plan_path.read_text(encoding="utf-8")).get("template")
-    scene = {"surface": "AIShort3D", "polytope4d": "AIShortPolytope"}.get(template, "AIShort")
-    return run_pipeline(AI_SCENE_SCRIPT, scene_name=scene, output_stem=f"AI_{plan_path.stem}", **kwargs)
+    raw = json.loads(plan_path.read_text(encoding="utf-8"))
+    # Clear stale plan env vars before routing
+    os.environ.pop("STUDIO_PLAN", None)
+    os.environ.pop("STUDIO_V2_PLAN", None)
+    try:
+        if raw.get("schema_version") == "2.0" or "scenes" in raw:
+            from studio.ai.multi_schema import VideoPlan
+            from studio.ai.validate_v2 import validate_video_plan
+
+            plan = VideoPlan.model_validate(raw)
+            issues = validate_video_plan(plan)
+            if issues:
+                raise ValueError("Invalid VideoPlan V2:\n- " + "\n- ".join(issues))
+            os.environ["STUDIO_V2_PLAN"] = str(plan_path)
+            return run_pipeline(V2_SCENE_SCRIPT, scene_name="MultiSceneVideo", output_stem=f"V2_{plan_path.stem}", **kwargs)
+
+        os.environ["STUDIO_PLAN"] = str(plan_path)
+        template = raw.get("template")
+        scene = {"surface": "AIShort3D", "polytope4d": "AIShortPolytope"}.get(template, "AIShort")
+        return run_pipeline(AI_SCENE_SCRIPT, scene_name=scene, output_stem=f"AI_{plan_path.stem}", **kwargs)
+    finally:
+        os.environ.pop("STUDIO_PLAN", None)
+        os.environ.pop("STUDIO_V2_PLAN", None)
 
 
 def main() -> None:

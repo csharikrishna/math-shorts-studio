@@ -68,27 +68,33 @@ class GeminiProvider(LLMProvider):
                     break
         raise ProviderError(f"Gemini failed across {chain}: {last_err}")
 
-    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None) -> LLMResponse:
+    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None, temperature: float = 0.6) -> LLMResponse:
         cfg = types.GenerateContentConfig(
             system_instruction=system or None,
-            temperature=0.6,
+            temperature=temperature,
         )
         resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
         text = getattr(resp, "text", "") or ""
-        self.usage.add()
-        return LLMResponse(text=text, model=used_model, provider=self.name, latency_s=dt)
+        um = getattr(resp, "usage_metadata", None)
+        pt = int(getattr(um, "prompt_token_count", 0) or 0)
+        ct = int(getattr(um, "candidates_token_count", 0) or 0)
+        self.usage.add(pt, ct)
+        return LLMResponse(text=text, model=used_model, provider=self.name, latency_s=dt, prompt_tokens=pt, completion_tokens=ct)
 
     def generate_structured(
-        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None
+        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None, temperature: float = 0.6
     ) -> tuple[T, LLMResponse]:
         cfg = types.GenerateContentConfig(
             system_instruction=system or None,
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.6,
+            temperature=temperature,
         )
         resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
         raw = getattr(resp, "text", "") or ""
         parsed = schema.model_validate_json(raw)
-        self.usage.add()
-        return parsed, LLMResponse(text=raw, model=used_model, provider=self.name, latency_s=dt)
+        um = getattr(resp, "usage_metadata", None)
+        pt = int(getattr(um, "prompt_token_count", 0) or 0)
+        ct = int(getattr(um, "candidates_token_count", 0) or 0)
+        self.usage.add(pt, ct)
+        return parsed, LLMResponse(text=raw, model=used_model, provider=self.name, latency_s=dt, prompt_tokens=pt, completion_tokens=ct)

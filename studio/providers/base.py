@@ -54,11 +54,11 @@ class LLMProvider(ABC):
         self.usage = TokenUsage()
 
     @abstractmethod
-    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None) -> LLMResponse:
+    def generate_text(self, prompt: str, *, system: str = "", model: str | None = None, temperature: float = 0.6) -> LLMResponse:
         """Generate plain text."""
 
     @abstractmethod
     def generate_structured(
-        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None
+        self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None, temperature: float = 0.6
     ) -> tuple[T, LLMResponse]:
         """Generate and validate a Pydantic model."""

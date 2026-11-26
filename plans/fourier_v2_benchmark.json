@@ -58,7 +58,7 @@
     {
       "scene_id": "s5_odd_harmonics",
       "purpose": "Progressively introduce more odd harmonics",
-      "narration": "Keep adding odd harmonics: five x, seven x, nine x. Each finite sum is still completely *smooth*, yet the walls grow steeper.",
+      "narration": "Keep adding odd harmonics: five x and seven x. Each finite sum is still completely *smooth*, yet the walls grow steeper.",
       "formula": "S_7(x) = \\tfrac{4}{\\pi}\\sum_{k=1,3,5,7}\\tfrac{\\sin(kx)}{k}",
       "color_role": "primary",
       "sfx_cue": "tick_soft",
@@ -72,7 +72,7 @@
       "scene_id": "s6_approximations",
       "purpose": "Compare increasingly accurate approximations",
       "narration": "With fifteen nonzero odd terms—up to harmonic twenty-nine—the flat plateau locks in, hugging the square wave.",
-      "formula": "S_{29}(x) = \\tfrac{4}{\\pi}\\sum_{k=1}^{29}\\tfrac{\\sin(kx)}{k}",
+      "formula": "S_{29}(x) = \\tfrac{4}{\\pi}\\sum_{k=1,\\,k\\text{ odd}}^{29}\\tfrac{\\sin(kx)}{k}",
       "color_role": "success",
       "sfx_cue": "chime_reveal",
       "primitive": {
@@ -98,7 +98,7 @@
     {
       "scene_id": "s8_spectrum",
       "purpose": "Connect Fourier analysis to real audio waveforms and frequency spectra",
-      "narration": "That frequency recipe—amplitude shrinking as one over k—is how *every* synthesizer, MP3, and equalizer shapes real sound.",
+      "narration": "That frequency recipe—breaking a wave into simple harmonics—is how synthesizers, equalizers, and audio tools shape *real* sound.",
       "formula": "A_k = \\tfrac{4}{\\pi k} \\quad (k\\text{ odd})",
       "color_role": "highlight",
       "sfx_cue": "chord_epiphany",
