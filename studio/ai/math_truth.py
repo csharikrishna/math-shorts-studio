@@ -86,9 +86,11 @@ def derive_latex(expr_str: str, var: str = "x") -> str:
 
 
 def extract_taylor_coefficients(fn_str: str, max_degree: int, x0: float = 0.0, var: str = "x") -> list[float]:
-    """Compute exact Taylor coefficients c_k at x0 via SymPy series."""
+    """Compute exact Taylor coefficients c_k of (x - x0)^k at x0 via SymPy series."""
     sym = sp.Symbol(var, real=True)
+    u = sp.Symbol("_u_shift", real=True)
     expr = ast_to_sympy(fn_str, var)
     ser = sp.series(expr, sym, x0, max_degree + 1).removeO()
-    poly = sp.Poly(ser, sym)
-    return [float(poly.coeff_monomial(sym**k)) for k in range(max_degree + 1)]
+    shifted = sp.expand(ser.subs(sym, u + sp.nsimplify(x0)))
+    poly = sp.Poly(shifted, u)
+    return [float(poly.coeff_monomial(u**k)) for k in range(max_degree + 1)]

@@ -32,6 +32,7 @@ EventOp = Literal[
     "rotate",
     "remove",
     "focus",
+    "animate_param",
 ]
 
 
@@ -55,6 +56,9 @@ class SceneObject(BaseModel):
     vertices: list[list[float]] = Field(default_factory=list)
     radius: Optional[float] = None
     axes_id: Optional[str] = None
+    equal_aspect: bool = False
+    param_name: Optional[str] = None
+    param_init: float = 0.0
     label: str = ""
 
 
@@ -66,6 +70,7 @@ class AnimationEvent(BaseModel):
     shift: Optional[list[float]] = None
     scale_factor: Optional[float] = None
     angle_deg: Optional[float] = None
+    param_range: Optional[list[float]] = None
 
 
 class SceneV3(BaseModel):

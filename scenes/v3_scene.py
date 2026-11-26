@@ -1,4 +1,4 @@
-"""Composable Object-and-Event ManimGX renderer for VideoPlan V3."""
+"""Composable Object-and-Event ManimGX renderer for VideoPlan V3/V3.1."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from studio.ai.expr import compile_expr
 from studio.ai.v3_schema import AnimationEvent, SceneObject, VideoPlanV3
 from studio.audio.tts import BeatSpec
 from studio.config import CAPTION_FONT
-from studio.layout import CaptionCard, fit_mobject, glow
+from studio.layout import CaptionCard, fit_mobject
 from studio.scene import StoryScene
 
 DEFAULT_V3_PLAN = Path(__file__).resolve().parent.parent / "plans" / "v3_demo.json"
@@ -34,7 +34,7 @@ ROLE_TO_THEME = {
 
 
 class V3Scene(StoryScene):
-    """Persistent object-and-event educational animation engine (VideoPlan V3)."""
+    """Persistent object-and-event educational animation engine (VideoPlan V3/V3.1)."""
 
     BEATS = [
         BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, pause_after=0.30)
@@ -51,12 +51,14 @@ class V3Scene(StoryScene):
 
         self.registry: dict[str, m.Mobject] = {}
         self.axes_ranges: dict[str, tuple[list[float], list[float]]] = {}
+        self.params: dict[str, m.ValueTracker] = {}
         self._active_eq_id: str | None = None
 
         for sc in V3_PLAN.scenes:
-            # Build newly declared objects for this scene
             new_eq_ids = [o.id for o in sc.objects if o.kind == "equation"]
             for obj in sc.objects:
+                if obj.id in self.registry:
+                    raise RuntimeError(f"Scene {sc.scene_id}: duplicate live object {obj.id!r}")
                 self.registry[obj.id] = self._build_object(obj)
 
             main_anims: list[m.Animation] = []
@@ -64,40 +66,46 @@ class V3Scene(StoryScene):
                 old_eq = self.registry.pop(self._active_eq_id)
                 main_anims.append(m.FadeOut(old_eq))
                 self._active_eq_id = None
+
             cues: dict[str, list[AnimationEvent]] = {}
+            anchored_ids: set[str] = set()
             for ev in sc.events:
                 if ev.anchor_mark:
                     cues.setdefault(ev.anchor_mark, []).append(ev)
+                    anchored_ids.add(ev.target_id)
                 else:
-                    anim = self._compile_event(ev)
-                    if anim is not None:
-                        main_anims.append(anim)
+                    main_anims.append(self._compile_event(ev))
 
             cue_callables = {
-                mark: (lambda evs=ev_list: [a for e in evs if (a := self._compile_event(e)) is not None])
+                mark: (lambda evs=ev_list: [self._compile_event(e) for e in evs])
                 for mark, ev_list in cues.items()
             }
 
             if not main_anims and sc.objects:
-                main_anims = [m.FadeIn(self.registry[o.id]) for o in sc.objects if o.id in self.registry]
+                # Only auto-reveal objects that don't have a bookmark-anchored event
+                unanchored = [self.registry[o.id] for o in sc.objects if o.id not in anchored_ids and o.id in self.registry]
+                main_anims = [m.FadeIn(mob) for mob in unanchored]
 
             self.play_beat(sc.scene_id, *main_anims, cues=cue_callables or None, sfx=sc.sfx_cue)
             if new_eq_ids:
                 self._active_eq_id = new_eq_ids[-1]
 
-            # Remove non-persisting objects after scene completes
             to_drop = [self.registry.pop(o.id) for o in sc.objects if not o.persist and o.id in self.registry]
             if to_drop:
                 self.remove(*to_drop)
 
-    def _compile_event(self, ev: AnimationEvent) -> m.Animation | None:
-        mob = self.registry.get(ev.target_id)
-        if mob is None:
-            return None
+    def _compile_event(self, ev: AnimationEvent) -> m.Animation:
+        if ev.target_id not in self.registry:
+            raise RuntimeError(f"AnimationEvent target_id {ev.target_id!r} not found in registry.")
+        mob = self.registry[ev.target_id]
+
         if ev.op in ("create", "draw"):
             return m.Create(mob) if isinstance(mob, m.VMobject) else m.FadeIn(mob)
-        if ev.op == "transform" and ev.source_id and ev.source_id in self.registry:
+        if ev.op == "transform":
+            if not ev.source_id or ev.source_id not in self.registry:
+                raise RuntimeError(f"Transform source_id {ev.source_id!r} not found in registry.")
             src = self.registry[ev.source_id]
+            self.registry[ev.target_id] = src
             return m.Transform(src, mob)
         if ev.op == "highlight":
             return m.Indicate(mob, scale_factor=1.08)
@@ -109,10 +117,23 @@ class V3Scene(StoryScene):
         if ev.op == "rotate" and ev.angle_deg:
             return m.Rotate(mob, angle=float(np.deg2rad(ev.angle_deg)))
         if ev.op == "remove":
+            self.registry.pop(ev.target_id, None)
             return m.FadeOut(mob)
         if ev.op == "focus":
             return m.Circumscribe(mob, color=self.theme.accent_highlight)
+        if ev.op == "animate_param" and ev.param_range and len(ev.param_range) == 2:
+            tracker = getattr(mob, "_param_tracker", None)
+            if tracker is None:
+                raise RuntimeError(f"Object {ev.target_id!r} has no bound parameter tracker.")
+            tracker.set_value(float(ev.param_range[0]))
+            return tracker.animate.set_value(float(ev.param_range[1]))
         return m.FadeIn(mob)
+
+    def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
+        ax = self.registry.get(axes_id or "")
+        if isinstance(ax, m.Axes):
+            return ax.c2p(coords[0], coords[1])
+        return self.layout.stage_center + np.array([coords[0], coords[1], 0.0])
 
     def _build_object(self, obj: SceneObject) -> m.Mobject:
         L, T = self.layout, self.theme
@@ -121,11 +142,17 @@ class V3Scene(StoryScene):
         if obj.kind == "axes":
             xr = obj.x_range or [-3.5, 3.5]
             yr = obj.y_range or [-1.5, 1.5]
+            x_len = L.stage_w * 0.88
+            if obj.equal_aspect:
+                y_len = min(L.stage_h * 0.68, x_len * (yr[1] - yr[0]) / max(xr[1] - xr[0], 1e-6))
+                x_len = y_len * (xr[1] - xr[0]) / max(yr[1] - yr[0], 1e-6)
+            else:
+                y_len = L.stage_h * 0.65
             ax = m.Axes(
                 x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
                 y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
-                x_length=L.stage_w * 0.90,
-                y_length=L.stage_h * 0.65,
+                x_length=x_len,
+                y_length=y_len,
                 axis_config={"color": T.text_muted, "stroke_width": 1.6, "include_tip": True},
                 tips=True,
             ).move_to(L.stage_center)
@@ -138,15 +165,9 @@ class V3Scene(StoryScene):
                 xr, yr = self.axes_ranges[obj.axes_id]
             else:
                 xr, yr = obj.x_range or [-3.5, 3.5], obj.y_range or [-1.5, 1.5]
-                ax = m.Axes(
-                    x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
-                    y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
-                    x_length=L.stage_w * 0.90,
-                    y_length=L.stage_h * 0.65,
-                ).move_to(L.stage_center)
+                ax = m.Axes(x_range=[xr[0], xr[1], 1.0], y_range=[yr[0], yr[1], 1.0], x_length=L.stage_w * 0.88, y_length=L.stage_h * 0.65).move_to(L.stage_center)
             fn = compile_expr(obj.expr or "0", ("x",))
-            segs = plot_clipped_segments(ax, fn, xr, yr, color=color, stroke_width=3.5)
-            return segs
+            return plot_clipped_segments(ax, fn, xr, yr, color=color, stroke_width=3.5)
 
         if obj.kind == "parametric_curve":
             ax = self.registry.get(obj.axes_id or "")
@@ -172,34 +193,57 @@ class V3Scene(StoryScene):
         if obj.kind == "annotation":
             txt = m.Text(obj.text or obj.label, font_size=26, font=CAPTION_FONT, weight="BOLD", color=color)
             fit_mobject(txt, max_width=L.safe_w * 0.85, min_height=L.min_text_h)
-            pos = L.stage_center + np.array([0.0, L.stage_h * 0.36, 0.0])
-            if obj.coords and len(obj.coords) >= 2:
-                pos = L.stage_center + np.array([obj.coords[0], obj.coords[1], 0.0])
+            pos = self._to_point(obj.coords, obj.axes_id) if obj.coords and len(obj.coords) >= 2 else (L.stage_center + np.array([0.0, L.stage_h * 0.36, 0.0]))
             txt.move_to(pos)
             return txt
 
         if obj.kind == "point":
-            ax = self.registry.get(obj.axes_id or "")
-            c = obj.coords or [0.0, 0.0]
-            p = ax.c2p(c[0], c[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c[0], c[1], 0.0])
-            return m.Dot(p, radius=0.09, color=color)
+            if obj.param_name and obj.expr and ";" in obj.expr:
+                tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
+                p0, p1 = obj.expr.split(";", 1)
+                fx, fy = compile_expr(p0, (obj.param_name,)), compile_expr(p1, (obj.param_name,))
+                ax = self.registry.get(obj.axes_id or "")
+                def _mk_dot(t=tracker, f1=fx, f2=fy, a=ax, c=color, pn=obj.param_name):
+                    v = t.get_value()
+                    x, y = float(f1(**{pn: v})), float(f2(**{pn: v}))
+                    pos = a.c2p(x, y) if isinstance(a, m.Axes) else (L.stage_center + np.array([x, y, 0.0]))
+                    return m.Dot(pos, radius=0.10, color=c)
+                mob = m.always_redraw(_mk_dot)
+                mob._param_tracker = tracker  # type: ignore[attr-defined]
+                return mob
+            return m.Dot(self._to_point(obj.coords or [0.0, 0.0], obj.axes_id), radius=0.09, color=color)
 
         if obj.kind in ("line", "vector"):
-            ax = self.registry.get(obj.axes_id or "")
-            c0 = obj.coords or [0.0, 0.0]
-            c1 = obj.end_coords or [1.0, 1.0]
-            p0 = ax.c2p(c0[0], c0[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c0[0], c0[1], 0.0])
-            p1 = ax.c2p(c1[0], c1[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c1[0], c1[1], 0.0])
+            if obj.kind == "vector" and obj.param_name and obj.expr and ";" in obj.expr:
+                tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
+                p0, p1 = obj.expr.split(";", 1)
+                fx, fy = compile_expr(p0, (obj.param_name,)), compile_expr(p1, (obj.param_name,))
+                ax = self.registry.get(obj.axes_id or "")
+                c0 = obj.coords or [0.0, 0.0]
+                def _mk_vec(t=tracker, f1=fx, f2=fy, a=ax, c=color, pn=obj.param_name, orig=c0):
+                    v = t.get_value()
+                    x, y = float(f1(**{pn: v})), float(f2(**{pn: v}))
+                    s = a.c2p(orig[0], orig[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([orig[0], orig[1], 0.0]))
+                    e = a.c2p(x, y) if isinstance(a, m.Axes) else (L.stage_center + np.array([x, y, 0.0]))
+                    return m.Arrow(s, e, color=c, buff=0)
+                mob = m.always_redraw(_mk_vec)
+                mob._param_tracker = tracker  # type: ignore[attr-defined]
+                return mob
+            p0 = self._to_point(obj.coords or [0.0, 0.0], obj.axes_id)
+            p1 = self._to_point(obj.end_coords or [1.0, 1.0], obj.axes_id)
             return m.Arrow(p0, p1, color=color, buff=0) if obj.kind == "vector" else m.Line(p0, p1, color=color, stroke_width=3.0)
 
         if obj.kind == "polygon":
-            pts = [L.stage_center + np.array([v[0], v[1], 0.0]) for v in obj.vertices]
+            pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
             return m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.22, stroke_width=3.0)
 
         if obj.kind == "circle":
-            c = obj.coords or [0.0, 0.0]
-            pos = L.stage_center + np.array([c[0], c[1], 0.0])
-            return m.Circle(radius=obj.radius or 1.2, color=color, stroke_width=3.2).move_to(pos)
+            pos = self._to_point(obj.coords or [0.0, 0.0], obj.axes_id)
+            r = obj.radius or 1.0
+            ax = self.registry.get(obj.axes_id or "")
+            if isinstance(ax, m.Axes):
+                r = float(np.linalg.norm(ax.c2p(r, 0.0) - ax.c2p(0.0, 0.0)))
+            return m.Circle(radius=r, color=color, stroke_width=3.2).move_to(pos)
 
         if obj.kind == "number_line":
             xr = obj.x_range or [-3.0, 3.0]
@@ -220,16 +264,18 @@ class V3Scene(StoryScene):
             base_y = L.stage_center[1] - L.stage_h * 0.10
             max_h = L.stage_h * 0.40
             for i, frac in enumerate(norm):
-                h = max(0.04, abs(frac) * max_h)
-                bar = m.Rectangle(width=w * 0.62, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
-                x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
-                y_off = h * 0.5 if frac >= 0 else -h * 0.5
-                bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
-                grp.add(bar)
+                h = max(0.0, abs(frac) * max_h)
+                if h > 0.0:
+                    bar = m.Rectangle(width=w * 0.62, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
+                    x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
+                    y_off = h * 0.5 if frac >= 0 else -h * 0.5
+                    bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
+                    grp.add(bar)
                 if i < len(obj.bar_labels) and obj.bar_labels[i]:
                     lbl = m.Text(obj.bar_labels[i], font_size=24, font=CAPTION_FONT, color=T.text_muted)
                     fit_mobject(lbl, max_width=w * 1.15, min_height=L.min_text_h)
-                    lbl.next_to(bar, m.DOWN if frac >= 0 else m.UP, buff=0.14)
+                    x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
+                    lbl.move_to(np.array([x_pos, base_y - 0.25, 0.0]))
                     grp.add(lbl)
             return grp
 

@@ -1,0 +1,127 @@
+{
+  "schema_version": "3.0",
+  "topic": "Euler's Identity in the Complex Plane",
+  "title": "Why e^(i*pi) + 1 = 0",
+  "audience": "general",
+  "scenes": [
+    {
+      "scene_id": "s1_hook",
+      "purpose": "Ask how an imaginary exponent creates rotation",
+      "narration": "How can raising e to an *imaginary* power spin a number around a circle?",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "objects": [
+        {"id": "eq_hook", "kind": "equation", "tex": "e^{i\\pi} + 1 \\overset{?}{=} 0", "color_role": "highlight", "persist": false},
+        {"id": "plane", "kind": "axes", "x_range": [-1.8, 1.8], "y_range": [-1.8, 1.8], "equal_aspect": true, "color_role": "primary", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "plane"},
+        {"op": "create", "target_id": "eq_hook"}
+      ]
+    },
+    {
+      "scene_id": "s2_complex_plane",
+      "purpose": "Distinguish real and imaginary axes",
+      "narration": "On the complex plane, horizontal steps are *real* numbers, and vertical steps are imaginary multiples of i.",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "objects": [
+        {"id": "eq_axes", "kind": "equation", "tex": "z = x + iy", "color_role": "primary", "persist": true},
+        {"id": "lbl_real", "kind": "annotation", "text": "Real", "axes_id": "plane", "coords": [1.30, -0.45], "color_role": "primary", "persist": false},
+        {"id": "lbl_imag", "kind": "annotation", "text": "Imaginary", "axes_id": "plane", "coords": [1.05, 1.35], "color_role": "tertiary", "persist": false}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_axes"},
+        {"op": "create", "target_id": "lbl_real"},
+        {"op": "create", "target_id": "lbl_imag"}
+      ]
+    },
+    {
+      "scene_id": "s3_unit_circle",
+      "purpose": "Introduce the unit circle and vector at +1",
+      "narration": "Draw a unit circle of radius one, and place a pointer starting at <bookmark mark='start'/>positive one.",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "objects": [
+        {"id": "unit_circle", "kind": "circle", "axes_id": "plane", "coords": [0.0, 0.0], "radius": 1.0, "color_role": "primary", "persist": true},
+        {"id": "rot_vec", "kind": "vector", "axes_id": "plane", "coords": [0.0, 0.0], "param_name": "theta", "param_init": 0.0, "expr": "cos(theta); sin(theta)", "color_role": "secondary", "persist": true},
+        {"id": "rot_pt", "kind": "point", "axes_id": "plane", "param_name": "theta", "param_init": 0.0, "expr": "cos(theta); sin(theta)", "color_role": "highlight", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "unit_circle"},
+        {"op": "create", "target_id": "rot_vec", "anchor_mark": "start"},
+        {"op": "create", "target_id": "rot_pt", "anchor_mark": "start"}
+      ]
+    },
+    {
+      "scene_id": "s4_euler_formula",
+      "purpose": "Connect complex exponential to cosine and sine",
+      "narration": "Euler's formula says e to the i theta equals cosine theta plus i sine theta: pure *rotation* around the circle.",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "objects": [
+        {"id": "eq_euler", "kind": "equation", "tex": "e^{i\\theta} = \\cos\\theta + i\\sin\\theta", "color_role": "primary", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_euler"},
+        {"op": "highlight", "target_id": "unit_circle"}
+      ]
+    },
+    {
+      "scene_id": "s5_rotate_to_half_pi",
+      "purpose": "Rotate angle continuously from 0 to pi/2",
+      "narration": "As theta grows from zero to <bookmark mark='spin'/>pi over two, the vector sweeps ninety degrees straight up to i.",
+      "color_role": "tertiary",
+      "sfx_cue": "pop_marimba",
+      "objects": [
+        {"id": "eq_quarter", "kind": "equation", "tex": "\\theta = \\tfrac{\\pi}{2} \\;\\Rightarrow\\; e^{i\\pi/2} = i", "color_role": "tertiary", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_quarter"},
+        {"op": "animate_param", "target_id": "rot_vec", "param_range": [0.0, 1.5707963], "anchor_mark": "spin"}
+      ]
+    },
+    {
+      "scene_id": "s6_rotate_to_pi",
+      "purpose": "Continue rotating to pi and reach -1",
+      "narration": "Keep turning all the way to <bookmark mark='land'/>pi radians—one hundred eighty degrees—and the pointer lands exactly at negative one.",
+      "color_role": "danger",
+      "sfx_cue": "chime_reveal",
+      "objects": [
+        {"id": "eq_pi", "kind": "equation", "tex": "e^{i\\pi} = \\cos(\\pi) + i\\sin(\\pi) = -1", "color_role": "danger", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_pi"},
+        {"op": "animate_param", "target_id": "rot_vec", "param_range": [1.5707963, 3.14159265], "anchor_mark": "land"}
+      ]
+    },
+    {
+      "scene_id": "s7_identity",
+      "purpose": "Derive e^(i*pi) + 1 = 0",
+      "narration": "Add one to both sides, and *five* fundamental constants—e, i, pi, one, and zero—lock into one equation.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "objects": [
+        {"id": "eq_id", "kind": "equation", "tex": "e^{i\\pi} + 1 = 0", "color_role": "highlight", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_id"},
+        {"op": "highlight", "target_id": "rot_pt"}
+      ]
+    },
+    {
+      "scene_id": "s8_payoff",
+      "purpose": "Explain deeper link between growth and rotation",
+      "narration": "Real exponents stretch numbers along a line; imaginary exponents *turn* them in circles—unifying algebra, calculus, and geometry.",
+      "color_role": "success",
+      "sfx_cue": "tick_soft",
+      "objects": [
+        {"id": "eq_final", "kind": "equation", "tex": "e^{i\\pi} + 1 = 0", "color_role": "success", "persist": true}
+      ],
+      "events": [
+        {"op": "create", "target_id": "eq_final"},
+        {"op": "highlight", "target_id": "unit_circle"}
+      ]
+    }
+  ]
+}

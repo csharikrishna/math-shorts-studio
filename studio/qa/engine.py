@@ -155,7 +155,7 @@ def verify_audio_loudness(video_path: Path, min_lufs: float = -16.5, max_lufs: f
     )
 
 
-def verify_media_streams(video_path: Path, expected_sr: int = 48000, max_av_drift_s: float = 0.75) -> QACheck:
+def verify_media_streams(video_path: Path, expected_sr: int = 48000, max_av_drift_s: float = 0.35) -> QACheck:
     """Verify final MP4 audio sample rate (48 kHz) and audio/video stream duration alignment via ffprobe."""
     import json as _json
     import shutil as _shutil

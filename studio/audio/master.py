@@ -82,7 +82,7 @@ def master_video(
         f"[bgm_pre]extrastereo=m=1.15[bgm_wide];"
         f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
         f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
-        f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.92"
+        f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0"
     )
 
     # Pass 1: measure integrated loudness, true peak, LRA, threshold, target offset
