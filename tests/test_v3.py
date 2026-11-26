@@ -77,6 +77,38 @@ class TestV3(unittest.TestCase):
         ep = VideoPlanV3.model_validate_json(Path("plans/v3_euler_identity_rotation.json").read_text(encoding="utf-8"))
         self.assertEqual(validate_v3_plan(ep), [])
 
+    def test_world_model_rejects_buggy_pythagorean_and_verifies_dissection(self):
+        from pathlib import Path
+        from studio.ai.world_model import is_right_triangle, is_square, polygon_area, pythagorean_dissection, square_on_segment, triangles_congruent
+
+        # Buggy legacy plan must FAIL geometric + narration-to-visual validation
+        buggy = VideoPlanV3.model_validate_json(
+            Path("plans/v3_pythagorean_theorem_geometric_proof.json").read_text(encoding="utf-8")
+        )
+        issues = validate_v3_plan(buggy)
+        self.assertTrue(any("square" in i.lower() for i in issues), f"Expected square failure, got {issues}")
+
+        # Validated dissection plan must PASS
+        good = VideoPlanV3.model_validate_json(
+            Path("plans/v3_pythagorean_dissection_proof.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(validate_v3_plan(good), [])
+
+        # Property check across multiple (a, b) leg lengths
+        for a, b in [(3.0, 4.0), (5.0, 12.0), (1.5, 2.5)]:
+            d = pythagorean_dissection(a, b)
+            self.assertTrue(is_square(d["outer_square"]))
+            self.assertTrue(is_square(d["inner_square"]))
+            tris = d["triangles"]
+            self.assertEqual(len(tris), 4)
+            for t in tris:
+                self.assertTrue(is_right_triangle(t))
+                self.assertTrue(triangles_congruent(tris[0], t))
+            self.assertAlmostEqual(d["outer_area"], d["triangles_area"] + d["inner_area"], places=6)
+            sq = square_on_segment([0.0, 0.0], [a, b])
+            self.assertTrue(is_square(sq))
+            self.assertAlmostEqual(polygon_area(sq), a * a + b * b, places=6)
+
     def test_v3_plan_validation_and_negative_cases(self):
         p = VideoPlanV3(
             topic="Pythagorean Theorem",

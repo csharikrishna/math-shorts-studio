@@ -7,6 +7,7 @@ import numpy as np
 from studio.ai.expr import ExprError, compile_expr
 from studio.ai.schema import BOOKMARK_RE
 from studio.ai.v3_schema import VideoPlanV3
+from studio.ai.world_model import clean_polygon_vertices, is_square, polygon_area
 
 
 def validate_v3_plan(plan: VideoPlanV3) -> list[str]:
@@ -20,6 +21,7 @@ def validate_v3_plan(plan: VideoPlanV3) -> list[str]:
 
     # state[obj_id] in {"live", "removed"}
     state: dict[str, str] = {}
+    live_kinds: dict[str, tuple[str, list[list[float]]]] = {}  # id -> (kind, vertices)
     seen_scenes: set[str] = set()
 
     for idx, sc in enumerate(plan.scenes, 1):
@@ -74,10 +76,34 @@ def validate_v3_plan(plan: VideoPlanV3) -> list[str]:
                     issues.append(f"{where} obj {obj.id}: bar_labels length must match values.")
                 if obj.log_scale and any(v <= 0 for v in obj.values):
                     issues.append(f"{where} obj {obj.id}: log_scale requires strictly positive values.")
-            elif obj.kind == "polygon" and len(obj.vertices) < 3:
-                issues.append(f"{where} obj {obj.id}: polygon requires >= 3 vertices.")
+            elif obj.kind == "polygon":
+                cleaned = clean_polygon_vertices(obj.vertices)
+                if len(obj.vertices) != len(cleaned):
+                    issues.append(f"{where} obj {obj.id}: polygon has redundant closing duplicate vertex.")
+                if len(cleaned) < 3 or polygon_area(cleaned) <= 1e-6:
+                    issues.append(f"{where} obj {obj.id}: polygon must have >= 3 distinct vertices and nonzero area.")
+                tag = f"{obj.id} {obj.label}".lower()
+                if "square" in tag and not is_square(cleaned):
+                    issues.append(f"{where} obj {obj.id}: claimed square fails geometric square check (4 equal sides & 4 right angles).")
+                if "triangle" in tag and len(cleaned) != 3:
+                    issues.append(f"{where} obj {obj.id}: claimed triangle must have 3 vertices (got {len(cleaned)}).")
+                live_kinds[obj.id] = ("polygon", cleaned)
             elif obj.kind == "circle" and obj.radius is not None and obj.radius <= 0:
                 issues.append(f"{where} obj {obj.id}: circle radius must be positive.")
+
+        # Narration-to-visual consistency checks
+        low_narr = sc.narration.lower()
+        live_polys = [v for k, v in live_kinds.items() if state.get(k) == "live" and v[0] == "polygon"]
+        if "four triangles" in low_narr or "four congruent" in low_narr:
+            tri_cnt = sum(1 for _, verts in live_polys if len(verts) == 3)
+            if tri_cnt < 4:
+                issues.append(f"{where}: narration claims four triangles, but only {tri_cnt} live triangle(s) exist.")
+        if "three squares" in low_narr:
+            sq_cnt = sum(1 for _, verts in live_polys if is_square(verts))
+            if sq_cnt < 3:
+                issues.append(f"{where}: narration claims three squares, but only {sq_cnt} valid live square(s) exist.")
+        if ("rotate" in low_narr or "rotates" in low_narr) and not any(e.op in ("rotate", "animate_param") for e in sc.events):
+            issues.append(f"{where}: narration mentions rotation, but no rotate/animate_param event is present.")
 
         for ev in sc.events:
             if state.get(ev.target_id) != "live":

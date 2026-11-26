@@ -234,8 +234,21 @@ class V3Scene(StoryScene):
             return m.Arrow(p0, p1, color=color, buff=0) if obj.kind == "vector" else m.Line(p0, p1, color=color, stroke_width=3.0)
 
         if obj.kind == "polygon":
-            pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
-            return m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.22, stroke_width=3.0)
+            if obj.axes_id and isinstance(self.registry.get(obj.axes_id), m.Axes):
+                pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
+            else:
+                # Full-stage geometry scaling (e.g. 7x7 dissection centered around origin -> ~68% stage width)
+                scale = getattr(self, "_geom_scale", None)
+                if scale is None:
+                    max_span = max(
+                        (max(abs(v[0]), abs(v[1])) for sc in V3_PLAN.scenes for o in sc.objects if o.kind == "polygon" and not o.axes_id for v in o.vertices),
+                        default=3.5,
+                    )
+                    scale = (min(L.stage_w, L.stage_h) * 0.72) / max(2.0 * max_span, 1e-6)
+                    self._geom_scale = scale
+                pts = [L.stage_center + np.array([v[0] * scale, v[1] * scale, 0.0]) for v in obj.vertices]
+            poly = m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.28, stroke_width=3.2)
+            return poly
 
         if obj.kind == "circle":
             pos = self._to_point(obj.coords or [0.0, 0.0], obj.axes_id)
@@ -297,9 +310,12 @@ class V3Scene(StoryScene):
         if obj.kind == "projection":
             tracker = self.params.setdefault(obj.param_name or "theta", m.ValueTracker(obj.param_init))
             ax = self.registry.get(obj.axes_id or "")
-            def _mk_proj(t=tracker, a=ax, c=color):
+            p0, p1 = (obj.expr or "cos(theta); sin(theta)").split(";", 1) if (obj.expr and ";" in obj.expr) else ("cos(theta)", "sin(theta)")
+            pn = obj.param_name or "theta"
+            fx, fy = compile_expr(p0, (pn,)), compile_expr(p1, (pn,))
+            def _mk_proj(t=tracker, a=ax, c=color, f1=fx, f2=fy, p_name=pn):
                 ang = float(t.get_value())
-                cx, cy = float(np.cos(ang)), float(np.sin(ang))
+                cx, cy = float(f1(**{p_name: ang})), float(f2(**{p_name: ang}))
                 if not isinstance(a, m.Axes):
                     return m.VGroup()
                 p_pt = a.c2p(cx, cy)
