@@ -129,11 +129,24 @@ class V3Scene(StoryScene):
             return tracker.animate.set_value(float(ev.param_range[1]))
         return m.FadeIn(mob)
 
+    def _get_geom_scale(self) -> float:
+        scale = getattr(self, "_geom_scale", None)
+        if scale is None:
+            L = self.layout
+            max_span = max(
+                (max(abs(v[0]), abs(v[1])) for sc in V3_PLAN.scenes for o in sc.objects if o.kind == "polygon" and not o.axes_id for v in o.vertices),
+                default=0.0,
+            )
+            scale = (min(L.stage_w, L.stage_h) * 0.72) / max(2.0 * max_span, 1e-6) if max_span > 0 else 1.0
+            self._geom_scale = scale
+        return scale
+
     def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
         ax = self.registry.get(axes_id or "")
         if isinstance(ax, m.Axes):
             return ax.c2p(coords[0], coords[1])
-        return self.layout.stage_center + np.array([coords[0], coords[1], 0.0])
+        s = self._get_geom_scale()
+        return self.layout.stage_center + np.array([coords[0] * s, coords[1] * s, 0.0])
 
     def _build_object(self, obj: SceneObject) -> m.Mobject:
         L, T = self.layout, self.theme
@@ -186,9 +199,19 @@ class V3Scene(StoryScene):
 
         if obj.kind == "equation":
             eq = m.MathTex(obj.tex or "x", font_size=40, color=color)
-            fit_mobject(eq, max_width=L.safe_w * 0.90, max_height=L.header_max_h * 0.65)
+            fit_mobject(eq, max_width=L.safe_w * 0.84, max_height=L.header_max_h * 0.56)
             eq.move_to(L.header_center)
-            return eq
+            pill = m.RoundedRectangle(
+                corner_radius=0.16,
+                width=min(L.safe_w * 0.94, eq.width + 0.56),
+                height=min(L.header_max_h * 0.82, eq.height + 0.34),
+                fill_color=T.surface,
+                fill_opacity=0.90,
+                stroke_color=color,
+                stroke_opacity=0.45,
+                stroke_width=1.8,
+            ).move_to(L.header_center)
+            return m.VGroup(pill, eq)
 
         if obj.kind == "annotation":
             txt = m.Text(obj.text or obj.label, font_size=26, font=CAPTION_FONT, weight="BOLD", color=color)
@@ -237,15 +260,8 @@ class V3Scene(StoryScene):
             if obj.axes_id and isinstance(self.registry.get(obj.axes_id), m.Axes):
                 pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
             else:
-                # Full-stage geometry scaling (e.g. 7x7 dissection centered around origin -> ~68% stage width)
-                scale = getattr(self, "_geom_scale", None)
-                if scale is None:
-                    max_span = max(
-                        (max(abs(v[0]), abs(v[1])) for sc in V3_PLAN.scenes for o in sc.objects if o.kind == "polygon" and not o.axes_id for v in o.vertices),
-                        default=3.5,
-                    )
-                    scale = (min(L.stage_w, L.stage_h) * 0.72) / max(2.0 * max_span, 1e-6)
-                    self._geom_scale = scale
+                # Full-stage geometry scaling (e.g. 7x7 dissection centered around origin -> ~72% stage)
+                scale = self._get_geom_scale()
                 pts = [L.stage_center + np.array([v[0] * scale, v[1] * scale, 0.0]) for v in obj.vertices]
             poly = m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.28, stroke_width=3.2)
             return poly

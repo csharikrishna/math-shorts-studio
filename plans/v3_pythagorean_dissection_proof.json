@@ -20,7 +20,7 @@
           "t_range": null,
           "x_range": null,
           "y_range": null,
-          "tex": "a^2 + b^2 \\overset{?}{=} c^2",
+          "tex": "a^2 + b^2 = c^2",
           "text": null,
           "values": [],
           "bar_labels": [],
@@ -194,6 +194,33 @@
           "param_name": null,
           "param_init": 0.0,
           "label": "square"
+        },
+        {
+          "id": "lbl_sq_a",
+          "kind": "annotation",
+          "persist": false,
+          "color_role": "primary",
+          "text": "a²",
+          "coords": [0.0, -3.5],
+          "label": "a squared"
+        },
+        {
+          "id": "lbl_sq_b",
+          "kind": "annotation",
+          "persist": false,
+          "color_role": "tertiary",
+          "text": "b²",
+          "coords": [-3.5, 0.0],
+          "label": "b squared"
+        },
+        {
+          "id": "lbl_sq_c",
+          "kind": "annotation",
+          "persist": false,
+          "color_role": "secondary",
+          "text": "c²",
+          "coords": [2.0, 1.5],
+          "label": "c squared"
         }
       ],
       "events": [
@@ -240,6 +267,36 @@
         {
           "op": "create",
           "target_id": "sq_c",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "lbl_sq_a",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "lbl_sq_b",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "lbl_sq_c",
           "source_id": null,
           "anchor_mark": null,
           "shift": null,
@@ -615,6 +672,15 @@
           "param_name": null,
           "param_init": 0.0,
           "label": "square"
+        },
+        {
+          "id": "lbl_inner_c2",
+          "kind": "annotation",
+          "persist": true,
+          "color_role": "highlight",
+          "text": "c²",
+          "coords": [0.0, 0.0],
+          "label": "center square area"
         }
       ],
       "events": [
@@ -631,6 +697,16 @@
         {
           "op": "create",
           "target_id": "inner_square",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "lbl_inner_c2",
           "source_id": null,
           "anchor_mark": null,
           "shift": null,
@@ -721,7 +797,7 @@
           "t_range": null,
           "x_range": null,
           "y_range": null,
-          "tex": "a^2 + b^2 = c^2",
+          "tex": "a^2 + 2ab + b^2 = 2ab + c^2 \\;\\Rightarrow\\; a^2 + b^2 = c^2",
           "text": null,
           "values": [],
           "bar_labels": [],
