@@ -1,0 +1,236 @@
+"""Composable Object-and-Event ManimGX renderer for VideoPlan V3."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import manimgx as m
+import numpy as np
+
+from scenes.multi_scene import plot_clipped_segments
+from studio.ai.expr import compile_expr
+from studio.ai.v3_schema import AnimationEvent, SceneObject, VideoPlanV3
+from studio.audio.tts import BeatSpec
+from studio.config import CAPTION_FONT
+from studio.layout import CaptionCard, fit_mobject, glow
+from studio.scene import StoryScene
+
+DEFAULT_V3_PLAN = Path(__file__).resolve().parent.parent / "plans" / "v3_demo.json"
+V3_PLAN_PATH = Path(os.environ.get("STUDIO_V3_PLAN", str(DEFAULT_V3_PLAN)))
+V3_PLAN = (
+    VideoPlanV3.model_validate_json(V3_PLAN_PATH.read_text(encoding="utf-8"))
+    if V3_PLAN_PATH.exists()
+    else VideoPlanV3(topic="Demo", title="Demo", scenes=[])
+)
+
+ROLE_TO_THEME = {
+    "primary": "accent_primary",
+    "secondary": "accent_secondary",
+    "tertiary": "accent_tertiary",
+    "success": "success",
+    "highlight": "accent_highlight",
+    "danger": "danger",
+}
+
+
+class V3Scene(StoryScene):
+    """Persistent object-and-event educational animation engine (VideoPlan V3)."""
+
+    BEATS = [
+        BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, pause_after=0.30)
+        for s in V3_PLAN.scenes
+    ]
+
+    def construct(self) -> None:
+        self.setup_studio()
+        L, T = self.layout, self.theme
+        if not V3_PLAN.scenes:
+            return
+        self.caption_card = CaptionCard(L, T, V3_PLAN.scenes[0].narration)
+        self.add(self.caption_card.group)
+
+        self.registry: dict[str, m.Mobject] = {}
+        self.axes_ranges: dict[str, tuple[list[float], list[float]]] = {}
+        self._active_eq_id: str | None = None
+
+        for sc in V3_PLAN.scenes:
+            # Build newly declared objects for this scene
+            new_eq_ids = [o.id for o in sc.objects if o.kind == "equation"]
+            for obj in sc.objects:
+                self.registry[obj.id] = self._build_object(obj)
+
+            main_anims: list[m.Animation] = []
+            if new_eq_ids and self._active_eq_id and self._active_eq_id in self.registry:
+                old_eq = self.registry.pop(self._active_eq_id)
+                main_anims.append(m.FadeOut(old_eq))
+                self._active_eq_id = None
+            cues: dict[str, list[AnimationEvent]] = {}
+            for ev in sc.events:
+                if ev.anchor_mark:
+                    cues.setdefault(ev.anchor_mark, []).append(ev)
+                else:
+                    anim = self._compile_event(ev)
+                    if anim is not None:
+                        main_anims.append(anim)
+
+            cue_callables = {
+                mark: (lambda evs=ev_list: [a for e in evs if (a := self._compile_event(e)) is not None])
+                for mark, ev_list in cues.items()
+            }
+
+            if not main_anims and sc.objects:
+                main_anims = [m.FadeIn(self.registry[o.id]) for o in sc.objects if o.id in self.registry]
+
+            self.play_beat(sc.scene_id, *main_anims, cues=cue_callables or None, sfx=sc.sfx_cue)
+            if new_eq_ids:
+                self._active_eq_id = new_eq_ids[-1]
+
+            # Remove non-persisting objects after scene completes
+            to_drop = [self.registry.pop(o.id) for o in sc.objects if not o.persist and o.id in self.registry]
+            if to_drop:
+                self.remove(*to_drop)
+
+    def _compile_event(self, ev: AnimationEvent) -> m.Animation | None:
+        mob = self.registry.get(ev.target_id)
+        if mob is None:
+            return None
+        if ev.op in ("create", "draw"):
+            return m.Create(mob) if isinstance(mob, m.VMobject) else m.FadeIn(mob)
+        if ev.op == "transform" and ev.source_id and ev.source_id in self.registry:
+            src = self.registry[ev.source_id]
+            return m.Transform(src, mob)
+        if ev.op == "highlight":
+            return m.Indicate(mob, scale_factor=1.08)
+        if ev.op == "move" and ev.shift:
+            vec = np.array([ev.shift[0], ev.shift[1], ev.shift[2] if len(ev.shift) > 2 else 0.0])
+            return mob.animate.shift(vec)
+        if ev.op == "scale" and ev.scale_factor:
+            return mob.animate.scale(ev.scale_factor)
+        if ev.op == "rotate" and ev.angle_deg:
+            return m.Rotate(mob, angle=float(np.deg2rad(ev.angle_deg)))
+        if ev.op == "remove":
+            return m.FadeOut(mob)
+        if ev.op == "focus":
+            return m.Circumscribe(mob, color=self.theme.accent_highlight)
+        return m.FadeIn(mob)
+
+    def _build_object(self, obj: SceneObject) -> m.Mobject:
+        L, T = self.layout, self.theme
+        color = getattr(T, ROLE_TO_THEME[obj.color_role])
+
+        if obj.kind == "axes":
+            xr = obj.x_range or [-3.5, 3.5]
+            yr = obj.y_range or [-1.5, 1.5]
+            ax = m.Axes(
+                x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
+                y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
+                x_length=L.stage_w * 0.90,
+                y_length=L.stage_h * 0.65,
+                axis_config={"color": T.text_muted, "stroke_width": 1.6, "include_tip": True},
+                tips=True,
+            ).move_to(L.stage_center)
+            self.axes_ranges[obj.id] = (xr, yr)
+            return ax
+
+        if obj.kind == "function_plot":
+            ax = self.registry.get(obj.axes_id or "")
+            if isinstance(ax, m.Axes) and obj.axes_id in self.axes_ranges:
+                xr, yr = self.axes_ranges[obj.axes_id]
+            else:
+                xr, yr = obj.x_range or [-3.5, 3.5], obj.y_range or [-1.5, 1.5]
+                ax = m.Axes(
+                    x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
+                    y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
+                    x_length=L.stage_w * 0.90,
+                    y_length=L.stage_h * 0.65,
+                ).move_to(L.stage_center)
+            fn = compile_expr(obj.expr or "0", ("x",))
+            segs = plot_clipped_segments(ax, fn, xr, yr, color=color, stroke_width=3.5)
+            return segs
+
+        if obj.kind == "parametric_curve":
+            ax = self.registry.get(obj.axes_id or "")
+            if not isinstance(ax, m.Axes):
+                xr, yr = obj.x_range or [-2.0, 2.0], obj.y_range or [-2.0, 2.0]
+                ax = m.Axes(x_range=[xr[0], xr[1], 1.0], y_range=[yr[0], yr[1], 1.0], x_length=L.stage_w * 0.8, y_length=L.stage_h * 0.6).move_to(L.stage_center)
+            p0, p1 = (obj.expr or "cos(t); sin(t)").split(";", 1)
+            fx, fy = compile_expr(p0, ("t",)), compile_expr(p1, ("t",))
+            tr = obj.t_range or [0.0, float(2 * np.pi)]
+            ts = np.linspace(tr[0], tr[1], 240)
+            pts = [ax.c2p(float(fx(t=t)), float(fy(t=t))) for t in ts]
+            curve = m.VMobject()
+            curve.set_points_smoothly(pts)
+            curve.set_stroke(color=color, width=3.5)
+            return curve
+
+        if obj.kind == "equation":
+            eq = m.MathTex(obj.tex or "x", font_size=40, color=color)
+            fit_mobject(eq, max_width=L.safe_w * 0.90, max_height=L.header_max_h * 0.65)
+            eq.move_to(L.header_center)
+            return eq
+
+        if obj.kind == "annotation":
+            txt = m.Text(obj.text or obj.label, font_size=26, font=CAPTION_FONT, weight="BOLD", color=color)
+            fit_mobject(txt, max_width=L.safe_w * 0.85, min_height=L.min_text_h)
+            pos = L.stage_center + np.array([0.0, L.stage_h * 0.36, 0.0])
+            if obj.coords and len(obj.coords) >= 2:
+                pos = L.stage_center + np.array([obj.coords[0], obj.coords[1], 0.0])
+            txt.move_to(pos)
+            return txt
+
+        if obj.kind == "point":
+            ax = self.registry.get(obj.axes_id or "")
+            c = obj.coords or [0.0, 0.0]
+            p = ax.c2p(c[0], c[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c[0], c[1], 0.0])
+            return m.Dot(p, radius=0.09, color=color)
+
+        if obj.kind in ("line", "vector"):
+            ax = self.registry.get(obj.axes_id or "")
+            c0 = obj.coords or [0.0, 0.0]
+            c1 = obj.end_coords or [1.0, 1.0]
+            p0 = ax.c2p(c0[0], c0[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c0[0], c0[1], 0.0])
+            p1 = ax.c2p(c1[0], c1[1]) if isinstance(ax, m.Axes) else L.stage_center + np.array([c1[0], c1[1], 0.0])
+            return m.Arrow(p0, p1, color=color, buff=0) if obj.kind == "vector" else m.Line(p0, p1, color=color, stroke_width=3.0)
+
+        if obj.kind == "polygon":
+            pts = [L.stage_center + np.array([v[0], v[1], 0.0]) for v in obj.vertices]
+            return m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.22, stroke_width=3.0)
+
+        if obj.kind == "circle":
+            c = obj.coords or [0.0, 0.0]
+            pos = L.stage_center + np.array([c[0], c[1], 0.0])
+            return m.Circle(radius=obj.radius or 1.2, color=color, stroke_width=3.2).move_to(pos)
+
+        if obj.kind == "number_line":
+            xr = obj.x_range or [-3.0, 3.0]
+            return m.NumberLine(x_range=[xr[0], xr[1], 1.0], length=L.stage_w * 0.85, color=color, include_numbers=True).move_to(L.stage_center)
+
+        if obj.kind == "bar_chart" and obj.values:
+            vals = obj.values
+            if obj.log_scale:
+                logs = [float(np.log10(max(v, 1e-12))) for v in vals]
+                lo, hi = min(logs) - 0.5, max(logs)
+                norm = [(v - lo) / max(hi - lo, 1e-6) for v in logs]
+            else:
+                hi = max(abs(v) for v in vals) or 1.0
+                norm = [v / hi for v in vals]
+            grp = m.VGroup()
+            n = len(norm)
+            w = L.stage_w * 0.78 / max(1, n)
+            base_y = L.stage_center[1] - L.stage_h * 0.10
+            max_h = L.stage_h * 0.40
+            for i, frac in enumerate(norm):
+                h = max(0.04, abs(frac) * max_h)
+                bar = m.Rectangle(width=w * 0.62, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
+                x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
+                y_off = h * 0.5 if frac >= 0 else -h * 0.5
+                bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
+                grp.add(bar)
+                if i < len(obj.bar_labels) and obj.bar_labels[i]:
+                    lbl = m.Text(obj.bar_labels[i], font_size=24, font=CAPTION_FONT, color=T.text_muted)
+                    fit_mobject(lbl, max_width=w * 1.15, min_height=L.min_text_h)
+                    lbl.next_to(bar, m.DOWN if frac >= 0 else m.UP, buff=0.14)
+                    grp.add(lbl)
+            return grp
+
+        return m.Dot(L.stage_center, color=color)

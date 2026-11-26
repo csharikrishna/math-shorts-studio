@@ -1,0 +1,252 @@
+{
+  "schema_version": "3.0",
+  "topic": "Euler's Identity",
+  "title": "Visualizing Euler's Identity in the Complex Plane",
+  "audience": "High school and undergraduate math students",
+  "scenes": [
+    {
+      "scene_id": "scene_1_intro",
+      "purpose": "Introduce Euler's formula on the complex plane and the unit circle",
+      "narration": "Welcome to a geometric journey through <bookmark mark='b1'/>Euler's Identity, connecting five fundamental mathematical constants using the complex plane.",
+      "color_role": "primary",
+      "sfx_cue": "chord_epiphany",
+      "objects": [
+        {
+          "id": "complex_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -2.0,
+            2.0
+          ],
+          "y_range": [
+            -2.0,
+            2.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "label": ""
+        },
+        {
+          "id": "unit_circle",
+          "kind": "circle",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            0.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": 1.0,
+          "axes_id": null,
+          "label": ""
+        },
+        {
+          "id": "formula_eq",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "e^{i\\theta} = \\cos\\theta + i\\sin\\theta",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "label": ""
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "complex_axes",
+          "source_id": null,
+          "anchor_mark": "b1",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        },
+        {
+          "op": "draw",
+          "target_id": "unit_circle",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        },
+        {
+          "op": "create",
+          "target_id": "formula_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2_rotation",
+      "purpose": "Show rotation by angle pi leading to -1",
+      "narration": "When we rotate by <bookmark mark='b2'/>pi radians, our point travels along the unit circle to land precisely at negative one.",
+      "color_role": "highlight",
+      "sfx_cue": "chime_reveal",
+      "objects": [
+        {
+          "id": "complex_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -2.0,
+            2.0
+          ],
+          "y_range": [
+            -2.0,
+            2.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "label": ""
+        },
+        {
+          "id": "unit_circle",
+          "kind": "circle",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            0.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": 1.0,
+          "axes_id": null,
+          "label": ""
+        },
+        {
+          "id": "target_point",
+          "kind": "point",
+          "persist": false,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            -1.0,
+            0.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "complex_axes",
+          "label": ""
+        },
+        {
+          "id": "identity_eq",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "e^{i\\pi} + 1 = 0",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "label": ""
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "target_point",
+          "source_id": null,
+          "anchor_mark": "b2",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "target_point",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        },
+        {
+          "op": "create",
+          "target_id": "identity_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null
+        }
+      ]
+    }
+  ]
+}

@@ -165,17 +165,30 @@ def run_pipeline(
 
 
 V2_SCENE_SCRIPT = PROJECT_ROOT / "scenes" / "multi_scene.py"
+V3_SCENE_SCRIPT = PROJECT_ROOT / "scenes" / "v3_scene.py"
 
 
 def run_plan(plan_path: Path, **kwargs) -> Path:
-    """Schema-version-aware plan router: VideoPlan V2 -> MultiSceneVideo, legacy ShortPlan -> AIShort."""
+    """Schema-version-aware plan router: V3 -> V3Scene, V2/2.1 -> MultiSceneVideo, V1 -> AIShort."""
     plan_path = plan_path.resolve()
     raw = json.loads(plan_path.read_text(encoding="utf-8"))
     # Clear stale plan env vars before routing
     os.environ.pop("STUDIO_PLAN", None)
     os.environ.pop("STUDIO_V2_PLAN", None)
+    os.environ.pop("STUDIO_V3_PLAN", None)
     try:
-        if raw.get("schema_version") == "2.0" or "scenes" in raw:
+        if raw.get("schema_version") == "3.0":
+            from studio.ai.v3_schema import VideoPlanV3
+            from studio.ai.validate_v3 import validate_v3_plan
+
+            plan3 = VideoPlanV3.model_validate(raw)
+            issues = validate_v3_plan(plan3)
+            if issues:
+                raise ValueError("Invalid VideoPlanV3:\n- " + "\n- ".join(issues))
+            os.environ["STUDIO_V3_PLAN"] = str(plan_path)
+            return run_pipeline(V3_SCENE_SCRIPT, scene_name="V3Scene", output_stem=f"V3_{plan_path.stem}", **kwargs)
+
+        if raw.get("schema_version") in ("2.0", "2.1") or "scenes" in raw:
             from studio.ai.multi_schema import VideoPlan
             from studio.ai.validate_v2 import validate_video_plan
 
@@ -193,6 +206,7 @@ def run_plan(plan_path: Path, **kwargs) -> Path:
     finally:
         os.environ.pop("STUDIO_PLAN", None)
         os.environ.pop("STUDIO_V2_PLAN", None)
+        os.environ.pop("STUDIO_V3_PLAN", None)
 
 
 def main() -> None:
@@ -207,7 +221,7 @@ def main() -> None:
     parser.add_argument("--ai", action="store_true", help="Use the Gemini director (implied by --topic/--prompt)")
     parser.add_argument("--plan", type=Path, help="Render an existing ShortPlan JSON (no Gemini call)")
     parser.add_argument("--provider", type=str, default="gemini", choices=["gemini", "openrouter", "ollama", "llamacpp"], help="AI provider (default: gemini)")
-    parser.add_argument("--engine", type=str, default="v2", choices=["v2", "legacy"], help="v2: multi-scene VideoPlan (default); legacy: ShortPlan")
+    parser.add_argument("--engine", type=str, default="v3", choices=["v3", "v2", "legacy"], help="v3: composable object-event VideoPlanV3 (default); v2: VideoPlan; legacy: ShortPlan")
     parser.add_argument("--allow-paid", action="store_true", help="Disable strict free-only model enforcement")
     parser.add_argument("--model", type=str, default=None, help="AI model override")
     parser.add_argument("--format", type=str, default="shorts_hd", choices=list(FORMATS))
@@ -230,10 +244,18 @@ def main() -> None:
     if args.topic or args.prompt or (args.ai and not args.plan):
         if not (args.topic or args.prompt):
             parser.error("--ai needs --topic or --prompt")
-        from studio.ai.director import create_plan, create_v2_plan
+        from studio.ai.director import create_plan, create_v2_plan, create_v3_plan
 
         print(f"[0/5] {args.provider} creative director ({args.engine}): concept -> plan -> validation...")
-        if args.engine == "v2":
+        if args.engine == "v3":
+            plan_path = create_v3_plan(
+                topic=args.topic,
+                prompt=args.prompt,
+                model=args.model,
+                provider_name=args.provider,
+                free_only=not args.allow_paid,
+            )
+        elif args.engine == "v2":
             plan_path = create_v2_plan(
                 topic=args.topic,
                 prompt=args.prompt,

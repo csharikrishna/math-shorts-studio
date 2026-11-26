@@ -330,3 +330,55 @@ def create_v2_plan(
     path = out_dir / f"v2_{slugify(label)}.json"
     path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+V3_STYLE_GUIDE = """
+You are an educational math filmmaker creating a composable VideoPlanV3 (schema_version="3.0").
+Think through: concept -> prerequisites -> central discovery -> visual objects -> narration -> animation events.
+Objects persist across scenes when persist=true (keep axes, target curves, or geometric shapes on screen!).
+Object kinds:
+- axes (x_range, y_range), function_plot (expr, axes_id), parametric_curve (expr="X(t);Y(t)", t_range, axes_id),
+- bar_chart (values, bar_labels, log_scale), equation (tex), point (coords, axes_id),
+- line / vector (coords, end_coords, axes_id), polygon (vertices), circle (coords, radius), number_line (x_range), annotation (text, coords).
+Events reference object ids: op in {create, draw, transform, highlight, move, scale, rotate, remove, focus}, optional source_id (for transform), optional anchor_mark matching <bookmark mark='...'/> in narration.
+Create 5 to 8 progressive scenes (hook -> intuition -> construction -> discovery -> payoff) with 12-22 words per narration.
+Ensure mathematical accuracy: formulas, degrees, and plotted expressions must agree.
+"""
+
+
+def create_v3_plan(
+    topic: str | None = None,
+    prompt: str | None = None,
+    model: str | None = None,
+    out_dir: Path = PLANS_DIR,
+    provider_name: str = "gemini",
+    free_only: bool = True,
+) -> Path:
+    """Generate and validate a composable object-and-event VideoPlanV3 from a topic or prompt."""
+    from studio.ai.v3_schema import VideoPlanV3
+    from studio.ai.validate_v3 import validate_v3_plan
+
+    if not topic and not prompt:
+        raise ValueError("Give a topic or a prompt.")
+    label = prompt or topic or "video"
+    director = GeminiDirector(model=model, provider_name=provider_name, free_only=free_only)
+    req = f"{V3_STYLE_GUIDE}\n\nTopic/Concept: {label}\nGenerate a complete VideoPlanV3 JSON."
+    plan, resp = director.provider.generate_structured(req, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.5)
+    director._log(f"{resp.provider}/{resp.model}: V3 plan generated in {resp.latency_s:.1f}s (tokens: {resp.prompt_tokens}+{resp.completion_tokens})")
+
+    for round_idx in range(1, MAX_REPAIRS + 1):
+        issues = validate_v3_plan(plan)
+        if not issues:
+            break
+        director._log(f"V3 repair round {round_idx}/{MAX_REPAIRS} ({len(issues)} issues)")
+        fix_prompt = "Fix these VideoPlanV3 issues:\n- " + "\n- ".join(issues) + f"\n\nCurrent JSON:\n{plan.model_dump_json()}"
+        plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.3)
+
+    issues = validate_v3_plan(plan)
+    if issues:
+        raise DirectorError("VideoPlanV3 still invalid after repairs:\n- " + "\n- ".join(issues))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"v3_{slugify(label)}.json"
+    path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
