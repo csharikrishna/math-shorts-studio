@@ -83,7 +83,7 @@ def master_video(
         f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
         f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
         f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0,"
-        f"alimiter=limit=0.92[master_a]"
+        f"alimiter=limit=0.92,loudnorm=I=-14.0:TP=-1.0:LRA=7.0[master_a]"
     )
 
     video_chain = cinematic_video_filter(look, lut_path)
