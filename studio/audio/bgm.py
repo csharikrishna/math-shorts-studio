@@ -58,25 +58,6 @@ def generate_ambient_bgm(output_path: Path, duration: float, bpm: float = 84.0) 
         left[i0:i1] += pad_l * env
         right[i0:i1] += pad_r * env
 
-        # Ping-pong pluck arpeggio on 8th notes (chord tones up an octave), alternating L/R
-        eighth = 60.0 / bpm / 2.0
-        arp_notes = [f * 2.0 for f in freqs] + [freqs[1] * 4.0, freqs[2] * 2.0]
-        n_steps = int(local_dur / eighth)
-        pluck_len = int(min(eighth * 3.0, 0.9) * SAMPLE_RATE)
-        tp = np.arange(pluck_len) / SAMPLE_RATE
-        for step in range(n_steps):
-            s0 = i0 + int(step * eighth * SAMPLE_RATE)
-            s1 = min(i1, s0 + pluck_len)
-            if s1 <= s0:
-                continue
-            f = arp_notes[(step * 3) % len(arp_notes)]
-            tone = (np.sin(2.0 * np.pi * f * tp) + 0.25 * np.sin(4.0 * np.pi * f * tp)) * np.exp(-tp * 7.0)
-            tone *= 0.045 * (1.0 - np.exp(-tp * 400.0))
-            seg = tone[: s1 - s0]
-            pos = 0.35 if step % 2 == 0 else -0.35
-            left[s0:s1] += seg * np.cos((pos + 1.0) * np.pi / 4.0) * 1.41
-            right[s0:s1] += seg * np.sin((pos + 1.0) * np.pi / 4.0) * 1.41
-
     # Slow stereo chorus/LFO: decorrelated amplitude drift widens the pad image
     lfo_l = 1.0 + 0.10 * np.sin(2.0 * np.pi * 0.11 * t)
     lfo_r = 1.0 + 0.10 * np.sin(2.0 * np.pi * 0.11 * t + np.pi * 0.6)
