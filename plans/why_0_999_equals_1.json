@@ -1,0 +1,168 @@
+{
+  "topic": "Why 0.999... equals 1",
+  "tag": "Real Analysis",
+  "title": "The Infinite Nines",
+  "template": "sequence",
+  "x_range": [
+    0.0,
+    11.0
+  ],
+  "y_range": [
+    0.0,
+    1.2
+  ],
+  "z_range": null,
+  "reference_expr": "1",
+  "x_labels": [
+    {
+      "value": 1.0,
+      "tex": "1"
+    },
+    {
+      "value": 5.0,
+      "tex": "5"
+    },
+    {
+      "value": 10.0,
+      "tex": "10"
+    }
+  ],
+  "beats": [
+    {
+      "beat_id": "hook",
+      "narration": "Can two numbers look completely different yet be *identical*?",
+      "caption": "Do different decimals represent the same number?",
+      "formula": "0.\\bar{9} \\overset{?}{=} 1",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "visual_intent": {
+        "expr": "1 - 1 / (10**n)",
+        "t_range": null,
+        "n_max": 2,
+        "y_range": null,
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "n = 2",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "step_two",
+      "narration": "Add another nine, and we inch *closer* to the ceiling.",
+      "caption": "Add a nine: we inch closer to 1",
+      "formula": "0.99 = 1 - \\frac{1}{100}",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {
+        "expr": "1 - 1 / (10**n)",
+        "t_range": null,
+        "n_max": 3,
+        "y_range": null,
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "n = 3",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "step_four",
+      "narration": "With four nines, the <bookmark mark='gap'/>*gap* shrinks to a tiny sliver.",
+      "caption": "The gap shrinks with every nine",
+      "formula": "0.9999 = 1 - \\frac{1}{10000}",
+      "color_role": "secondary",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": "1 - 1 / (10**n)",
+        "t_range": null,
+        "n_max": 4,
+        "y_range": [
+          0.9,
+          1.05
+        ],
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "n = 4",
+        "cues": [
+          {
+            "mark": "gap",
+            "action": "flash_point"
+          }
+        ]
+      }
+    },
+    {
+      "beat_id": "step_seven",
+      "narration": "At seven nines, the difference is practically *invisible*.",
+      "caption": "Seven nines makes the error invisible",
+      "formula": "0.\\underbrace{99...9}_{7} = 1 - 10^{-7}",
+      "color_role": "tertiary",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": "1 - 1 / (10**n)",
+        "t_range": null,
+        "n_max": 7,
+        "y_range": [
+          0.99,
+          1.01
+        ],
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "n = 7",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "step_ten",
+      "narration": "As n goes to infinity, the distance <bookmark mark='zero'/>*vanishes* entirely.",
+      "caption": "As n goes to infinity, error vanishes",
+      "formula": "\\lim_{n \\to \\infty} (1 - 10^{-n}) = 1",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "visual_intent": {
+        "expr": "1 - 1 / (10**n)",
+        "t_range": null,
+        "n_max": 10,
+        "y_range": [
+          0.999,
+          1.001
+        ],
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "n = 10",
+        "cues": [
+          {
+            "mark": "zero",
+            "action": "sweep_curve"
+          }
+        ]
+      }
+    },
+    {
+      "beat_id": "payoff",
+      "narration": "Zero point nine repeating doesn't approach one. It *is* one.",
+      "caption": "0.999... literally equals 1",
+      "formula": "0.999... = \\sum_{k=1}^{\\infty} \\frac{9}{10^k} = 1",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "visual_intent": {
+        "expr": "1",
+        "t_range": null,
+        "n_max": 10,
+        "y_range": [
+          0.999,
+          1.001
+        ],
+        "slice_axis": null,
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "Exact",
+        "cues": []
+      }
+    }
+  ]
+}

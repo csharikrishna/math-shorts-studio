@@ -1,0 +1,238 @@
+{
+  "topic": "Fourier square wave",
+  "tag": "Fourier Analysis",
+  "title": "Smooth Waves, Sharp Edges",
+  "template": "graph",
+  "x_range": [
+    -3.6,
+    3.6
+  ],
+  "y_range": [
+    -1.6,
+    1.6
+  ],
+  "z_range": null,
+  "polytope": null,
+  "reference_expr": "sign(sin(x))",
+  "x_labels": [
+    {
+      "value": -3.14159,
+      "tex": "-\\pi"
+    },
+    {
+      "value": 3.14159,
+      "tex": "\\pi"
+    }
+  ],
+  "beats": [
+    {
+      "beat_id": "hook",
+      "narration": "Here is something that sounds *impossible*: smooth curving waves can combine to build a perfectly sharp corner.",
+      "caption": "Can smooth waves build a sharp corner?",
+      "formula": "\\sum \\sin(kx) \\overset{?}{=} \\text{square}",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "visual_intent": {
+        "expr": "4/pi*sin(x)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "1 wave",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "first_wave",
+      "narration": "We start with just one sine wave. It goes up and comes down, completely smooth everywhere.",
+      "caption": "One sine wave: perfectly smooth",
+      "formula": "S_1 = \\tfrac{4}{\\pi}\\sin x",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": "4/pi*sin(x)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "1 wave",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "add_three",
+      "narration": "Let us add a third harmonic with one-third the height. The top begins to <bookmark mark='flat'/>*flatten* out.",
+      "caption": "Add 3x: peaks flatten",
+      "formula": "S_3 = \\tfrac{4}{\\pi}(\\sin x + \\tfrac{\\sin 3x}{3})",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 3, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "2 waves",
+        "cues": [
+          {
+            "mark": "flat",
+            "action": "sweep_curve"
+          }
+        ]
+      }
+    },
+    {
+      "beat_id": "add_five",
+      "narration": "Next we add the fifth harmonic. Notice how the vertical walls are starting to form along the sides.",
+      "caption": "Add 5x: vertical walls form",
+      "formula": "S_5 = S_3 + \\tfrac{4}{\\pi}\\tfrac{\\sin 5x}{5}",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 5, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "3 waves",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "add_seven",
+      "narration": "With seven terms, the shape looks increasingly like a rectangular box, though the corners still wiggle.",
+      "caption": "Add 7x: box shape emerges",
+      "formula": "S_7 = S_5 + \\tfrac{4}{\\pi}\\tfrac{\\sin 7x}{7}",
+      "color_role": "secondary",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 7, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "4 waves",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "add_fifteen",
+      "narration": "Jumping ahead to fifteen terms, the flat regions get flatter and the corners grow much *sharper*.",
+      "caption": "Fifteen terms: sharper corners",
+      "formula": "S_{15} = \\frac{4}{\\pi} \\sum_{k=1}^{15} \\frac{\\sin(kx)}{k}",
+      "color_role": "tertiary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 15, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "8 waves",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "zoom_corner",
+      "narration": "Let us look closely at the corner. No matter how many waves we add, a permanent *bump* always remains.",
+      "caption": "A permanent overshoot remains",
+      "formula": "\\text{Gibbs Phenomenon: } \\approx 9\\%",
+      "color_role": "danger",
+      "sfx_cue": "chime_reveal",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 19, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": [
+          -0.2,
+          1.4
+        ],
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": true,
+        "readout": "error",
+        "badge_label": "10 waves",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "many_waves",
+      "narration": "If we include thirty terms, the extra wiggle squeezes into a microscopic spike right at the edge.",
+      "caption": "Wiggle squeezes into the edge",
+      "formula": "\\sum_{k=1}^{29} \\dots",
+      "color_role": "success",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 29, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": true,
+        "readout": "error",
+        "badge_label": "15 waves",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "payoff",
+      "narration": "Infinitely many smooth sine waves combine to make a perfectly *sharp* edge. The math behind your audio player.",
+      "caption": "Infinite smooth waves = sharp edge",
+      "formula": "\\tfrac{4}{\\pi}\\sum_{k\\,odd}\\tfrac{\\sin kx}{k} = \\text{square}",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "visual_intent": {
+        "expr": "4/pi*sum(k, 1, 39, 2, sin(k*x)/k)",
+        "t_range": null,
+        "n_max": null,
+        "y_range": [
+          -1.6,
+          1.6
+        ],
+        "slice_axis": null,
+        "rotation_plane": null,
+        "rotation_speed": null,
+        "highlight": null,
+        "show_error_area": false,
+        "readout": "error",
+        "badge_label": "20 waves",
+        "cues": []
+      }
+    }
+  ]
+}

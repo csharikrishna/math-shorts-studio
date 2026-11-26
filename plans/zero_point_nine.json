@@ -1,0 +1,67 @@
+{
+  "topic": "Why 0.999... equals 1",
+  "tag": "Real Analysis",
+  "title": "Is 0.999... Really 1?",
+  "template": "sequence",
+  "x_range": [0, 9],
+  "y_range": [0.86, 1.02],
+  "z_range": null,
+  "reference_expr": "1",
+  "x_labels": [],
+  "beats": [
+    {
+      "beat_id": "hook",
+      "narration": "Is zero point nine repeating *actually* equal to *one*?",
+      "caption": "Is 0.999... actually equal to 1?",
+      "formula": "0.\\overline{9} \\overset{?}{=} 1",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "visual_intent": {"expr": "1 - 10**(-n)", "n_max": 3, "readout": "value", "badge_label": "3 nines", "cues": []}
+    },
+    {
+      "beat_id": "each_nine",
+      "narration": "Every extra nine closes *ninety percent* of the gap to one.",
+      "caption": "Each nine closes 90% of the gap",
+      "formula": "a_n = 1 - 10^{-n}",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {"expr": "1 - 10**(-n)", "n_max": 8, "readout": "error", "badge_label": "8 nines", "cues": []}
+    },
+    {
+      "beat_id": "zoom_one",
+      "narration": "Zoom in a *hundred* times, <bookmark mark='gap'/>and a gap still shows.",
+      "caption": "Zoom 100x: a gap still shows",
+      "formula": "1 - a_n = 10^{-n}",
+      "color_role": "tertiary",
+      "sfx_cue": "whoosh_soft",
+      "visual_intent": {"expr": null, "y_range": [0.9986, 1.0002], "readout": "error", "badge_label": "Zoom 100x", "cues": [{"mark": "gap", "action": "flash_point"}]}
+    },
+    {
+      "beat_id": "zoom_two",
+      "narration": "Zoom again, and the next nines <bookmark mark='close'/>*close* it every time.",
+      "caption": "Zoom again: new nines close it",
+      "formula": "10^{-n} \\to 0",
+      "color_role": "tertiary",
+      "sfx_cue": "chime_reveal",
+      "visual_intent": {"expr": null, "y_range": [0.999986, 1.000002], "readout": "error", "badge_label": "Zoom 10⁴x", "cues": [{"mark": "close", "action": "indicate_formula"}]}
+    },
+    {
+      "beat_id": "smaller",
+      "narration": "So the real gap is smaller than *every* positive number.",
+      "caption": "The gap is below every positive number",
+      "formula": "0 \\le 1 - 0.\\overline{9} < \\varepsilon",
+      "color_role": "success",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {"expr": null, "readout": "error", "badge_label": "Any ε > 0", "cues": []}
+    },
+    {
+      "beat_id": "payoff",
+      "narration": "A gap smaller than everything is *zero*. They're the same number!",
+      "caption": "Zero gap: 0.999... = 1 exactly",
+      "formula": "0.\\overline{9} = 1",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "visual_intent": {"expr": null, "readout": "value", "badge_label": "Equal!", "cues": []}
+    }
+  ]
+}

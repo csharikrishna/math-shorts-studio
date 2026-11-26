@@ -1,0 +1,130 @@
+{
+  "topic": "4D Hypercube Shadow",
+  "tag": "Four Dimensions",
+  "title": "The Shadow of a Tesseract",
+  "template": "polytope4d",
+  "x_range": [
+    -1.0,
+    1.0
+  ],
+  "y_range": [
+    -1.0,
+    1.0
+  ],
+  "z_range": null,
+  "polytope": "tesseract",
+  "reference_expr": null,
+  "x_labels": [],
+  "beats": [
+    {
+      "beat_id": "hook",
+      "narration": "What does the *shadow* of a four-dimensional cube actually look like?",
+      "caption": "What does a 4D shadow look like?",
+      "formula": "\\text{tesseract in } \\mathbb{R}^4",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "visual_intent": {
+        "expr": null,
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": "xy",
+        "rotation_speed": 0.1,
+        "highlight": "none",
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "Resting",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "inner_cube",
+      "narration": "We start with a small *cube* nested inside a larger one.",
+      "caption": "A small cube inside a big cube",
+      "formula": "\\text{inner } + \\text{outer cube}",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "visual_intent": {
+        "expr": null,
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": "xy",
+        "rotation_speed": 0.0,
+        "highlight": "inner",
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "Nested",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "connectors",
+      "narration": "Eight slanted *connectors* bridge every single corresponding corner together.",
+      "caption": "Connectors join all vertices",
+      "formula": "8 \\text{ connector edges}",
+      "color_role": "tertiary",
+      "sfx_cue": "tick_soft",
+      "visual_intent": {
+        "expr": null,
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": "xy",
+        "rotation_speed": 0.0,
+        "highlight": "connectors",
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "8 Edges",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "turn_xw",
+      "narration": "Now watch what happens when we rotate it *through* the fourth dimension.",
+      "caption": "Rotating through the 4th axis",
+      "formula": "\\text{rotation in } XW",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "visual_intent": {
+        "expr": null,
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": "xw",
+        "rotation_speed": 0.2,
+        "highlight": "none",
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "Spinning XW",
+        "cues": []
+      }
+    },
+    {
+      "beat_id": "payoff",
+      "narration": "The inside *turns* completely outside, revealing a true 4D shadow.",
+      "caption": "The inside turns outside",
+      "formula": "\\text{perspective projection}",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "visual_intent": {
+        "expr": null,
+        "t_range": null,
+        "n_max": null,
+        "y_range": null,
+        "slice_axis": null,
+        "rotation_plane": "xw",
+        "rotation_speed": 0.3,
+        "highlight": "none",
+        "show_error_area": false,
+        "readout": "value",
+        "badge_label": "4D Shadow",
+        "cues": []
+      }
+    }
+  ]
+}
