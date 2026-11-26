@@ -113,15 +113,15 @@ def master_video(
     filter_complex = f"{audio_mix},{ln_filter}[master_a]"
 
     video_chain = cinematic_video_filter(look, lut_path)
+    # Pad trailing static frame up to 2s and use -shortest so CFR video matches audio duration (< 35ms drift)
     if video_chain:
-        filter_complex += f";[0:v]{video_chain}[master_v]"
+        filter_complex += f";[0:v]{video_chain},tpad=stop_mode=clone:stop_duration=2.0[master_v]"
         video_map = "[master_v]"
         video_codec = default_codec_flags
     else:
-        # No visual filter: stream-copy ManimGX's already-compact CRF 23 GPU render (< 0.2s)
-        video_map = "0:v"
-        video_codec = ["-c:v", "copy"]
-        encoder_name = "copy"
+        filter_complex += ";[0:v]tpad=stop_mode=clone:stop_duration=2.0,format=yuv420p[master_v]"
+        video_map = "[master_v]"
+        video_codec = default_codec_flags
 
     print(f"      encoder: {encoder_name}")
 
@@ -136,7 +136,8 @@ def master_video(
             "-map", video_map,
             "-map", "[master_a]",
             *video_codec,
-            *(["-fps_mode", "cfr"] if video_codec != ["-c:v", "copy"] else []),
+            "-fps_mode", "cfr",
+            "-shortest",
             "-c:a", "aac",
             "-ar", "48000",
             "-b:a", "160k",

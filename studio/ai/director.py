@@ -337,10 +337,14 @@ You are an educational math filmmaker creating a composable VideoPlanV3 (schema_
 Think through: concept -> prerequisites -> central discovery -> visual objects -> narration -> animation events.
 Objects persist across scenes when persist=true (keep axes, target curves, or geometric shapes on screen!).
 Object kinds:
-- axes (x_range, y_range), function_plot (expr, axes_id), parametric_curve (expr="X(t);Y(t)", t_range, axes_id),
-- bar_chart (values, bar_labels, log_scale), equation (tex), point (coords, axes_id),
-- line / vector (coords, end_coords, axes_id), polygon (vertices), circle (coords, radius), number_line (x_range), annotation (text, coords).
-Events reference object ids: op in {create, draw, transform, highlight, move, scale, rotate, remove, focus}, optional source_id (for transform), optional anchor_mark matching <bookmark mark='...'/> in narration.
+- axes (x_range, y_range, equal_aspect=true for geometry/complex plane), function_plot (expr, axes_id),
+- parametric_curve (expr="X(t);Y(t)", t_range, axes_id), bar_chart (values, bar_labels, log_scale),
+- equation (tex), point (coords or param_name+expr="cos(theta);sin(theta)", axes_id),
+- line / vector (coords, end_coords or param_name+expr, axes_id), angle_arc (axes_id, param_name, radius),
+- projection (axes_id, param_name), polygon (vertices, axes_id), circle (coords, radius, axes_id),
+- number_line (x_range), annotation (text, coords, axes_id).
+Events reference object ids: op in {create, draw, transform, highlight, move, scale, rotate, remove, focus, animate_param}.
+For animate_param, include param_range=[start, end] to smoothly sweep ValueTracker-bound objects.
 Create 5 to 8 progressive scenes (hook -> intuition -> construction -> discovery -> payoff) with 12-22 words per narration.
 Ensure mathematical accuracy: formulas, degrees, and plotted expressions must agree.
 """

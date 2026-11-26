@@ -1,0 +1,453 @@
+{
+  "schema_version": "3.0",
+  "topic": "Pythagorean theorem geometric proof",
+  "title": "Unlocking the Pythagorean Theorem",
+  "audience": "High School Geometry Students",
+  "scenes": [
+    {
+      "scene_id": "hook",
+      "purpose": "Introduce right triangles and the famous equation.",
+      "narration": "Every right triangle hides a profound algebraic secret relating its three side lengths together forever.",
+      "color_role": "primary",
+      "sfx_cue": "chime_reveal",
+      "objects": [
+        {
+          "id": "main_eq",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "a^2 + b^2 = c^2",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            2.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Theorem Equation"
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "main_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "intuition",
+      "purpose": "Showcase squares built on the sides of a right triangle.",
+      "narration": "Imagine building perfect squares outward from each of the three sides of our right triangle.",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "objects": [
+        {
+          "id": "cart_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -5.0,
+            5.0
+          ],
+          "y_range": [
+            -5.0,
+            5.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Cartesian Axes"
+        },
+        {
+          "id": "triangle_poly",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              0.0,
+              4.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "cart_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Right Triangle"
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "cart_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "cart_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "triangle_poly",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "triangle_poly",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "construction",
+      "purpose": "Construct a large square containing four identical right triangles and an inner tilted square.",
+      "narration": "We arrange four identical copies of our triangle inside a single large bounding square.",
+      "color_role": "tertiary",
+      "sfx_cue": "pop_marimba",
+      "objects": [
+        {
+          "id": "outer_square",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              -3.0,
+              -3.0
+            ],
+            [
+              4.0,
+              -3.0
+            ],
+            [
+              4.0,
+              4.0
+            ],
+            [
+              -3.0,
+              4.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "cart_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Outer Square"
+        },
+        {
+          "id": "inner_square",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              0.0,
+              3.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "cart_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Inner Square"
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "outer_square",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "outer_square",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "inner_square",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "inner_square",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "discovery",
+      "purpose": "Calculate areas to establish the relationship.",
+      "narration": "The total area equals the sum of the four triangle regions plus the tilted inner square area.",
+      "color_role": "success",
+      "sfx_cue": "tick_soft",
+      "objects": [
+        {
+          "id": "area_formula",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "Area = 4(\\frac{1}{2}ab) + c^2",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            -4.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Area Equation"
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "area_formula",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "area_formula",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "area_formula",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "payoff",
+      "purpose": "Simplify the algebraic expression to prove the theorem.",
+      "narration": "Expanding the side lengths directly simplifies into the classic Pythagorean theorem relationship we all use.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "objects": [
+        {
+          "id": "final_eq",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "(a + b)^2 = 2ab + c^2 \\implies a^2 + b^2 = c^2",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            0.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Final Proof"
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "final_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "final_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "final_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

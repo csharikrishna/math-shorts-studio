@@ -12,7 +12,7 @@
       "sfx_cue": "whoosh_soft",
       "objects": [
         {"id": "eq_hook", "kind": "equation", "tex": "e^{i\\pi} + 1 \\overset{?}{=} 0", "color_role": "highlight", "persist": false},
-        {"id": "plane", "kind": "axes", "x_range": [-1.8, 1.8], "y_range": [-1.8, 1.8], "equal_aspect": true, "color_role": "primary", "persist": true}
+        {"id": "plane", "kind": "axes", "x_range": [-1.35, 1.35], "y_range": [-1.35, 1.35], "equal_aspect": true, "color_role": "primary", "persist": true}
       ],
       "events": [
         {"op": "create", "target_id": "plane"},
@@ -27,8 +27,8 @@
       "sfx_cue": "tick_soft",
       "objects": [
         {"id": "eq_axes", "kind": "equation", "tex": "z = x + iy", "color_role": "primary", "persist": true},
-        {"id": "lbl_real", "kind": "annotation", "text": "Real", "axes_id": "plane", "coords": [1.30, -0.45], "color_role": "primary", "persist": false},
-        {"id": "lbl_imag", "kind": "annotation", "text": "Imaginary", "axes_id": "plane", "coords": [1.05, 1.35], "color_role": "tertiary", "persist": false}
+        {"id": "lbl_real", "kind": "annotation", "text": "Real", "axes_id": "plane", "coords": [0.95, -0.32], "color_role": "primary", "persist": false},
+        {"id": "lbl_imag", "kind": "annotation", "text": "Imaginary", "axes_id": "plane", "coords": [0.75, 1.05], "color_role": "tertiary", "persist": false}
       ],
       "events": [
         {"op": "create", "target_id": "eq_axes"},
@@ -44,11 +44,15 @@
       "sfx_cue": "pop_marimba",
       "objects": [
         {"id": "unit_circle", "kind": "circle", "axes_id": "plane", "coords": [0.0, 0.0], "radius": 1.0, "color_role": "primary", "persist": true},
+        {"id": "traversed_arc", "kind": "angle_arc", "axes_id": "plane", "param_name": "theta", "param_init": 0.0, "radius": 1.0, "color_role": "highlight", "persist": true},
+        {"id": "proj_lines", "kind": "projection", "axes_id": "plane", "param_name": "theta", "param_init": 0.0, "color_role": "primary", "persist": true},
         {"id": "rot_vec", "kind": "vector", "axes_id": "plane", "coords": [0.0, 0.0], "param_name": "theta", "param_init": 0.0, "expr": "cos(theta); sin(theta)", "color_role": "secondary", "persist": true},
         {"id": "rot_pt", "kind": "point", "axes_id": "plane", "param_name": "theta", "param_init": 0.0, "expr": "cos(theta); sin(theta)", "color_role": "highlight", "persist": true}
       ],
       "events": [
         {"op": "create", "target_id": "unit_circle"},
+        {"op": "create", "target_id": "traversed_arc"},
+        {"op": "create", "target_id": "proj_lines"},
         {"op": "create", "target_id": "rot_vec", "anchor_mark": "start"},
         {"op": "create", "target_id": "rot_pt", "anchor_mark": "start"}
       ]

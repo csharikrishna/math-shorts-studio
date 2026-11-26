@@ -20,6 +20,8 @@ ObjectKind = Literal[
     "circle",
     "number_line",
     "annotation",
+    "angle_arc",
+    "projection",
 ]
 
 EventOp = Literal[

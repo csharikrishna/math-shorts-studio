@@ -142,18 +142,18 @@ class V3Scene(StoryScene):
         if obj.kind == "axes":
             xr = obj.x_range or [-3.5, 3.5]
             yr = obj.y_range or [-1.5, 1.5]
-            x_len = L.stage_w * 0.88
+            x_len = L.stage_w * 0.92
             if obj.equal_aspect:
-                y_len = min(L.stage_h * 0.68, x_len * (yr[1] - yr[0]) / max(xr[1] - xr[0], 1e-6))
+                y_len = min(L.stage_h * 0.78, x_len * (yr[1] - yr[0]) / max(xr[1] - xr[0], 1e-6))
                 x_len = y_len * (xr[1] - xr[0]) / max(yr[1] - yr[0], 1e-6)
             else:
-                y_len = L.stage_h * 0.65
+                y_len = L.stage_h * 0.72
             ax = m.Axes(
                 x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
                 y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
                 x_length=x_len,
                 y_length=y_len,
-                axis_config={"color": T.text_muted, "stroke_width": 1.6, "include_tip": True},
+                axis_config={"color": T.text_muted, "stroke_width": 1.8, "include_tip": True},
                 tips=True,
             ).move_to(L.stage_center)
             self.axes_ranges[obj.id] = (xr, yr)
@@ -278,5 +278,38 @@ class V3Scene(StoryScene):
                     lbl.move_to(np.array([x_pos, base_y - 0.25, 0.0]))
                     grp.add(lbl)
             return grp
+
+        if obj.kind == "angle_arc":
+            tracker = self.params.setdefault(obj.param_name or "theta", m.ValueTracker(obj.param_init))
+            ax = self.registry.get(obj.axes_id or "")
+            r_math = obj.radius or 1.0
+            r_scene = float(np.linalg.norm(ax.c2p(r_math, 0.0) - ax.c2p(0.0, 0.0))) if isinstance(ax, m.Axes) else r_math
+            center = ax.c2p(0.0, 0.0) if isinstance(ax, m.Axes) else L.stage_center
+            def _mk_arc(t=tracker, rad=r_scene, ctr=center, c=color):
+                ang = float(t.get_value())
+                if abs(ang) < 1e-3:
+                    return m.Dot(ctr + np.array([rad, 0.0, 0.0]), radius=0.01, color=c)
+                return m.Arc(radius=rad, start_angle=0.0, angle=ang, arc_center=ctr, color=c, stroke_width=4.5)
+            mob = m.always_redraw(_mk_arc)
+            mob._param_tracker = tracker  # type: ignore[attr-defined]
+            return mob
+
+        if obj.kind == "projection":
+            tracker = self.params.setdefault(obj.param_name or "theta", m.ValueTracker(obj.param_init))
+            ax = self.registry.get(obj.axes_id or "")
+            def _mk_proj(t=tracker, a=ax, c=color):
+                ang = float(t.get_value())
+                cx, cy = float(np.cos(ang)), float(np.sin(ang))
+                if not isinstance(a, m.Axes):
+                    return m.VGroup()
+                p_pt = a.c2p(cx, cy)
+                p_x = a.c2p(cx, 0.0)
+                return m.VGroup(
+                    m.DashedLine(p_pt, p_x, color=c, stroke_width=2.2),
+                    m.DashedLine(p_pt, a.c2p(0.0, cy), color=T.accent_tertiary, stroke_width=2.2),
+                )
+            mob = m.always_redraw(_mk_proj)
+            mob._param_tracker = tracker  # type: ignore[attr-defined]
+            return mob
 
         return m.Dot(L.stage_center, color=color)

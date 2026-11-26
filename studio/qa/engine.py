@@ -166,13 +166,30 @@ def verify_media_streams(video_path: Path, expected_sr: int = 48000, max_av_drif
         cand = ff_dir / ("ffprobe.exe" if (ff_dir / "ffprobe.exe").exists() else "ffprobe")
         ffprobe = str(cand) if cand.exists() else ""
     if not ffprobe:
-        # Fallback: parse ffmpeg -i stderr
+        # Fallback: measure exact video and audio stream durations via ffmpeg decode/copy stats
         ff = find_ffmpeg()
-        proc = subprocess.run([ff, "-hide_banner", "-i", str(video_path)], capture_output=True, text=True, timeout=30)
-        sr_m = re.search(r"(\d+)\s*Hz,\s*stereo", proc.stderr)
+        info = subprocess.run([ff, "-hide_banner", "-i", str(video_path)], capture_output=True, text=True, timeout=30)
+        sr_m = re.search(r"(\d+)\s*Hz,\s*stereo", info.stderr)
+        fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", info.stderr)
         sr = int(sr_m.group(1)) if sr_m else 0
-        ok = sr == expected_sr
-        return QACheck("media_streams", "passed" if ok else "failed", f"Audio sample rate={sr} Hz (expected {expected_sr} Hz)")
+        fps = float(fps_m.group(1)) if fps_m else 0.0
+
+        def _stream_dur(sel: str) -> float:
+            p = subprocess.run(
+                [ff, "-hide_banner", "-i", str(video_path), "-map", sel, "-c", "copy", "-f", "null", "-"],
+                capture_output=True, text=True, timeout=30,
+            )
+            times = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", p.stderr)
+            if not times:
+                return 0.0
+            h, m, s = times[-1]
+            return int(h) * 3600 + int(m) * 60 + float(s)
+
+        v_dur = _stream_dur("0:v:0")
+        a_dur = _stream_dur("0:a:0")
+        drift = abs(v_dur - a_dur)
+        ok = (sr == expected_sr) and (drift <= max_av_drift_s) and (fps >= 29.0)
+        return QACheck("media_streams", "passed" if ok else "failed", f"sr={sr}Hz, fps={fps:.2f}, v_dur={v_dur:.2f}s, a_dur={a_dur:.2f}s, drift={drift:.2f}s")
 
     proc = subprocess.run(
         [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)],
