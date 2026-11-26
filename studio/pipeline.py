@@ -205,6 +205,7 @@ def main() -> None:
     parser.add_argument("--ai", action="store_true", help="Use the Gemini director (implied by --topic/--prompt)")
     parser.add_argument("--plan", type=Path, help="Render an existing ShortPlan JSON (no Gemini call)")
     parser.add_argument("--provider", type=str, default="gemini", choices=["gemini", "openrouter", "ollama", "llamacpp"], help="AI provider (default: gemini)")
+    parser.add_argument("--engine", type=str, default="v2", choices=["v2", "legacy"], help="v2: multi-scene VideoPlan (default); legacy: ShortPlan")
     parser.add_argument("--allow-paid", action="store_true", help="Disable strict free-only model enforcement")
     parser.add_argument("--model", type=str, default=None, help="AI model override")
     parser.add_argument("--format", type=str, default="shorts_hd", choices=list(FORMATS))
@@ -227,16 +228,25 @@ def main() -> None:
     if args.topic or args.prompt or (args.ai and not args.plan):
         if not (args.topic or args.prompt):
             parser.error("--ai needs --topic or --prompt")
-        from studio.ai.director import create_plan
+        from studio.ai.director import create_plan, create_v2_plan
 
-        print(f"[0/5] {args.provider} creative director: concept -> beat plan -> validation...")
-        plan_path = create_plan(
-            topic=args.topic,
-            prompt=args.prompt,
-            model=args.model,
-            provider_name=args.provider,
-            free_only=not args.allow_paid,
-        )
+        print(f"[0/5] {args.provider} creative director ({args.engine}): concept -> plan -> validation...")
+        if args.engine == "v2":
+            plan_path = create_v2_plan(
+                topic=args.topic,
+                prompt=args.prompt,
+                model=args.model,
+                provider_name=args.provider,
+                free_only=not args.allow_paid,
+            )
+        else:
+            plan_path = create_plan(
+                topic=args.topic,
+                prompt=args.prompt,
+                model=args.model,
+                provider_name=args.provider,
+                free_only=not args.allow_paid,
+            )
         print(f"      -> Plan saved: {plan_path}")
         run_plan(plan_path, **common)
     elif args.plan:

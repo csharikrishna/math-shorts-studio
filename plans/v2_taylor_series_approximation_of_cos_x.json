@@ -1,0 +1,134 @@
+{
+  "schema_version": "2.0",
+  "topic": "Taylor series approximation of cos(x)",
+  "title": "Approximating Cosine with Polynomials",
+  "x_range": [
+    -6.28,
+    6.28
+  ],
+  "y_range": [
+    -2.0,
+    2.0
+  ],
+  "scenes": [
+    {
+      "scene_id": "cosine_hook",
+      "purpose": "Introduce the wave of cosine",
+      "narration": "How do we compute complex curves using simple polynomials? Let us look at the *cosine* wave.",
+      "formula": "f(x) = \\cos(x)",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "primitive": {
+        "kind": "single_wave",
+        "expr": "cos(x)",
+        "secondary_expr": null,
+        "harmonics": [],
+        "label": "Cosine Wave"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "constant_intuition",
+      "purpose": "Approximate at x=0 with a flat line",
+      "narration": "At the origin, the best flat approximation is the constant *one*.",
+      "formula": "P_0(x) = 1",
+      "color_role": "secondary",
+      "sfx_cue": "tick_soft",
+      "primitive": {
+        "kind": "contrast_waves",
+        "expr": "cos(x)",
+        "secondary_expr": "1 + 0*x",
+        "harmonics": [],
+        "label": "Degree Zero"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "quadratic_construction",
+      "purpose": "Add the first curvature term",
+      "narration": "To match the curve's downward bend, we add a negative *quadratic* term.",
+      "formula": "P_2(x) = 1 - \\frac{x^2}{2}",
+      "color_role": "highlight",
+      "sfx_cue": "pop_marimba",
+      "primitive": {
+        "kind": "contrast_waves",
+        "expr": "cos(x)",
+        "secondary_expr": "1 - x**2 / 2",
+        "harmonics": [],
+        "label": "Degree Two"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "quartic_expansion",
+      "purpose": "Expand to fourth degree for wider fit",
+      "narration": "Adding a quartic term makes our polynomial hug the cosine wave *longer*.",
+      "formula": "P_4(x) = 1 - \\frac{x^2}{2} + \\frac{x^4}{24}",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "primitive": {
+        "kind": "contrast_waves",
+        "expr": "cos(x)",
+        "secondary_expr": "1 - x**2 / 2 + x**4 / 24",
+        "harmonics": [],
+        "label": "Degree Four"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "progressive_accumulation",
+      "purpose": "Show the sum building up term by term",
+      "narration": "Each higher term is a refined *correction* yielding greater precision.",
+      "formula": "\\sum_{n=0}^{\\infty} \\frac{(-1)^n x^{2n}}{(2n)!}",
+      "color_role": "tertiary",
+      "sfx_cue": "tick_soft",
+      "primitive": {
+        "kind": "progressive_sum",
+        "expr": "1 - x**2 / 2 + x**4 / 24 - x**6 / 720",
+        "secondary_expr": null,
+        "harmonics": [],
+        "label": "Taylor Series Sum"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "spectrum_discovery",
+      "purpose": "Examine the factorial growth of coefficients",
+      "narration": "The coefficients shrink rapidly thanks to *factorials* in the denominator.",
+      "formula": "a_n = \\frac{(-1)^n}{(2n)!}",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "primitive": {
+        "kind": "spectrum_bars",
+        "expr": null,
+        "secondary_expr": null,
+        "harmonics": [
+          1,
+          2,
+          6,
+          24,
+          120,
+          720
+        ],
+        "label": "Coefficient Magnitudes"
+      },
+      "y_range": null
+    },
+    {
+      "scene_id": "real_world_payoff",
+      "purpose": "Demonstrate the range of validity",
+      "narration": "Computers use these exact polynomials to evaluate *trigonometry* instantly.",
+      "formula": "\\cos(x) \\approx P_{10}(x)",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "primitive": {
+        "kind": "zoom_overshoot",
+        "expr": "cos(x)",
+        "secondary_expr": "1 - x**2/2 + x**4/24 - x**6/720 + x**8/40320",
+        "harmonics": [],
+        "label": "Global Approximation"
+      },
+      "y_range": null
+    }
+  ]
+}

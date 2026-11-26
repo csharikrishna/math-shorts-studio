@@ -156,7 +156,7 @@ class GeminiDirector:
 
         self._log(f"{self.provider.name}: requesting {schema.__name__}")
         try:
-            parsed, resp = self.provider.generate_structured(prompt, schema, system=STYLE_GUIDE)
+            parsed, resp = self.provider.generate_structured(prompt, schema, system=STYLE_GUIDE, temperature=temperature)
             self._log(f"{resp.provider}/{resp.model}: answered in {resp.latency_s:.1f}s")
             return parsed
         except ProviderError as exc:
@@ -269,5 +269,61 @@ def create_plan(
     plan = director.compile_plan(brief)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{slugify(label)}.json"
+    path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+V2_STYLE_GUIDE = """
+You are an educational math filmmaker creating a multi-scene VideoPlan (schema_version="2.0").
+Each scene has:
+- scene_id: unique snake_case id
+- purpose: concise educational goal (< 60 chars)
+- narration: warm, clear spoken English (<= 25 words), *emphasis* on 1-2 key words
+- formula: short LaTeX (no $)
+- color_role: primary | secondary | tertiary | success | highlight | danger
+- sfx_cue: whoosh_soft | pop_marimba | tick_soft | chime_reveal | chord_epiphany
+- primitive:
+  - kind: contrast_waves | single_wave | stacked_addition | progressive_sum | zoom_overshoot | spectrum_bars
+  - expr: valid NumPy-whitelisted function of x (required for all except spectrum_bars)
+  - secondary_expr: optional second function of x for comparison
+  - harmonics: list of positive integers (for spectrum_bars)
+Create 6 to 8 progressive scenes: hook -> intuition -> construction -> discovery -> real-world payoff.
+"""
+
+
+def create_v2_plan(
+    topic: str | None = None,
+    prompt: str | None = None,
+    model: str | None = None,
+    out_dir: Path = PLANS_DIR,
+    provider_name: str = "gemini",
+    free_only: bool = True,
+) -> Path:
+    """Generate and validate a multi-scene VideoPlan V2 directly from a topic or prompt."""
+    from studio.ai.multi_schema import VideoPlan
+    from studio.ai.validate_v2 import validate_video_plan
+
+    if not topic and not prompt:
+        raise ValueError("Give a topic or a prompt.")
+    label = prompt or topic or "video"
+    director = GeminiDirector(model=model, provider_name=provider_name, free_only=free_only)
+    req = f"{V2_STYLE_GUIDE}\n\nTopic/Concept: {label}\nGenerate a complete VideoPlan V2 JSON."
+    plan, resp = director.provider.generate_structured(req, VideoPlan, system=V2_STYLE_GUIDE, temperature=0.5)
+    director._log(f"{resp.provider}/{resp.model}: V2 plan generated in {resp.latency_s:.1f}s (tokens: {resp.prompt_tokens}+{resp.completion_tokens})")
+
+    for round_idx in range(1, MAX_REPAIRS + 1):
+        issues = validate_video_plan(plan)
+        if not issues:
+            break
+        director._log(f"V2 repair round {round_idx}/{MAX_REPAIRS} ({len(issues)} issues)")
+        fix_prompt = f"Fix these VideoPlan V2 validation issues:\n- " + "\n- ".join(issues) + f"\n\nCurrent JSON:\n{plan.model_dump_json()}"
+        plan, _ = director.provider.generate_structured(fix_prompt, VideoPlan, system=V2_STYLE_GUIDE, temperature=0.3)
+
+    issues = validate_video_plan(plan)
+    if issues:
+        raise DirectorError("VideoPlan V2 still invalid after repairs:\n- " + "\n- ".join(issues))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"v2_{slugify(label)}.json"
     path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
     return path

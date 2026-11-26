@@ -92,19 +92,19 @@ def master_video(
         [
             ffmpeg_bin, "-y",
             "-i", str(raw_video), "-i", str(voice_wav), "-i", str(bgm_wav),
-            "-filter_complex", f"{audio_mix},loudnorm=I=-14.0:TP=-1.0:LRA=7.0:print_format=json[m_a]",
+            "-filter_complex", f"{audio_mix},loudnorm=I=-15.0:TP=-3.0:LRA=7.0:print_format=json[m_a]",
             "-map", "[m_a]", "-f", "null", "-",
         ],
         capture_output=True,
         text=True,
         timeout=120,
     )
-    ln_filter = "loudnorm=I=-14.0:TP=-1.0:LRA=7.0"
+    ln_filter = "loudnorm=I=-15.0:TP=-3.0:LRA=7.0"
     m_json = _re.search(r"\{\s*\"input_i\"\s*:.*?\}", pass1.stderr, _re.DOTALL)
     if pass1.returncode == 0 and m_json:
         stats = _json.loads(m_json.group(0))
         ln_filter = (
-            f"loudnorm=I=-14.0:TP=-1.0:LRA=7.0:"
+            f"loudnorm=I=-15.0:TP=-3.0:LRA=7.0:"
             f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
             f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
             f"offset={stats['target_offset']}:linear=true"

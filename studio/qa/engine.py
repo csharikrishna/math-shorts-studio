@@ -142,11 +142,17 @@ def verify_audio_loudness(video_path: Path, min_lufs: float = -16.5, max_lufs: f
     if proc.returncode != 0:
         return QACheck("audio_loudness", "failed", f"FFmpeg ebur128 exited {proc.returncode}")
     matches = re.findall(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS", proc.stderr)
+    peak_matches = re.findall(r"Peak:\s*(-?\d+(?:\.\d+)?)\s*dBFS", proc.stderr)
     if not matches:
         return QACheck("audio_loudness", "failed", "Could not parse EBU R128 loudness.")
     lufs = float(matches[-1])
-    ok = min_lufs <= lufs <= max_lufs
-    return QACheck("audio_loudness", "passed" if ok else "failed", f"Integrated loudness = {lufs:.1f} LUFS (target {min_lufs}..{max_lufs})")
+    peak = float(peak_matches[-1]) if peak_matches else 0.0
+    ok = (min_lufs <= lufs <= max_lufs) and (peak <= -1.0)
+    return QACheck(
+        "audio_loudness",
+        "passed" if ok else "failed",
+        f"Integrated={lufs:.1f} LUFS (target {min_lufs}..{max_lufs}), TruePeak={peak:.1f} dBFS (<= -1.0)",
+    )
 
 
 def verify_storyboard_image(image_path: Path) -> QACheck:

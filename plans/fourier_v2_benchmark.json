@@ -84,7 +84,7 @@
     {
       "scene_id": "s7_gibbs_zoom",
       "purpose": "Zoom into the Gibbs overshoot (8.949%)",
-      "narration": "Zoom right into the corner. No matter how many terms we add, a *nine percent* Gibbs overshoot—eight point nine five percent—never disappears.",
+      "narration": "Zoom right into the corner. No matter how many terms we add, a limiting overshoot of *eight point nine four nine percent* of the jump height never disappears.",
       "formula": "\\text{Gibbs overshoot} \\approx 8.949\\%",
       "color_role": "danger",
       "sfx_cue": "chime_reveal",

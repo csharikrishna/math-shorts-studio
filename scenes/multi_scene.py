@@ -46,11 +46,18 @@ class MultiSceneVideo(StoryScene):
 
         for idx, sc in enumerate(V2_PLAN.scenes):
             color = getattr(T, ROLE_TO_THEME[sc.color_role])
-            new_stage = self._build_primitive(sc, color)
+            new_stage, anim_mode, anim_targets = self._build_primitive(sc, color)
             anims: list[m.Animation] = []
             if stage_group is not None:
                 anims.append(m.FadeOut(stage_group))
-            anims.append(m.FadeIn(new_stage))
+            if anim_mode == "grow_bars" and anim_targets:
+                anims.append(m.LaggedStart(*[m.GrowFromEdge(b, m.DOWN) for b in anim_targets], lag_ratio=0.12))
+            elif anim_mode == "create_curves" and anim_targets:
+                anims.append(m.FadeIn(new_stage[0]))
+                for t_mob in anim_targets:
+                    anims.append(m.Create(t_mob))
+            else:
+                anims.append(m.FadeIn(new_stage))
 
             if sc.formula:
                 new_f = m.MathTex(sc.formula, font_size=40, color=color)
@@ -81,32 +88,12 @@ class MultiSceneVideo(StoryScene):
             tips=True,
         ).move_to(L.stage_center)
 
-    def _build_primitive(self, sc, color: str) -> m.VGroup:
+    def _build_primitive(self, sc, color: str) -> tuple[m.VGroup, str, list[m.Mobject]]:
         T = self.theme
         prim = sc.primitive
         ax = self._axes(sc.y_range)
         group = m.VGroup(ax)
-
-        yr = sc.y_range or V2_PLAN.y_range
-        if prim.expr:
-            fn = compile_expr(prim.expr, ("x",))
-            curve = ax.plot(
-                lambda x, f=fn, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
-                x_range=V2_PLAN.x_range,
-                color=color,
-                stroke_width=3.5,
-            )
-            group.add(glow(curve, color=color), curve)
-
-        if prim.secondary_expr:
-            fn2 = compile_expr(prim.secondary_expr, ("x",))
-            curve2 = ax.plot(
-                lambda x, f=fn2, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
-                x_range=V2_PLAN.x_range,
-                color=T.accent_primary if color != T.accent_primary else T.accent_secondary,
-                stroke_width=2.5,
-            )
-            group.add(curve2)
+        curves: list[m.Mobject] = []
 
         if prim.kind == "spectrum_bars" and prim.harmonics:
             bars = m.VGroup()
@@ -119,6 +106,36 @@ class MultiSceneVideo(StoryScene):
                 y_pos = self.layout.stage_center[1] - self.layout.stage_h * 0.22 + h * 0.5
                 bar.move_to(np.array([x_pos, y_pos, 0.0]))
                 bars.add(bar)
-            return m.VGroup(bars)
+            return m.VGroup(bars), "grow_bars", list(bars)
 
-        return group
+        yr = sc.y_range or V2_PLAN.y_range
+        if prim.expr:
+            fn = compile_expr(prim.expr, ("x",))
+            curve = ax.plot(
+                lambda x, f=fn, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
+                x_range=V2_PLAN.x_range,
+                color=color,
+                stroke_width=3.5,
+            )
+            group.add(glow(curve, color=color), curve)
+            curves.append(curve)
+
+        if prim.secondary_expr:
+            fn2 = compile_expr(prim.secondary_expr, ("x",))
+            curve2 = ax.plot(
+                lambda x, f=fn2, lo=yr[0], hi=yr[1]: float(np.clip(f(x=x), lo, hi)),
+                x_range=V2_PLAN.x_range,
+                color=T.accent_primary if color != T.accent_primary else T.accent_secondary,
+                stroke_width=2.5,
+            )
+            group.add(curve2)
+            curves.append(curve2)
+
+        if prim.kind == "zoom_overshoot":
+            gibbs_y = 1.17898
+            if yr[0] <= gibbs_y <= yr[1]:
+                p_left = ax.c2p(V2_PLAN.x_range[0], gibbs_y)
+                p_right = ax.c2p(V2_PLAN.x_range[1], gibbs_y)
+                group.add(m.DashedLine(p_left, p_right, color=T.accent_highlight, stroke_width=2.0))
+
+        return group, "create_curves", curves
