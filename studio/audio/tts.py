@@ -6,10 +6,12 @@ import asyncio
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 import wave
 import edge_tts
 import numpy as np
@@ -122,6 +124,50 @@ async def _synth_edge_tts(text: str, voice: str, rate: str, out_mp3: Path, pitch
     return words
 
 
+def _trim_pcm_silence(pcm: np.ndarray, sr: int = SAMPLE_RATE) -> tuple[np.ndarray, float]:
+    """Trim leading/trailing silence below SILENCE_THRESHOLD_DB from mono int16 PCM."""
+    thresh = 32767.0 * 10.0 ** (SILENCE_THRESHOLD_DB / 20.0)
+    loud = np.flatnonzero(np.abs(pcm.astype(np.int32)) > thresh)
+    if loud.size:
+        i0 = max(0, int(loud[0]) - int(LEAD_PAD_S * sr))
+        i1 = min(len(pcm), int(loud[-1]) + int(TAIL_PAD_S * sr))
+    else:
+        i0, i1 = 0, len(pcm)
+    return pcm[i0:i1], i0 / float(sr)
+
+
+def _write_trimmed_mono_wav(pcm: np.ndarray, out_wav: Path, sr: int = SAMPLE_RATE) -> tuple[float, float]:
+    """Trim silence and write a mono 16-bit PCM WAV; returns (duration_s, head_trim_s)."""
+    trimmed, head_trim = _trim_pcm_silence(pcm, sr=sr)
+    with wave.open(str(out_wav), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(trimmed.tobytes())
+    return len(trimmed) / float(sr), head_trim
+
+
+def _resample_mono_to_target_i16(pcm_f32: np.ndarray, src_sr: int, dst_sr: int = SAMPLE_RATE) -> np.ndarray:
+    """Resample normalized float mono audio to target sample rate int16 in memory (zero subprocess)."""
+    x = np.asarray(pcm_f32, dtype=np.float32)
+    if x.size == 0:
+        return np.zeros(1, dtype=np.int16)
+    if src_sr == dst_sr:
+        return (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)
+    if dst_sr == 2 * src_sr and x.size >= 4:
+        # 4-tap Catmull-Rom half-band interpolation preserves speech bandwidth cleanly without FFmpeg overhead
+        xp = np.pad(x, (1, 2), mode="edge")
+        mid = -0.0625 * xp[:-3] + 0.5625 * xp[1:-2] + 0.5625 * xp[2:-1] - 0.0625 * xp[3:]
+        out = np.empty(x.size * 2, dtype=np.float32)
+        out[0::2] = x
+        out[1::2] = mid[: x.size]
+        return (np.clip(out, -1.0, 1.0) * 32767.0).astype(np.int16)
+    out_len = max(1, int(round(x.size * (dst_sr / float(src_sr)))))
+    src_pos = np.linspace(0.0, float(x.size - 1), out_len, dtype=np.float64)
+    up = np.interp(src_pos, np.arange(x.size, dtype=np.float64), x.astype(np.float64))
+    return (np.clip(up, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+
 def _decode_and_trim_wav(ffmpeg_bin: str, in_mp3: Path, out_wav: Path) -> tuple[float, float]:
     """Decode to 48kHz mono WAV and trim dead silence; returns (duration, seconds trimmed from the head)."""
     proc = subprocess.run(
@@ -130,20 +176,7 @@ def _decode_and_trim_wav(ffmpeg_bin: str, in_mp3: Path, out_wav: Path) -> tuple[
         capture_output=True,
     )
     pcm = np.frombuffer(proc.stdout, dtype=np.int16)
-    thresh = 32767.0 * 10.0 ** (SILENCE_THRESHOLD_DB / 20.0)
-    loud = np.flatnonzero(np.abs(pcm.astype(np.int32)) > thresh)
-    if loud.size:
-        i0 = max(0, int(loud[0]) - int(LEAD_PAD_S * SAMPLE_RATE))
-        i1 = min(len(pcm), int(loud[-1]) + int(TAIL_PAD_S * SAMPLE_RATE))
-    else:
-        i0, i1 = 0, len(pcm)
-    trimmed = pcm[i0:i1]
-    with wave.open(str(out_wav), "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(trimmed.tobytes())
-    return len(trimmed) / float(SAMPLE_RATE), i0 / float(SAMPLE_RATE)
+    return _write_trimmed_mono_wav(pcm, out_wav, sr=SAMPLE_RATE)
 
 
 # ---------------------------------------------------------------------------
@@ -249,42 +282,54 @@ def align_words(
 # ---------------------------------------------------------------------------
 KOKORO_SAMPLE_RATE = 24000
 _KOKORO_PIPELINES: dict[str, object] = {}
+_KOKORO_LOCK = threading.Lock()
 
 
 def kokoro_available() -> bool:
-    try:
-        import kokoro  # noqa: F401
-    except Exception:
-        return False
-    return True
+    import importlib.util
+
+    return importlib.util.find_spec("kokoro") is not None
 
 
-def _synth_kokoro(text: str, voice: str, speed: float, out_wav: Path) -> list[list]:
-    """Synthesize with Kokoro; per-token start_ts/end_ts become word boundaries (seconds)."""
+def _synth_kokoro_trimmed(text: str, voice: str, speed: float, out_wav: Path) -> tuple[list[list], float, float]:
+    """Synthesize with Kokoro, resample 24->48kHz & trim silence in memory (zero FFmpeg spawn)."""
+    from contextlib import nullcontext
     from kokoro import KPipeline  # type: ignore[import-not-found]
 
+    try:
+        import torch
+
+        inf_ctx = torch.inference_mode()
+    except Exception:
+        inf_ctx = nullcontext()
+
     lang = voice[0] if voice and voice[0].isalpha() else "a"
-    pipe = _KOKORO_PIPELINES.get(lang)
-    if pipe is None:
-        pipe = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M")
-        _KOKORO_PIPELINES[lang] = pipe
     chunks: list[np.ndarray] = []
     words: list[list] = []
     offset = 0.0
-    for result in pipe(text, voice=voice, speed=speed):  # type: ignore[operator]
-        audio = result.audio
-        audio = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
-        for tok in result.tokens or []:
-            if getattr(tok, "start_ts", None) is not None and getattr(tok, "end_ts", None) is not None:
-                words.append([tok.text, offset + float(tok.start_ts), offset + float(tok.end_ts)])
-        offset += len(audio) / float(KOKORO_SAMPLE_RATE)
-        chunks.append(audio)
-    pcm = np.clip(np.concatenate(chunks) if chunks else np.zeros(1), -1.0, 1.0)
-    with wave.open(str(out_wav), "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(KOKORO_SAMPLE_RATE)
-        wf.writeframes((pcm * 32767).astype(np.int16).tobytes())
+    with _KOKORO_LOCK:
+        pipe = _KOKORO_PIPELINES.get(lang)
+        if pipe is None:
+            pipe = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M")
+            _KOKORO_PIPELINES[lang] = pipe
+        with inf_ctx:
+            for result in pipe(text, voice=voice, speed=speed):  # type: ignore[operator]
+                audio = result.audio
+                audio = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
+                for tok in result.tokens or []:
+                    if getattr(tok, "start_ts", None) is not None and getattr(tok, "end_ts", None) is not None:
+                        words.append([tok.text, offset + float(tok.start_ts), offset + float(tok.end_ts)])
+                offset += len(audio) / float(KOKORO_SAMPLE_RATE)
+                chunks.append(audio)
+    pcm_f32 = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
+    pcm_48k = _resample_mono_to_target_i16(pcm_f32, KOKORO_SAMPLE_RATE, SAMPLE_RATE)
+    dur, head_trim = _write_trimmed_mono_wav(pcm_48k, out_wav, sr=SAMPLE_RATE)
+    return words, dur, head_trim
+
+
+def _synth_kokoro(text: str, voice: str, speed: float, out_wav: Path) -> list[list]:
+    """Legacy wrapper writing trimmed 48kHz Kokoro WAV directly."""
+    words, _dur, _trim = _synth_kokoro_trimmed(text, voice, speed, out_wav)
     return words
 
 
@@ -310,10 +355,14 @@ def build_voice_timeline(
     allow_edge_fallback: bool = True,
     speaker_voices: dict[str, tuple[str, str]] | None = None,
 ) -> AudioTimeline:
-    """Synthesize every beat independently, measure exact durations, and assemble master voiceover."""
+    """Synthesize every beat (with cross-format shared cache & concurrent edge-tts), then assemble master WAV."""
     build_dir = Path(build_dir)
     segments_dir = build_dir / "voice_segments"
     segments_dir.mkdir(parents=True, exist_ok=True)
+    shared_dir: Path | None = None
+    if os.environ.get("STUDIO_SHARED_CACHE", "1") != "0":
+        shared_dir = Path(__file__).resolve().parent.parent.parent / "build" / "shared_cache" / "voice_segments"
+        shared_dir.mkdir(parents=True, exist_ok=True)
     ffmpeg_bin = find_ffmpeg()
 
     if engine == "kokoro" and not kokoro_available():
@@ -322,38 +371,65 @@ def build_voice_timeline(
         print("      ! kokoro not installed (uv sync --extra kokoro); falling back to edge-tts")
         engine = "edge"
 
-    async def _run_all(engine: str, active_voice: str) -> list[tuple[BeatSpec, Path, float, list[list]]]:
-        results: list[tuple[BeatSpec, Path, float, list[list]]] = []
-        for beat in beats:
-            from studio.audio.pronounce import normalize_for_speech_with_map
+    from studio.audio.pronounce import normalize_for_speech_with_map
 
-            mapped = normalize_for_speech_with_map(beat.narration)
-            spoken = str(mapped["spoken"])
-            beat_voice = active_voice
-            if speaker_voices and beat.speaker in speaker_voices:
-                k_voice, e_voice = speaker_voices[beat.speaker]
-                beat_voice = k_voice if engine == "kokoro" else e_voice
-            key = hashlib.sha1(f"v4|{engine}|{beat_voice}|{rate}|{pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
-            raw_path = segments_dir / f"{beat.id}_{key}.{'raw.wav' if engine == 'kokoro' else 'mp3'}"
-            wav_path = segments_dir / f"{beat.id}_{key}.wav"
-            words_path = segments_dir / f"{beat.id}_{key}.words.json"
-            if not (wav_path.exists() and words_path.exists()):
-                if engine == "kokoro":
-                    raw_words = _synth_kokoro(spoken, beat_voice, _rate_to_speed(rate), raw_path)
-                else:
+    norm_map = {beat.id: normalize_for_speech_with_map(beat.narration) for beat in beats}
+
+    async def _run_one(
+        beat: BeatSpec,
+        engine: str,
+        active_voice: str,
+        edge_sem: asyncio.Semaphore,
+    ) -> tuple[BeatSpec, Path, float, list[list]]:
+        mapped = norm_map[beat.id]
+        spoken = str(mapped["spoken"])
+        beat_voice = active_voice
+        if speaker_voices and beat.speaker in speaker_voices:
+            k_voice, e_voice = speaker_voices[beat.speaker]
+            beat_voice = k_voice if engine == "kokoro" else e_voice
+        eff_pitch = "" if engine == "kokoro" else pitch
+        key = hashlib.sha1(f"v4|{engine}|{beat_voice}|{rate}|{eff_pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
+        raw_path = segments_dir / f"{beat.id}_{key}.mp3"
+        wav_path = segments_dir / f"{beat.id}_{key}.wav"
+        words_path = segments_dir / f"{beat.id}_{key}.words.json"
+
+        shared_wav = (shared_dir / f"{key}.wav") if shared_dir is not None else None
+        shared_words = (shared_dir / f"{key}.words.json") if shared_dir is not None else None
+        if not (wav_path.exists() and words_path.exists()) and shared_wav and shared_words and shared_wav.exists() and shared_words.exists():
+            shutil.copy2(shared_wav, wav_path)
+            shutil.copy2(shared_words, words_path)
+
+        if not (wav_path.exists() and words_path.exists()):
+            if engine == "kokoro":
+                raw_words, dur, head_trim = _synth_kokoro_trimmed(spoken, beat_voice, _rate_to_speed(rate), wav_path)
+            else:
+                async with edge_sem:
                     raw_words = await _synth_edge_tts(spoken, beat_voice, rate, raw_path, pitch=pitch)
                 dur, head_trim = _decode_and_trim_wav(ffmpeg_bin, raw_path, wav_path)
-                # Re-base word times onto the trimmed clip so captions lock to the audible syllables
-                words = [
-                    [w, round(max(0.0, a - head_trim), 4), round(min(dur, max(0.0, b - head_trim)), 4)]
-                    for w, a, b in raw_words
-                ]
-                words_path.write_text(json.dumps(words), encoding="utf-8")
-            else:
-                with wave.open(str(wav_path), "rb") as wf:
-                    dur = wf.getnframes() / float(wf.getframerate())
-                words = json.loads(words_path.read_text(encoding="utf-8"))
-            results.append((beat, wav_path, dur, words))
+            words = [
+                [w, round(max(0.0, a - head_trim), 4), round(min(dur, max(0.0, b - head_trim)), 4)]
+                for w, a, b in raw_words
+            ]
+            words_path.write_text(json.dumps(words), encoding="utf-8")
+            if shared_wav is not None and shared_words is not None:
+                try:
+                    shutil.copy2(wav_path, shared_wav)
+                    shutil.copy2(words_path, shared_words)
+                except OSError:
+                    pass
+        else:
+            with wave.open(str(wav_path), "rb") as wf:
+                dur = wf.getnframes() / float(wf.getframerate())
+            words = json.loads(words_path.read_text(encoding="utf-8"))
+        return (beat, wav_path, dur, words)
+
+    async def _run_all(engine: str, active_voice: str) -> list[tuple[BeatSpec, Path, float, list[list]]]:
+        edge_sem = asyncio.Semaphore(int(os.environ.get("STUDIO_EDGE_CONCURRENCY", "4")))
+        if engine == "edge":
+            return list(await asyncio.gather(*(_run_one(b, engine, active_voice, edge_sem) for b in beats)))
+        results: list[tuple[BeatSpec, Path, float, list[list]]] = []
+        for beat in beats:
+            results.append(await _run_one(beat, engine, active_voice, edge_sem))
         return results
 
     active_voice = kokoro_voice if engine == "kokoro" else voice
@@ -372,8 +448,6 @@ def build_voice_timeline(
     chunks: list[np.ndarray] = [np.zeros(int(lead_in * SAMPLE_RATE), dtype=np.int16)]
 
     for beat, wav_path, speech_dur, boundaries in synthesized:
-        from studio.audio.pronounce import normalize_for_speech_with_map
-
         with wave.open(str(wav_path), "rb") as wf:
             pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
         chunks.append(pcm)
@@ -382,7 +456,7 @@ def build_voice_timeline(
             chunks.append(np.zeros(pause_samples, dtype=np.int16))
 
         clean, tokens, mark_idx = parse_script(beat.narration)
-        mapped = normalize_for_speech_with_map(beat.narration)
+        mapped = norm_map[beat.id]
         spoken_text = str(mapped["spoken"])
         sp_words = spoken_text.split()
         if sp_words and sp_words != [t.text for t in tokens]:

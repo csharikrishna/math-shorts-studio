@@ -17,8 +17,8 @@
 - **Production Verification & Documentation (`docs/OPEN_SOURCE_ADOPTION.md`, `docs/LICENSE_MANIFEST.md`, `docs/BENCHMARK_REPORT.md`)**
   - **9–11 Min Autonomous Long-Form ("Eigenvalues, Phase Space, and Dynamical Stability"):** `output/LF_eigenvalues_phase_space_and_dynamical_stability_widescreen_hd.mp4` (`688.62s` / `11m 28.6s`, 7 chapters, 38 scenes, `-15.2 LUFS`, `48000 Hz`, `drift=0.05s`, `0` chapter layout issues, `REVIEW.md` score `100.0/100`).
   - **Derived Native 9:16 Short:** `output/SHORT_eigenvalues_phase_space_and_dynamical_stability_shorts_hd.mp4` (`58.40s`, `layout: no problems in 6 samples`, `-15.3 LUFS`, `REVIEW.md` score `100.0/100`).
-  - **ManimGX vs HyperFrames Benchmark (`58.4s` @ `1080x1920 60fps`):** `ManimGXBackend` `84.506s` (`3.93 MB`, `0` layout issues) vs `HyperFramesBackend` `266.696s` (`3.48 MB`, `0` layout issues).
-  - **Test Suite:** 44 unit, generalization, and security tests passing (`tests/test_generalization.py` + regression suites).
+  - **ManimGX vs HyperFrames Benchmark (`58.4s` @ `1080x1920 60fps`):** Baseline `ManimGXBackend` `84.506s` / `HyperFramesBackend` `266.696s` improved via optimization pass (`--preset ultrafast --crf 12` raw intermediate, `-vn` loudnorm/QA, `_probe_encoder` cache, in-memory Kokoro `24->48 kHz` resample, lazy `kokoro_available()`, cross-backend shared voice/SFX cache, `HyperFrames` `__HF_STEP` static-frame skip `203/3498` + single-pass `h264_nvenc`, concurrent long-form scripting & HyperFrames chapters, `widescreen_fast` preset) to `67.928s` cold / `25.312s` warm (`ManimGX`) and `67.098–78.086s` cold / `26.680s` warm (`HyperFrames`).
+  - **Test Suite:** 45 unit, generalization, security, and optimization tests passing (`tests/test_generalization.py` + regression suites).
 
 ---
 

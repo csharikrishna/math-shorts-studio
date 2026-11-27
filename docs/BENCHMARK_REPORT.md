@@ -38,3 +38,19 @@ Both backends rendered the exact same recomposed 3-beat `shorts_hd` (`1080x1920 
 | Audio Sample Rate & Loudness | `48000 Hz` / `-15.3 LUFS` (`-2.7 dBFS`) | `48000 Hz` / `-15.2 LUFS` (`-2.8 dBFS`) |
 | Layout Audit Issues | **`[]`** (`no problems in 6 samples`) | **`[]`** (`__HF_AUDIT_LAYOUT` clean) |
 | Best Architectural Fit | Dense geometric morphs, LaTeX math, custom Vulkan curves & vector fields (~3.2x faster wall time) | Web/UI overlays, HTML tables, CSS/SVG typography, DOM layout audit |
+
+## 4. Render-Time Optimization Pass (Verified Before vs. After on Same 58.4s `shorts_hd` Short)
+
+Implemented pipeline, encoder, CDP capture, and TTS/cache optimizations while maintaining identical output QA (`48000 Hz` stereo AAC, `-15.3` to `-15.8 LUFS`, `<= -2.5 dBFS` peak, `0.00 s` A/V drift, zero layout defects):
+
+- **ManimGX intermediate preset & NVENC probe caching (`studio/pipeline.py`, `studio/audio/master.py`):** Intermediate `raw_mp4` now encodes with `--preset ultrafast --crf 12` before final NVENC (`-preset p2`) mastering, NVENC availability probe is cached (`_probe_encoder`), loudnorm Pass 1 and `verify_audio_loudness` use `-vn` (skipping video decode), and `widescreen_fast` (`1280x720 @ 30fps`) was added to `studio/config.py`.
+- **HyperFrames static-frame skip + single-pass direct NVENC (`studio/renderers/hyperframes_backend.py`):** Combined `window.__HF_STEP(t, doAudit)` skips unchanged DOM/SVG frames (`203/3498` unique CDP captures instead of `3498`) and pipes unique JPEGs + voice/BGM directly into single-pass `h264_nvenc` mastering without an intermediate `libx264` file.
+- **Lazy Kokoro probe, in-memory resampling, shared caches & long-form concurrency (`studio/audio/tts.py`, `studio/audio/sfx.py`, `studio/longform.py`):** `kokoro_available()` uses `importlib.util.find_spec("kokoro")` (eliminating a `12.85 s` PyTorch cold import on cache hits), Kokoro resamples `24 -> 48 kHz` and trims silence in memory (zero per-beat FFmpeg spawns), shared cross-backend `voice_segments`/`sfx` caches omit unused `pitch` from Kokoro keys, `edge-tts` runs concurrently, and `longform.py` scripts chapters + renders HyperFrames chapters in bounded thread pools.
+
+| Benchmark Configuration (`58.4s` `shorts_hd`) | Before | After | Speedup | QA Status |
+| --- | --- | --- | --- | --- |
+| `ManimGX` intermediate GPU render phase | `25.0 s` (`22.03 s` medium) | **`10.4 – 10.7 s`** (`ultrafast`) | **~2.4x** | `no problems in 6 samples` |
+| `ManimGX` cold end-to-end (incl. Kokoro CPU) | `84.506 s` | **`67.928 s`** | **1.24x** | `-15.3 LUFS`, `drift=0.00s` |
+| `ManimGX` warm shared TTS cache (cross-backend) | `84.506 s` | **`25.312 s`** | **3.34x** | `-15.3 LUFS`, `drift=0.00s` |
+| `HyperFrames` cold end-to-end (incl. Kokoro CPU) | `266.696 s` | **`67.098 – 78.086 s`** | **~3.4x – 4.0x** | `-15.8 LUFS`, `drift=0.00s` |
+| `HyperFrames` warm shared TTS cache | `266.696 s` | **`26.680 s`** | **10.0x** | `-15.8 LUFS`, `drift=0.00s` |

@@ -1,8 +1,11 @@
 """FFmpeg audio-video mastering pipeline: sidechain ducking, mixing, and broadcast normalization."""
 
+from functools import lru_cache
 from pathlib import Path
-import subprocess
+import json as _json
 import os
+import re as _re
+import subprocess
 from studio.audio.tts import find_ffmpeg
 
 
@@ -24,21 +27,25 @@ from studio.audio.tts import find_ffmpeg
 # Set STUDIO_ENCODER=cpu in env to force libx264, e.g. for CI.
 # ---------------------------------------------------------------------------
 
-def _pick_encoder() -> tuple[str, list[str]]:
-    """Return (encoder_name, codec_flags). Prefers NVENC, falls back to libx264."""
-    prefer = os.environ.get("STUDIO_ENCODER", "nvenc").lower()
+@lru_cache(maxsize=4)
+def _probe_encoder(prefer: str) -> str:
+    """Probe NVENC availability once per encoder preference."""
     if prefer == "cpu":
-        return "libx264", _libx264_flags()
-    # Quick NVENC probe: NVENC requires frames >= 145x49, so probe at 256x256
+        return "libx264"
     ffmpeg_bin = find_ffmpeg()
     probe = subprocess.run(
         [ffmpeg_bin, "-y", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
          "-c:v", "h264_nvenc", "-f", "null", "-"],
         capture_output=True,
     )
-    if probe.returncode == 0:
-        return "h264_nvenc", _nvenc_flags()
-    return "libx264", _libx264_flags()
+    return "h264_nvenc" if probe.returncode == 0 else "libx264"
+
+
+def _pick_encoder() -> tuple[str, list[str]]:
+    """Return (encoder_name, codec_flags). Prefers NVENC, falls back to libx264."""
+    prefer = os.environ.get("STUDIO_ENCODER", "nvenc").lower()
+    enc = _probe_encoder(prefer)
+    return (enc, _nvenc_flags()) if enc == "h264_nvenc" else ("libx264", _libx264_flags())
 
 
 def _libx264_flags() -> list[str]:
@@ -48,10 +55,56 @@ def _libx264_flags() -> list[str]:
 
 
 def _nvenc_flags() -> list[str]:
-    """NVENC H.264: CQ 31 + Spatial AQ + 2.5M cap — GPU-accelerated (~7s) and compact (~3-5 MB)."""
-    return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "31",
+    """NVENC H.264: CQ 31 + Spatial AQ + 2.5M cap — hardware-accelerated (~3-5s)."""
+    preset = os.environ.get("STUDIO_NVENC_PRESET", "p2")
+    return ["-c:v", "h264_nvenc", "-preset", preset, "-rc", "vbr", "-cq", "31",
             "-spatial-aq", "1", "-b:v", "0", "-maxrate", "2.5M", "-bufsize", "5M",
             "-pix_fmt", "yuv420p", "-profile:v", "high"]
+
+
+def build_audio_mix_graph(voice_idx: int = 1, bgm_idx: int = 2, sfx_idx: int | None = 0,
+                          sfx_gain: float = 0.85, voice_gain: float = 1.15, bgm_gain: float = 0.24) -> str:
+    """Build FFmpeg sidechain-ducked audio mix graph (2 inputs without SFX or 3 inputs with SFX)."""
+    base = (
+        f"[{voice_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={voice_gain},asplit=2[voice_mix][voice_sc];"
+        f"[{bgm_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_gain}[bgm_pre];"
+        f"[bgm_pre]extrastereo=m=1.15[bgm_wide];"
+        f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
+    )
+    if sfx_idx is None:
+        return base + "[voice_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0"
+    return (
+        base
+        + f"[{sfx_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
+        + "[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0"
+    )
+
+
+def measure_loudnorm_filter(ffmpeg_bin: str, input_args: list[str], audio_mix: str) -> str:
+    """Run FFmpeg Pass 1 (-vn audio-only) to extract EBU R128 parameters for linear loudnorm."""
+    pass1 = subprocess.run(
+        [
+            ffmpeg_bin, "-y",
+            *input_args,
+            "-vn",
+            "-filter_complex", f"{audio_mix},loudnorm=I=-15.0:TP=-3.0:LRA=7.0:print_format=json[m_a]",
+            "-map", "[m_a]", "-f", "null", "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    ln_filter = "loudnorm=I=-15.0:TP=-3.0:LRA=7.0"
+    m_json = _re.search(r"\{\s*\"input_i\"\s*:.*?\}", pass1.stderr, _re.DOTALL)
+    if pass1.returncode == 0 and m_json:
+        stats = _json.loads(m_json.group(0))
+        ln_filter = (
+            f"loudnorm=I=-15.0:TP=-3.0:LRA=7.0:"
+            f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
+            f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
+            f"offset={stats['target_offset']}:linear=true"
+        )
+    return ln_filter
 
 
 def master_video(
@@ -72,43 +125,12 @@ def master_video(
 
     encoder_name, default_codec_flags = _pick_encoder()
 
-    # Filtergraph:
-    # 1. Split voice so it drives sidechaincompress on BGM (auto-ducking when narrator speaks).
-    # 2. Mix SFX stream (0:a), boosted voice, and ducked BGM.
-    # 3. Two-pass EBU R128 loudness normalization (-14.0 LUFS, -1.0 dBTP, 48 kHz).
-    audio_mix = (
-        f"[1:a]aresample=48000,aformat=channel_layouts=stereo,volume={voice_gain},asplit=2[voice_mix][voice_sc];"
-        f"[2:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_gain}[bgm_pre];"
-        f"[bgm_pre]extrastereo=m=1.15[bgm_wide];"
-        f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
-        f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
-        f"[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0"
+    audio_mix = build_audio_mix_graph(1, 2, 0, sfx_gain=sfx_gain, voice_gain=voice_gain, bgm_gain=bgm_gain)
+    ln_filter = measure_loudnorm_filter(
+        ffmpeg_bin,
+        ["-i", str(raw_video), "-i", str(voice_wav), "-i", str(bgm_wav)],
+        audio_mix,
     )
-
-    # Pass 1: measure integrated loudness, true peak, LRA, threshold, target offset
-    import json as _json
-    import re as _re
-    pass1 = subprocess.run(
-        [
-            ffmpeg_bin, "-y",
-            "-i", str(raw_video), "-i", str(voice_wav), "-i", str(bgm_wav),
-            "-filter_complex", f"{audio_mix},loudnorm=I=-15.0:TP=-3.0:LRA=7.0:print_format=json[m_a]",
-            "-map", "[m_a]", "-f", "null", "-",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    ln_filter = "loudnorm=I=-15.0:TP=-3.0:LRA=7.0"
-    m_json = _re.search(r"\{\s*\"input_i\"\s*:.*?\}", pass1.stderr, _re.DOTALL)
-    if pass1.returncode == 0 and m_json:
-        stats = _json.loads(m_json.group(0))
-        ln_filter = (
-            f"loudnorm=I=-15.0:TP=-3.0:LRA=7.0:"
-            f"measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:"
-            f"measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:"
-            f"offset={stats['target_offset']}:linear=true"
-        )
 
     filter_complex = f"{audio_mix},{ln_filter}[master_a]"
 

@@ -130,7 +130,9 @@ def run_pipeline(
 
     cmd = [
         sys.executable, "-m", "manimgx", "render", str(script_path), resolved_name,
-        "-r", profile.resolution_str, "--fps", str(profile.fps), "-o", str(raw_mp4),
+        "-r", profile.resolution_str, "--fps", str(profile.fps),
+        "--preset", "ultrafast", "--crf", "12",
+        "-o", str(raw_mp4),
     ]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
     print(proc.stdout.strip())

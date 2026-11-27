@@ -70,6 +70,15 @@ FORMATS: Dict[str, FormatProfile] = {
         bottom_safe_ratio=0.08,
         side_safe_ratio=0.05,
     ),
+    "widescreen_fast": FormatProfile(
+        name="widescreen_fast",
+        pixel_width=1280,
+        pixel_height=720,
+        fps=30,
+        top_safe_ratio=0.06,
+        bottom_safe_ratio=0.08,
+        side_safe_ratio=0.05,
+    ),
 }
 
 

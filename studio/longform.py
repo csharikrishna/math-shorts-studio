@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -192,13 +194,14 @@ def create_longform_plan(
     _atomic_write_json(logs_dir / "narrative_bridges.json", outline.model_dump())
 
     bridge_map = {b.chapter_id: b for b in outline.chapter_bridges}
-    chapter_plans: list[VideoPlanV3] = []
     node_map = {n.node_id: n for n in lf_plan.knowledge_tree.nodes}
-    prev_summary = "Opening of documentary: establish the concrete central paradox cleanly."
 
     from studio.audio.tts import parse_script
 
-    for idx, ch in enumerate(lf_plan.chapters, 1):
+    log_lock = threading.Lock()
+    ordered_plans: list[VideoPlanV3 | None] = [None] * len(lf_plan.chapters)
+
+    def _script_chapter(idx: int, ch: ChapterSpec) -> tuple[int, VideoPlanV3]:
         ch_target_s = max(per_ch_s * 0.85, float(ch.target_duration_s or per_ch_s))
         ch_min_words = max(55, int(ch_target_s * 2.0))
         ch_cache_file = logs_dir / f"ch_{req_sig}_{ch.chapter_id}_valid.json"
@@ -207,20 +210,23 @@ def create_longform_plan(
             if not validate_v3_plan(cached_cp, require_claims=True):
                 if on_progress:
                     on_progress(f"reusing cached chapter {idx}/{len(lf_plan.chapters)}: {ch.title}")
-                chapter_plans.append(cached_cp)
-                prev_summary = f"{ch.title}: {ch.summary}"
-                continue
+                return idx, cached_cp
         if on_progress:
             on_progress(f"scripting chapter {idx}/{len(lf_plan.chapters)}: {ch.title} (~{ch_target_s:.0f}s)")
+        prev_fallback = (
+            f"Previous Chapter ({lf_plan.chapters[idx - 2].title}): {lf_plan.chapters[idx - 2].summary}"
+            if idx >= 2
+            else "Opening of documentary: establish the concrete central paradox cleanly."
+        )
         node_ctx = "; ".join(f"{node_map[nid].title}: {[c.statement for c in node_map[nid].claims]}" for nid in ch.node_ids if nid in node_map)
         bridge = bridge_map.get(ch.chapter_id)
         bridge_ctx = (
-            f"Previous Summary: {bridge.prev_chapter_summary or prev_summary}\n"
+            f"Previous Summary: {bridge.prev_chapter_summary or prev_fallback}\n"
             f"Established Definitions: {bridge.established_definitions}\n"
             f"Unresolved Question Entering Chapter: {bridge.unresolved_questions}\n"
             f"Next Chapter Transition: {bridge.next_transition}\n"
             if bridge
-            else f"Previous Summary: {prev_summary}\n"
+            else f"Previous Summary: {prev_fallback}\n"
         )
         ch_prompt = (
             f"{ch_system}\n\n"
@@ -238,7 +244,8 @@ def create_longform_plan(
         issues: list[str] = []
         for _attempt in range(2):
             ch_plan, ch_resp = director.provider.generate_structured(ch_prompt, VideoPlanV3, system=ch_system, temperature=0.45)
-            gen_log.append({"stage": f"chapter_{ch.chapter_id}", "model": ch_resp.model, "latency_s": ch_resp.latency_s})
+            with log_lock:
+                gen_log.append({"stage": f"chapter_{ch.chapter_id}", "model": ch_resp.model, "latency_s": ch_resp.latency_s})
             for r_idx in range(1, MAX_REPAIRS + 1):
                 issues = validate_v3_plan(ch_plan, require_claims=True)
                 w_cnt = sum(len(parse_script(s.narration)[0].split()) for s in ch_plan.scenes)
@@ -257,7 +264,8 @@ def create_longform_plan(
                     f"\nCurrent JSON:\n{ch_plan.model_dump_json()}"
                 )
                 ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.3)
-                gen_log.append({"stage": f"chapter_{ch.chapter_id}_repair_{r_idx}", "issues": issues})
+                with log_lock:
+                    gen_log.append({"stage": f"chapter_{ch.chapter_id}_repair_{r_idx}", "issues": issues})
             issues = validate_v3_plan(ch_plan, require_claims=True)
             if not issues:
                 break
@@ -267,8 +275,18 @@ def create_longform_plan(
             raise RuntimeError(f"Chapter {ch.chapter_id} failed validation after repairs: {issues}")
         mat = materialize_constructions(ch_plan)
         ch_cache_file.write_text(mat.model_dump_json(indent=2), encoding="utf-8")
-        chapter_plans.append(mat)
-        prev_summary = f"{ch.title}: {ch.summary}"
+        return idx, mat
+
+    llm_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "3"))))
+    with ThreadPoolExecutor(max_workers=llm_workers) as pool:
+        futs = [pool.submit(_script_chapter, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
+        for fut in as_completed(futs):
+            c_idx, mat = fut.result()
+            ordered_plans[c_idx - 1] = mat
+
+    chapter_plans: list[VideoPlanV3] = [cp for cp in ordered_plans if cp is not None]
+    last_ch = lf_plan.chapters[-1] if lf_plan.chapters else None
+    prev_summary = f"{last_ch.title}: {last_ch.summary}" if last_ch else ""
 
     # Duration-aware extension: if total spoken duration is short of target_duration_s, add deep continuation chapters
     est_s = sum(len(parse_script(s.narration)[0].split()) for cp in chapter_plans for s in cp.scenes) / 2.4 + len(chapter_plans) * 1.5
@@ -349,7 +367,22 @@ def build_longform_video(
     chapter_transcripts: list[Path] = []
 
     try:
-        for ch, plan in zip(longform_plan.chapters, chapter_plans):
+        from studio.audio.tts import BeatSpec, build_voice_timeline
+        from studio.creative.dialogue import DIALOGUE_PROFILES
+        from studio.timeline import MasterTimeline
+
+        sp_voices: dict[str, tuple[str, str]] = {}
+        for prof in DIALOGUE_PROFILES.values():
+            for sp in prof.speakers:
+                sp_voices[sp.role] = (sp.kokoro_voice, sp.edge_voice)
+
+        pending_jobs: list[tuple[int, ChapterSpec, VideoPlanV3, Path, str, str, dict[str, str], Path]] = []
+        slots_mp4: list[Path | None] = [None] * len(longform_plan.chapters)
+        slots_srt: list[Path | None] = [None] * len(longform_plan.chapters)
+        slots_txt: list[Path | None] = [None] * len(longform_plan.chapters)
+        hf_timelines: dict[int, object] = {}
+
+        for idx, (ch, plan) in enumerate(zip(longform_plan.chapters, chapter_plans)):
             issues = validate_v3_plan(plan)
             if issues:
                 raise ValueError(f"Chapter {ch.chapter_id} invalid:\n- " + "\n- ".join(issues))
@@ -375,28 +408,89 @@ def build_longform_video(
                 upstream_keys=upstream,
             )
 
+            ch_stem = f"V3_{ch_plan_path.stem}"
+            ch_build = (
+                PROJECT_ROOT / "build" / f"backend_hyperframes_{slug}_{ch.chapter_id}_{format_name}"
+                if backend == "hyperframes"
+                else PROJECT_ROOT / "build" / f"{ch_stem}_{format_name}"
+            )
+            srt_p = ch_build / f"{ch_stem}.srt"
+            txt_p = ch_build / f"{ch_stem}_transcript.txt"
+            slots_srt[idx] = srt_p
+            slots_txt[idx] = txt_p
+
             cached = stage_path if stage_hit else jobs.get_cached(ckey)
             if cached and verify_media_streams(cached).passed:
                 mp4 = cached
                 if on_progress:
                     on_progress(f"content-cache hit [{ckey[:8]}]: {ch.chapter_id} -> {mp4.name}")
+                if backend == "hyperframes" and (not srt_p.exists() or not txt_p.exists()):
+                    tl = build_voice_timeline(
+                        [BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, speaker=s.speaker) for s in plan.scenes],
+                        build_dir=ch_build,
+                        voice=voice,
+                        rate=rate,
+                        engine=tts_engine,
+                        speaker_voices=sp_voices,
+                    )
+                    MasterTimeline(audio=tl).export_subtitles(ch_build, ch_stem)
+                slots_mp4[idx] = mp4
+                checkpoint[ch.chapter_id] = {"cache_key": ckey, "mp4": str(mp4), "backend": backend}
+                _atomic_write_json(ckpt_path, checkpoint)
             else:
-                if on_progress:
-                    on_progress(f"rendering chapter [{ckey[:8]} via {backend}]: {ch.chapter_id} ({ch.title})")
                 if backend == "hyperframes":
-                    from studio.renderers import get_backend
+                    # Pre-synthesize once in main thread to keep Kokoro warm in RAM and avoid double TTS
+                    tl = build_voice_timeline(
+                        [BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, speaker=s.speaker) for s in plan.scenes],
+                        build_dir=ch_build,
+                        voice=voice,
+                        rate=rate,
+                        engine=tts_engine,
+                        speaker_voices=sp_voices,
+                    )
+                    MasterTimeline(audio=tl).export_subtitles(ch_build, ch_stem)
+                    hf_timelines[idx] = tl
+                pending_jobs.append((idx, ch, plan, ch_plan_path, ckey, stage_key, upstream, ch_build))
 
+        if pending_jobs:
+            if backend == "hyperframes":
+                from studio.renderers import get_backend
+
+                def _render_hf(job: tuple[int, ChapterSpec, VideoPlanV3, Path, str, str, dict[str, str], Path]) -> tuple[int, ChapterSpec, str, str, dict[str, str], Path]:
+                    j_idx, j_ch, j_plan, _jp, j_ckey, j_skey, j_up, j_bdir = job
+                    if on_progress:
+                        on_progress(f"rendering chapter [{j_ckey[:8]} via hyperframes]: {j_ch.chapter_id} ({j_ch.title})")
                     hf_res = get_backend("hyperframes").render(
-                        plan,
-                        slug=f"{slug}_{ch.chapter_id}",
+                        j_plan,
+                        slug=f"{slug}_{j_ch.chapter_id}",
                         format_name=format_name,
                         look_name=look_name,
-                        out_path=PROJECT_ROOT / "output" / f"HF_{slug}_{ch.chapter_id}_{format_name}.mp4",
+                        audio_timeline=hf_timelines.get(j_idx),  # type: ignore[arg-type]
+                        build_dir=j_bdir,
+                        out_path=PROJECT_ROOT / "output" / f"HF_{slug}_{j_ch.chapter_id}_{format_name}.mp4",
                     )
-                    mp4 = hf_res.video_path
-                else:
+                    return j_idx, j_ch, j_ckey, j_skey, j_up, hf_res.video_path
+
+                hf_workers = max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HF_WORKERS", str(min(3, max(1, (os.cpu_count() or 4) // 2)))))))
+                with ThreadPoolExecutor(max_workers=hf_workers) as pool:
+                    for j_idx, j_ch, j_ckey, j_skey, j_up, mp4 in pool.map(_render_hf, pending_jobs):
+                        jobs.put_cached(j_ckey, mp4)
+                        acache.store_artifact(
+                            "chapter_assembly",
+                            f"{slug}_{j_ch.chapter_id}_{format_name}_{backend}",
+                            j_skey,
+                            mp4,
+                            upstream_keys=j_up,
+                        )
+                        slots_mp4[j_idx] = mp4
+                        checkpoint[j_ch.chapter_id] = {"cache_key": j_ckey, "mp4": str(mp4), "backend": backend}
+                        _atomic_write_json(ckpt_path, checkpoint)
+            else:
+                for j_idx, j_ch, _j_plan, j_plan_path, j_ckey, j_skey, j_up, _j_bdir in pending_jobs:
+                    if on_progress:
+                        on_progress(f"rendering chapter [{j_ckey[:8]} via {backend}]: {j_ch.chapter_id} ({j_ch.title})")
                     mp4 = run_plan(
-                        ch_plan_path,
+                        j_plan_path,
                         format_name=format_name,
                         theme_name=look_name if look_name in ("midnight_studio", "obsidian_chalk", "cartesian_stone", "editorial_paper") else "midnight_studio",
                         tts_engine=tts_engine,
@@ -405,35 +499,21 @@ def build_longform_video(
                         ui=ui,
                         look=look,
                     )
-                jobs.put_cached(ckey, mp4)
-                acache.store_artifact(
-                    "chapter_assembly",
-                    f"{slug}_{ch.chapter_id}_{format_name}_{backend}",
-                    stage_key,
-                    mp4,
-                    upstream_keys=upstream,
-                )
+                    jobs.put_cached(j_ckey, mp4)
+                    acache.store_artifact(
+                        "chapter_assembly",
+                        f"{slug}_{j_ch.chapter_id}_{format_name}_{backend}",
+                        j_skey,
+                        mp4,
+                        upstream_keys=j_up,
+                    )
+                    slots_mp4[j_idx] = mp4
+                    checkpoint[j_ch.chapter_id] = {"cache_key": j_ckey, "mp4": str(mp4), "backend": backend}
+                    _atomic_write_json(ckpt_path, checkpoint)
 
-            checkpoint[ch.chapter_id] = {"cache_key": ckey, "mp4": str(mp4), "backend": backend}
-            _atomic_write_json(ckpt_path, checkpoint)
-
-            chapter_mp4s.append(mp4)
-            ch_stem = f"V3_{ch_plan_path.stem}"
-            ch_build = PROJECT_ROOT / "build" / f"{ch_stem}_{format_name}"
-            if backend == "hyperframes":
-                ch_build = PROJECT_ROOT / "build" / f"backend_hyperframes_{slug}_{ch.chapter_id}_{format_name}"
-                # Ensure SRT/transcript exist alongside hyperframes chapters
-                from studio.audio.tts import BeatSpec, build_voice_timeline
-                from studio.timeline import MasterTimeline
-
-                tl = build_voice_timeline(
-                    [BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, speaker=s.speaker) for s in plan.scenes],
-                    build_dir=ch_build,
-                    engine=tts_engine,
-                )
-                MasterTimeline(audio=tl).export_subtitles(ch_build, ch_stem)
-            chapter_srts.append(ch_build / f"{ch_stem}.srt")
-            chapter_transcripts.append(ch_build / f"{ch_stem}_transcript.txt")
+        chapter_mp4s = [p for p in slots_mp4 if p is not None]
+        chapter_srts = [p for p in slots_srt if p is not None]
+        chapter_transcripts = [p for p in slots_txt if p is not None]
     finally:
         cache_stats = acache.stats()
         jobs.close()

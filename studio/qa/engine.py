@@ -128,11 +128,11 @@ def verify_symbolic_derivative(expr_str: str, deriv_str: str, var: str = "x") ->
 
 
 def verify_audio_loudness(video_path: Path, min_lufs: float = -16.5, max_lufs: float = -13.0) -> QACheck:
-    """Measure actual integrated loudness and true peak via FFmpeg ebur128."""
+    """Measure actual integrated loudness and true peak via FFmpeg ebur128 (audio-only demux)."""
     ff = find_ffmpeg()
     try:
         proc = subprocess.run(
-            [ff, "-hide_banner", "-nostats", "-i", str(video_path), "-af", "ebur128=peak=true", "-f", "null", "-"],
+            [ff, "-hide_banner", "-nostats", "-i", str(video_path), "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"],
             capture_output=True,
             text=True,
             timeout=60,

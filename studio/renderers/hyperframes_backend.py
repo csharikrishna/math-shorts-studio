@@ -26,7 +26,7 @@ from studio.ai.env import PROJECT_ROOT
 from studio.ai.expr import compile_expr
 from studio.ai.world_model import materialize_constructions
 from studio.audio.bgm import generate_ambient_bgm
-from studio.audio.master import master_video
+from studio.audio.master import _pick_encoder, build_audio_mix_graph, measure_loudnorm_filter
 from studio.audio.sfx import SfxLibrary
 from studio.audio.tts import AudioTimeline, BeatSpec, build_voice_timeline, find_ffmpeg
 from studio.config import FORMATS
@@ -732,14 +732,11 @@ html, body {{
     return el;
   }}
 
-  function renderAtTime(t) {{
-    __vtimeMs = t * 1000.0;
-    layers.innerHTML = "";
-    overlay.innerHTML = "";
+  let prevSig = "";
 
-    // Active beat lookup
+  function activeBeatAt(t) {{
     let activeBeat = DATA.beats[DATA.beats.length - 1] || null;
-    let activeIdx = 0;
+    let activeIdx = Math.max(0, DATA.beats.length - 1);
     for (let i = 0; i < DATA.beats.length; i++) {{
       if (t >= DATA.beats[i].start && t < DATA.beats[i].end) {{
         activeBeat = DATA.beats[i];
@@ -747,6 +744,49 @@ html, body {{
         break;
       }}
     }}
+    return {{ activeBeat, activeIdx }};
+  }}
+
+  function computeRenderSig(t) {{
+    const enterDur = DATA.motion.enter_s || 0.45;
+    const {{ activeBeat, activeIdx }} = activeBeatAt(t);
+    let capSig = String(activeIdx);
+    if (activeBeat && activeBeat.words && activeBeat.words.length > 0) {{
+      let activeWIdx = activeBeat.words.findIndex(w => t >= w.s && t <= w.e);
+      if (activeWIdx < 0) {{
+        activeWIdx = Math.max(0, activeBeat.words.filter(w => t > w.e).length - 1);
+      }}
+      const startIdx = Math.floor(activeWIdx / 6) * 6;
+      const chunk = activeBeat.words.slice(startIdx, startIdx + 6);
+      const wStates = chunk.map(w => (t >= w.s && t <= w.e ? 1 : (t > w.e ? 2 : 0))).join("");
+      capSig += `:${{startIdx}}:${{wStates}}`;
+    }}
+    const parts = [capSig];
+    for (const el of DATA.elements) {{
+      if (t < el.show_at || t >= el.hide_at) continue;
+      const p = clamp01(easeOutExpo((t - el.show_at) / enterDur));
+      const qP = Math.round(p * 2000);
+      let extra = "";
+      if (el.polyline && el.polyline.length > 1) {{
+        extra = `:${{Math.max(2, Math.floor(el.polyline.length * p))}}`;
+      }} else if (el.kind === "point" && el.orbit && el.orbit.length > 1) {{
+        const oIdx = Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))));
+        const sQ = Math.round(springEval(t - el.show_at, enterDur, 0.72, 180) * 500);
+        extra = `:${{oIdx}}:${{sQ}}`;
+      }} else if (el.kind === "point") {{
+        extra = `:${{Math.round(springEval(t - el.show_at, enterDur, 0.72, 180) * 500)}}`;
+      }}
+      parts.push(`${{el.id}}@${{qP}}${{extra}}`);
+    }}
+    return parts.join("|");
+  }}
+
+  function renderAtTime(t) {{
+    __vtimeMs = t * 1000.0;
+    layers.innerHTML = "";
+    overlay.innerHTML = "";
+
+    const {{ activeBeat, activeIdx }} = activeBeatAt(t);
     if (activeBeat) {{
       beatPill.textContent = `${{activeIdx + 1}} / ${{DATA.beats.length}} • ${{activeBeat.purpose.slice(0, 34)}}`;
       if (activeBeat.speaker && activeBeat.speaker.toLowerCase() !== "narrator") {{
@@ -910,7 +950,9 @@ html, body {{
   }}
 
   window.__HF_SEEK = (t) => {{
-    renderAtTime(Number(t) || 0);
+    const ts = Number(t) || 0;
+    prevSig = computeRenderSig(ts);
+    renderAtTime(ts);
     return true;
   }};
 
@@ -928,6 +970,18 @@ html, body {{
       if (r.top < hdrRect.bottom - 2 && !node.classList.contains("hf-eq-card")) issues.push(`${{eid}}: overlaps header band`);
     }}
     return issues;
+  }};
+
+  window.__HF_STEP = (t, doAudit) => {{
+    const ts = Number(t) || 0;
+    const sig = computeRenderSig(ts);
+    const changed = sig !== prevSig;
+    if (changed) {{
+      prevSig = sig;
+      renderAtTime(ts);
+    }}
+    const issues = doAudit ? window.__HF_AUDIT_LAYOUT() : [];
+    return {{ changed, issues }};
   }};
 
   renderAtTime(0);
@@ -1050,14 +1104,20 @@ class HyperFramesBackend(RenderBackend):
         out_mp4.parent.mkdir(parents=True, exist_ok=True)
 
         if audio_timeline is None:
+            from studio.creative.dialogue import DIALOGUE_PROFILES
+
+            sp_voices: dict[str, tuple[str, str]] = {}
+            for dp in DIALOGUE_PROFILES.values():
+                for sp in dp.speakers:
+                    sp_voices[sp.role] = (sp.kokoro_voice, sp.edge_voice)
             beats = [
                 BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, pause_after=0.30, speaker=s.speaker)
                 for s in plan.scenes
             ]
-            audio_timeline = build_voice_timeline(beats, build_dir=bdir, rate="-4%", engine="kokoro")
+            audio_timeline = build_voice_timeline(beats, build_dir=bdir, rate="-4%", engine="kokoro", speaker_voices=sp_voices)
 
         SfxLibrary(bdir / "sfx").ensure_all()
-        bgm_wav = generate_ambient_bgm(bdir / "bgm.wav", duration=audio_timeline.total_duration + 2.0)
+        bgm_wav = generate_ambient_bgm(bdir / "bgm.wav", duration=audio_timeline.total_duration + 3.0)
 
         design = default_design_spec(format_name=format_name, look_name=look_name)
         html_doc, total_dur = compile_plan_to_html(plan, design, audio_timeline=audio_timeline)
@@ -1065,10 +1125,19 @@ class HyperFramesBackend(RenderBackend):
         site_dir.mkdir(parents=True, exist_ok=True)
         (site_dir / "index.html").write_text(html_doc, encoding="utf-8")
 
-        raw_mp4 = bdir / f"{slug}_hf_raw.mp4"
         fps = prof.fps
         total_frames = max(1, int(math.ceil(audio_timeline.total_duration * fps)) + 2)
         ffmpeg_bin = find_ffmpeg()
+
+        # Single-pass audio measurement + direct NVENC/x264 mastering from JPEG pipe (eliminates intermediate raw MP4 & double encode)
+        audio_mix = build_audio_mix_graph(1, 2, sfx_idx=None)
+        ln_filter = measure_loudnorm_filter(
+            ffmpeg_bin,
+            ["-i", str(audio_timeline.master_voice_wav), "-i", str(bgm_wav)],
+            audio_mix,
+        )
+        _enc_name, codec_flags = _pick_encoder()
+        filter_complex = f"{audio_mix},{ln_filter}[master_a];[0:v]tpad=stop_mode=clone:stop_duration=2.0,format=yuv420p[master_v]"
 
         ff_cmd = [
             ffmpeg_bin,
@@ -1077,16 +1146,19 @@ class HyperFramesBackend(RenderBackend):
             "-vcodec", "mjpeg",
             "-framerate", str(fps),
             "-i", "-",
-            "-f", "lavfi",
-            "-i", f"anullsrc=r=48000:cl=stereo:d={audio_timeline.total_duration + 0.5:.3f}",
+            "-i", str(audio_timeline.master_voice_wav),
+            "-i", str(bgm_wav),
+            "-filter_complex", filter_complex,
+            "-map", "[master_v]",
+            "-map", "[master_a]",
+            *codec_flags,
+            "-fps_mode", "cfr",
             "-shortest",
-            "-c:v", "libx264",
-            "-preset", "faster",
-            "-crf", "20",
-            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-ar", "48000",
-            str(raw_mp4),
+            "-b:a", "160k",
+            "-movflags", "+faststart",
+            str(out_mp4),
         ]
 
         server, port = _start_loopback_server(site_dir)
@@ -1096,6 +1168,7 @@ class HyperFramesBackend(RenderBackend):
         cdp: _CDPClient | None = None
         ff_proc: subprocess.Popen[bytes] | None = None
 
+        captured_frames = 0
         try:
             url = f"http://127.0.0.1:{port}/index.html"
             proc, page_ws = _launch_chrome_cdp(url, prof.pixel_width, prof.pixel_height, tmp_profile)
@@ -1110,32 +1183,34 @@ class HyperFramesBackend(RenderBackend):
             cdp.call("Page.enable")
             cdp.call("Page.navigate", {"url": url})
             time.sleep(0.35)
-            cdp.call("Runtime.evaluate", {"expression": "typeof window.__HF_SEEK === 'function'"})
+            cdp.call("Runtime.evaluate", {"expression": "typeof window.__HF_STEP === 'function'"})
 
             ff_proc = subprocess.Popen(ff_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             audit_frames = {int(round(0.5 * (sb.start_time + sb.end_time) * fps)) for sb in audio_timeline.beats}
             seen_issues: set[str] = set()
+            last_jpeg: bytes | None = None
 
             for f_idx in range(total_frames):
                 t_s = f_idx / fps
-                cdp.call("Runtime.evaluate", {"expression": f"window.__HF_SEEK({t_s:.6f})"})
-                if f_idx in audit_frames:
-                    aud = cdp.call("Runtime.evaluate", {"expression": "window.__HF_AUDIT_LAYOUT()", "returnByValue": True})
-                    vals = aud.get("result", {}).get("value") or []
-                    for v in vals:
-                        if v not in seen_issues:
-                            seen_issues.add(v)
-                            layout_issues.append(str(v))
-                shot = cdp.call("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
-                img_bytes = base64.b64decode(shot["data"])
+                do_audit_js = "true" if f_idx in audit_frames else "false"
+                step = cdp.call("Runtime.evaluate", {"expression": f"window.__HF_STEP({t_s:.6f}, {do_audit_js})", "returnByValue": True})
+                val = step.get("result", {}).get("value") or {}
+                for v in (val.get("issues") or []):
+                    if v not in seen_issues:
+                        seen_issues.add(v)
+                        layout_issues.append(str(v))
+                if bool(val.get("changed", True)) or last_jpeg is None:
+                    shot = cdp.call("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
+                    last_jpeg = base64.b64decode(shot["data"])
+                    captured_frames += 1
                 assert ff_proc.stdin is not None
-                ff_proc.stdin.write(img_bytes)
+                ff_proc.stdin.write(last_jpeg)
 
             if ff_proc.stdin:
                 ff_proc.stdin.close()
             _, ff_err = ff_proc.communicate(timeout=180)
             if ff_proc.returncode != 0:
-                raise RuntimeError(f"FFmpeg mux failed: {ff_err.decode('utf-8', errors='ignore')}")
+                raise RuntimeError(f"FFmpeg single-pass master failed: {ff_err.decode('utf-8', errors='ignore')}")
         finally:
             if cdp is not None:
                 try:
@@ -1152,13 +1227,6 @@ class HyperFramesBackend(RenderBackend):
             server.server_close()
             shutil.rmtree(tmp_profile, ignore_errors=True)
 
-        master_video(
-            raw_video=raw_mp4,
-            voice_wav=Path(audio_timeline.master_voice_wav),
-            bgm_wav=bgm_wav,
-            output_mp4=out_mp4,
-            look="none",
-        )
         dt = time.perf_counter() - t0
         from studio.longform import _probe_duration
 
@@ -1175,5 +1243,5 @@ class HyperFramesBackend(RenderBackend):
             fps=fps,
             audio_sample_rate=48000,
             layout_issues=layout_issues,
-            notes=f"Rendered via HyperFrames offline Chromium CDP + safe loopback server ({total_frames} frames).",
+            notes=f"Rendered via HyperFrames offline Chromium CDP single-pass {_enc_name} ({captured_frames}/{total_frames} unique frames captured).",
         )

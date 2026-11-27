@@ -1,6 +1,8 @@
 """Procedural studio-grade sound effects synthesizer (zero external audio dependencies)."""
 
+import os
 from pathlib import Path
+import shutil
 import wave
 import numpy as np
 
@@ -180,6 +182,10 @@ class SfxLibrary:
     def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._shared_dir: Path | None = None
+        if os.environ.get("STUDIO_SHARED_CACHE", "1") != "0":
+            self._shared_dir = Path(__file__).resolve().parent.parent.parent / "build" / "shared_cache" / "sfx"
+            self._shared_dir.mkdir(parents=True, exist_ok=True)
 
     def ensure_all(self) -> dict[str, Path]:
         return {name: self.get(name) for name in _GENERATORS}
@@ -187,8 +193,18 @@ class SfxLibrary:
     def get(self, name: str) -> Path:
         if name not in _GENERATORS:
             raise ValueError(f"Unknown SFX '{name}'. Available: {list(_GENERATORS)}")
-        target = self.cache_dir / f"{name}_{SFX_VERSION}.wav"
+        fname = f"{name}_{SFX_VERSION}.wav"
+        target = self.cache_dir / fname
         if not target.exists():
-            left, right = _GENERATORS[name]()
-            _write_stereo_wav(target, left, right)
+            shared = (self._shared_dir / fname) if self._shared_dir is not None else None
+            if shared is not None and shared.exists():
+                shutil.copy2(shared, target)
+            else:
+                left, right = _GENERATORS[name]()
+                _write_stereo_wav(target, left, right)
+                if shared is not None and not shared.exists():
+                    try:
+                        shutil.copy2(target, shared)
+                    except OSError:
+                        pass
         return target

@@ -310,6 +310,43 @@ class TestGeneralization(unittest.TestCase):
             finally:
                 cache.close()
 
+    def test_render_time_optimization_primitives(self) -> None:
+        import numpy as np
+        from studio.audio.master import _probe_encoder, build_audio_mix_graph
+        from studio.audio.tts import _resample_mono_to_target_i16, _trim_pcm_silence
+        from studio.config import FORMATS
+
+        # 1. Fast widescreen preview format exists alongside shorts_fast
+        wf = FORMATS["widescreen_fast"]
+        self.assertEqual((wf.pixel_width, wf.pixel_height, wf.fps), (1280, 720, 30))
+
+        # 2. In-memory 24kHz -> 48kHz upsampling & silence trimming without FFmpeg subprocess
+        t = np.linspace(0.0, 0.25, 6000, endpoint=False, dtype=np.float32)
+        sig = 0.5 * np.sin(2.0 * np.pi * 440.0 * t)
+        padded = np.concatenate([np.zeros(2400, dtype=np.float32), sig, np.zeros(2400, dtype=np.float32)])
+        up = _resample_mono_to_target_i16(padded, 24000, 48000)
+        self.assertEqual(len(up), len(padded) * 2)
+        trimmed, head_trim = _trim_pcm_silence(up, sr=48000)
+        self.assertGreater(head_trim, 0.04)
+        self.assertLess(len(trimmed), len(up))
+
+        # 3. Cached encoder probe and unified 2/3-input mix graph builder
+        self.assertEqual(_probe_encoder("cpu"), "libx264")
+        g2 = build_audio_mix_graph(1, 2, sfx_idx=None)
+        g3 = build_audio_mix_graph(1, 2, sfx_idx=0)
+        self.assertIn("amix=inputs=2", g2)
+        self.assertIn("amix=inputs=3", g3)
+
+        # 4. HyperFrames HTML includes combined __HF_STEP static-frame skip hook
+        p = VideoPlanV3(
+            topic="Opt",
+            title="Opt",
+            scenes=[SceneV3(scene_id="s1", purpose="Hook", narration="Hello world.", objects=[SceneObject(id="eq", kind="equation", tex="x=1")])],
+        )
+        html_doc, _dur = compile_plan_to_html(p, default_design_spec("shorts_fast", "midnight_studio"))
+        self.assertIn("window.__HF_STEP", html_doc)
+        self.assertIn("computeRenderSig", html_doc)
+
 
 if __name__ == "__main__":
     unittest.main()
