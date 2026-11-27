@@ -84,8 +84,24 @@ class V3Scene(StoryScene):
                 else:
                     main_anims.append(self._compile_event(ev))
 
+            def _compile_cue_group(evs: list[AnimationEvent]) -> list[m.Animation]:
+                # Group sequential events targeting the same object into Succession to avoid conflicts
+                by_target: dict[str, list[m.Animation]] = {}
+                order: list[str] = []
+                for e in evs:
+                    anim = self._compile_event(e)
+                    if e.target_id not in by_target:
+                        by_target[e.target_id] = []
+                        order.append(e.target_id)
+                    by_target[e.target_id].append(anim)
+                out_anims: list[m.Animation] = []
+                for tid in order:
+                    grp = by_target[tid]
+                    out_anims.append(grp[0] if len(grp) == 1 else m.Succession(*grp))
+                return out_anims
+
             cue_callables = {
-                mark: (lambda evs=ev_list: [self._compile_event(e) for e in evs])
+                mark: (lambda evs=ev_list: _compile_cue_group(evs))
                 for mark, ev_list in cues.items()
             }
 
@@ -121,6 +137,9 @@ class V3Scene(StoryScene):
                 raise RuntimeError(f"Transform source_id {ev.source_id!r} not found in registry.")
             src = self.registry[ev.source_id]
             self.registry[ev.target_id] = src
+            if ev.source_id in self._live_unaxed_polys:
+                self._live_unaxed_polys.discard(ev.source_id)
+                self._live_unaxed_polys.add(ev.target_id)
             return m.Transform(src, mob)
         if ev.op == "highlight":
             return m.Indicate(mob, scale_factor=1.08)
@@ -256,6 +275,15 @@ class V3Scene(StoryScene):
             txt = m.Text(obj.text or obj.label, font_size=26, font=CAPTION_FONT, weight="BOLD", color=color)
             fit_mobject(txt, max_width=L.safe_w * 0.85, min_height=L.min_text_h)
             pos = self._to_point(obj.coords, obj.axes_id) if obj.coords and len(obj.coords) >= 2 else (L.stage_center + np.array([0.0, L.stage_h * 0.36, 0.0]))
+            if obj.axes_id and obj.coords and len(obj.coords) >= 2:
+                if abs(float(obj.coords[1])) < 0.45:
+                    pos = pos + np.array([0.0, 0.38, 0.0])
+                if abs(float(obj.coords[0])) < 0.60:
+                    ax_mob = self.registry.get(obj.axes_id)
+                    if isinstance(ax_mob, m.Axes):
+                        pos = np.array([pos[0], ax_mob.get_top()[1] + 0.36, 0.0])
+                    else:
+                        pos = pos + np.array([1.45, 0.0, 0.0])
             txt.move_to(pos)
             return txt
 
@@ -330,7 +358,7 @@ class V3Scene(StoryScene):
         if obj.kind == "bar_chart" and obj.values:
             if not obj.axes_id:
                 for v in self.registry.values():
-                    if isinstance(v, m.Axes):
+                    if isinstance(v, m.Axes) or getattr(v, "_is_bar_chart", False):
                         self.remove(v)
             vals = obj.values
             if obj.log_scale:
@@ -345,6 +373,7 @@ class V3Scene(StoryScene):
             w = L.stage_w * 0.78 / max(1, n)
             base_y = L.stage_center[1] - L.stage_h * 0.10
             max_h = L.stage_h * 0.40
+            lbl_step = max(1, (n + 7) // 8)
             for i, frac in enumerate(norm):
                 h = max(0.0, abs(frac) * max_h)
                 if h > 0.0:
@@ -353,12 +382,13 @@ class V3Scene(StoryScene):
                     y_off = h * 0.5 if frac >= 0 else -h * 0.5
                     bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
                     grp.add(bar)
-                if i < len(obj.bar_labels) and obj.bar_labels[i]:
+                if i < len(obj.bar_labels) and obj.bar_labels[i] and (i % lbl_step == 0 or (i == n - 1 and (n - 1) % lbl_step >= max(2, lbl_step // 2))):
                     lbl = m.Text(obj.bar_labels[i], font_size=24, font=CAPTION_FONT, color=T.text_muted)
-                    fit_mobject(lbl, max_width=w * 1.15, min_height=L.min_text_h)
+                    fit_mobject(lbl, max_width=w * lbl_step * 0.85, min_height=L.min_text_h)
                     x_pos = L.stage_center[0] - L.stage_w * 0.39 + (i + 0.5) * w
-                    lbl.move_to(np.array([x_pos, base_y - 0.25, 0.0]))
+                    lbl.move_to(np.array([x_pos, base_y - 0.32, 0.0]))
                     grp.add(lbl)
+            grp._is_bar_chart = True  # type: ignore[attr-defined]
             return grp
 
         if obj.kind == "angle_arc":

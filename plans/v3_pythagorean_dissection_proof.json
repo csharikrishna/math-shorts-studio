@@ -3,13 +3,13 @@
   "topic": "Pythagorean Theorem Geometric Proof",
   "title": "Why a^2 + b^2 = c^2",
   "audience": "general",
-  "strategy": "Pose the area puzzle visually, construct one 3-4-5 right triangle inside an (a+b) square, duplicate and rotate three congruent copies into the corners, reveal the tilted c^2 center, and transform the area equation to cancel 2ab.",
+  "strategy": "Pose the area puzzle visually, construct one 3-4-5 right triangle inside an (a+b) square, duplicate it and rigidly rotate/translate three congruent copies into the corners, reveal the tilted c^2 center, and transform the area equation to cancel 2ab.",
   "target_duration_s": 50.0,
   "scenes": [
     {
       "scene_id": "s1_hook",
       "purpose": "Pose the area puzzle with squares on all three sides",
-      "narration": "Why do the squares on a right triangle's two legs <bookmark mark='sum_sq'/>always match the *hypotenuse* square?",
+      "narration": "Why do the squares on a right triangle's two legs <bookmark mark='sum_sq'/>always equal the area of the *hypotenuse* square?",
       "color_role": "highlight",
       "sfx_cue": "whoosh_soft",
       "constructions": [
@@ -25,7 +25,7 @@
           "op": "square_on_segment",
           "output_ids": ["sq_a"],
           "source_id": "tri_hook",
-          "params": {"edge_index": 0, "outward": true},
+          "params": {"edge_role": "leg_a", "outward": true},
           "color_role": "primary",
           "persist": false,
           "label": "square"
@@ -34,7 +34,7 @@
           "op": "square_on_segment",
           "output_ids": ["sq_b"],
           "source_id": "tri_hook",
-          "params": {"edge_index": 2, "outward": true},
+          "params": {"edge_role": "leg_b", "outward": true},
           "color_role": "tertiary",
           "persist": false,
           "label": "square"
@@ -43,7 +43,7 @@
           "op": "square_on_segment",
           "output_ids": ["sq_c"],
           "source_id": "tri_hook",
-          "params": {"edge_index": 1, "outward": true},
+          "params": {"edge_role": "hypotenuse", "outward": true},
           "color_role": "secondary",
           "persist": false,
           "label": "square"
@@ -51,7 +51,8 @@
       ],
       "claims": [
         {"kind": "right_triangle", "object_ids": ["tri_hook"], "statement": "Hook triangle is a 3-4-5 right triangle."},
-        {"kind": "square", "object_ids": ["sq_a", "sq_b", "sq_c"], "statement": "All three side-squares are valid squares."}
+        {"kind": "square", "object_ids": ["sq_a", "sq_b", "sq_c"], "statement": "All three side-squares are valid squares."},
+        {"kind": "area_conservation", "object_ids": ["sq_a", "sq_b"], "container_id": "sq_c", "statement": "Area(sq_a) + Area(sq_b) == Area(sq_c)."}
       ],
       "objects": [
         {"id": "eq_hook", "kind": "equation", "persist": false, "color_role": "highlight", "tex": "a^2 + b^2 = c^2", "card": true},
@@ -74,23 +75,26 @@
     {
       "scene_id": "s2_outer_and_one_tri",
       "purpose": "Build the (a+b) square and place the first right triangle",
-      "narration": "Draw a square of side *a plus b*, and tuck <bookmark mark='first_tri'/>one right triangle into the bottom corner.",
+      "narration": "Draw a square of side *a plus b*, and tuck <bookmark mark='first_tri'/>one right triangle into the bottom-left corner.",
       "color_role": "primary",
       "sfx_cue": "tick_soft",
       "constructions": [
         {
-          "op": "pythagorean_dissection",
-          "output_ids": ["outer_square", "tri_1", "tri_2", "tri_3", "tri_4", "inner_square"],
-          "params": {"a": 3.0, "b": 4.0},
-          "persist": true
+          "op": "right_triangle",
+          "output_ids": ["tri_1"],
+          "params": {"a": 3.0, "b": 4.0, "origin": [-3.5, -3.5]},
+          "color_role": "secondary",
+          "persist": true,
+          "label": "triangle"
         }
       ],
       "claims": [
-        {"kind": "square", "object_ids": ["outer_square", "inner_square"], "statement": "Outer and inner shapes are valid squares."},
-        {"kind": "congruent_triangles", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4"], "statement": "Four corner triangles are congruent."}
+        {"kind": "right_triangle", "object_ids": ["tri_1"], "statement": "First corner triangle is a 3-4-5 right triangle."},
+        {"kind": "square", "object_ids": ["outer_square"], "statement": "Outer frame is an (a+b)x(a+b) square."}
       ],
       "objects": [
-        {"id": "eq_outer", "kind": "equation", "persist": true, "color_role": "primary", "tex": "\\text{Side} = a + b", "card": true}
+        {"id": "eq_outer", "kind": "equation", "persist": true, "color_role": "primary", "tex": "\\text{Side} = a + b", "card": true},
+        {"id": "outer_square", "kind": "polygon", "persist": true, "color_role": "primary", "vertices": [[-3.5, -3.5], [3.5, -3.5], [3.5, 3.5], [-3.5, 3.5]], "label": "square"}
       ],
       "events": [
         {"op": "create", "target_id": "eq_outer"},
@@ -100,21 +104,29 @@
     },
     {
       "scene_id": "s3_rotate_copies",
-      "purpose": "Rotate and place three congruent copies around the corners",
-      "narration": "Now rotate <bookmark mark='rot_two'/>three *congruent* copies <bookmark mark='rot_three'/>around the corners, <bookmark mark='rot_four'/>locking legs a and b along every edge.",
+      "purpose": "Duplicate tri_1 and rigidly rotate/translate three congruent copies into the other corners",
+      "narration": "Now duplicate that triangle and rigidly rotate <bookmark mark='rot_two'/>the second, <bookmark mark='rot_three'/>third, and <bookmark mark='rot_four'/>fourth *congruent* copies into the remaining corners.",
       "color_role": "secondary",
       "sfx_cue": "pop_marimba",
+      "constructions": [
+        {"op": "right_triangle", "output_ids": ["tri_2"], "params": {"a": 3.0, "b": 4.0, "origin": [-3.5, -3.5]}, "color_role": "tertiary", "persist": true, "label": "triangle"},
+        {"op": "right_triangle", "output_ids": ["tri_3"], "params": {"a": 3.0, "b": 4.0, "origin": [-3.5, -3.5]}, "color_role": "secondary", "persist": true, "label": "triangle"},
+        {"op": "right_triangle", "output_ids": ["tri_4"], "params": {"a": 3.0, "b": 4.0, "origin": [-3.5, -3.5]}, "color_role": "tertiary", "persist": true, "label": "triangle"}
+      ],
       "claims": [
-        {"kind": "congruent_triangles", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4"], "statement": "All four corner triangles are congruent."}
+        {"kind": "congruent_triangles", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4"], "statement": "All four corner triangles remain congruent after rigid rotation and translation."}
       ],
       "objects": [],
       "events": [
         {"op": "create", "target_id": "tri_2", "anchor_mark": "rot_two"},
-        {"op": "rotate", "target_id": "tri_2", "angle_deg": 360.0, "anchor_mark": "rot_two"},
+        {"op": "rotate", "target_id": "tri_2", "angle_deg": 90.0, "anchor_mark": "rot_two"},
+        {"op": "move", "target_id": "tri_2", "shift": [4.666667, -0.333333], "anchor_mark": "rot_two"},
         {"op": "create", "target_id": "tri_3", "anchor_mark": "rot_three"},
-        {"op": "rotate", "target_id": "tri_3", "angle_deg": 360.0, "anchor_mark": "rot_three"},
+        {"op": "rotate", "target_id": "tri_3", "angle_deg": 180.0, "anchor_mark": "rot_three"},
+        {"op": "move", "target_id": "tri_3", "shift": [5.0, 4.333333], "anchor_mark": "rot_three"},
         {"op": "create", "target_id": "tri_4", "anchor_mark": "rot_four"},
-        {"op": "rotate", "target_id": "tri_4", "angle_deg": 360.0, "anchor_mark": "rot_four"}
+        {"op": "rotate", "target_id": "tri_4", "angle_deg": 270.0, "anchor_mark": "rot_four"},
+        {"op": "move", "target_id": "tri_4", "shift": [0.333333, 4.666667], "anchor_mark": "rot_four"}
       ]
     },
     {
@@ -125,10 +137,11 @@
       "sfx_cue": "chime_reveal",
       "claims": [
         {"kind": "square", "object_ids": ["inner_square"], "statement": "Center gap is a true square of side c."},
-        {"kind": "partition_of", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4", "inner_square"], "container_id": "outer_square", "statement": "Four triangles plus inner square exactly partition outer square."}
+        {"kind": "partition_of", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4", "inner_square"], "container_id": "outer_square", "statement": "Four transformed triangles plus inner square exactly partition outer square."}
       ],
       "objects": [
         {"id": "eq_center", "kind": "equation", "persist": true, "color_role": "highlight", "tex": "\\text{Center Area} = c^2", "card": true},
+        {"id": "inner_square", "kind": "polygon", "persist": true, "color_role": "highlight", "vertices": [[-0.5, -3.5], [3.5, -0.5], [0.5, 3.5], [-3.5, 0.5]], "label": "square"},
         {"id": "lbl_inner_c2", "kind": "annotation", "persist": true, "color_role": "highlight", "text": "c²", "coords": [0.0, 0.0], "label": "center square area"}
       ],
       "events": [

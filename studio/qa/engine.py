@@ -219,3 +219,34 @@ def verify_storyboard_image(image_path: Path) -> QACheck:
     std = float(np.std(arr))
     ok = std > 8.0
     return QACheck("visual_storyboard", "passed" if ok else "failed", f"{image_path.name} luminance std={std:.1f}")
+
+
+def verify_longform_bundle(
+    output_mp4: Path,
+    chapters_json: Path,
+    srt_path: Path,
+    vtt_path: Path,
+    transcript_path: Path,
+    min_duration_s: float = 0.0,
+) -> QACheck:
+    """Independently verify final long-form MP4, audio, subtitles, chapters, and duration."""
+    for req_file in (output_mp4, chapters_json, srt_path, vtt_path, transcript_path):
+        if not req_file.exists() or req_file.stat().st_size == 0:
+            return QACheck("longform_bundle", "failed", f"Missing or empty required artifact: {req_file.name}")
+
+    loud = verify_audio_loudness(output_mp4)
+    if not loud.passed:
+        return QACheck("longform_bundle", "failed", f"Loudness QA failed: {loud.detail}")
+
+    streams = verify_media_streams(output_mp4)
+    if not streams.passed:
+        return QACheck("longform_bundle", "failed", f"Stream QA failed: {streams.detail}")
+
+    ff = find_ffmpeg()
+    info = subprocess.run([ff, "-hide_banner", "-i", str(output_mp4)], capture_output=True, text=True, timeout=30)
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info.stderr)
+    dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
+    if dur < min_duration_s:
+        return QACheck("longform_bundle", "failed", f"Duration {dur:.1f}s < required minimum {min_duration_s:.1f}s")
+
+    return QACheck("longform_bundle", "passed", f"dur={dur:.2f}s; {loud.detail}; {streams.detail}")

@@ -37,9 +37,33 @@ def normalize_for_speech(text: str) -> str:
 
 
 def normalize_for_speech_with_map(text: str) -> dict[str, object]:
-    """Normalize narration for TTS while returning original, spoken, and bookmark metadata."""
-    from studio.audio.tts import BOOKMARK_RE
+    """Normalize narration for TTS while mapping display tokens <-> spoken tokens and preserving bookmarks."""
+    from studio.audio.tts import BOOKMARK_RE, parse_script
 
-    marks = BOOKMARK_RE.findall(text)
-    spoken = normalize_for_speech(text)
-    return {"original": text, "spoken": spoken, "bookmarks": marks}
+    clean, tokens, marks = parse_script(text)
+    spoken_parts: list[str] = []
+    token_map: list[dict[str, object]] = []
+    spoken_cursor = 0
+    for idx, tok in enumerate(tokens):
+        sp_tok = normalize_for_speech(tok.text)
+        sp_words = sp_tok.split() if sp_tok else [tok.text]
+        start_idx = spoken_cursor
+        spoken_parts.extend(sp_words)
+        spoken_cursor += len(sp_words)
+        token_map.append(
+            {
+                "display_idx": idx,
+                "display_text": tok.text,
+                "spoken_words": sp_words,
+                "spoken_range": [start_idx, spoken_cursor],
+            }
+        )
+    spoken_full = " ".join(spoken_parts)
+    return {
+        "original": text,
+        "clean": clean,
+        "spoken": spoken_full,
+        "bookmarks": BOOKMARK_RE.findall(text),
+        "mark_token_indices": marks,
+        "token_map": token_map,
+    }

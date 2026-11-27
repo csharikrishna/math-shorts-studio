@@ -1,0 +1,266 @@
+{
+  "schema_version": "3.0",
+  "topic": "Gradient descent optimization",
+  "title": "Finding the Valley: How Gradient Descent Works",
+  "audience": "general",
+  "strategy": "Visualizing optimization as stepping down a smooth curve using derivatives to find local minima.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "purpose": "Introduce the curve and the starting point for optimization.",
+      "narration": "To find the lowest point of a curve, we can take small steps down the <bookmark mark='slope'/>*slope* until we reach the bottom.",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "ax",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -3.0,
+            3.0
+          ],
+          "y_range": [
+            -1.0,
+            9.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "fn",
+          "kind": "function_plot",
+          "persist": true,
+          "color_role": "secondary",
+          "expr": "x**2",
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "ax",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "ax",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "fn",
+          "source_id": null,
+          "anchor_mark": "slope",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "purpose": "Construct the exact gradient descent path on the objective function.",
+      "narration": "Each step size is proportional to the local derivative, guiding us precisely toward the <bookmark mark='minimum'/>*minimum* value.",
+      "color_role": "success",
+      "sfx_cue": "pop_marimba",
+      "constructions": [
+        {
+          "op": "gradient_descent_path",
+          "output_ids": [
+            "gd_path"
+          ],
+          "source_id": null,
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": null,
+            "edge_role": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null,
+            "expr": "x**2",
+            "axes_id": null,
+            "x0": 2.5,
+            "lr": 0.3,
+            "steps": 6,
+            "degree": null,
+            "n_terms": null,
+            "prior": null,
+            "p_e_given_h": null,
+            "p_e_given_not_h": null,
+            "n_dice": null,
+            "mu": null,
+            "sigma": null
+          },
+          "color_role": "success",
+          "persist": true,
+          "label": "Descent Path"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "local_minimum",
+          "object_ids": [
+            "gd_path"
+          ],
+          "container_id": "ax",
+          "statement": "Gradient descent converges toward the local minimum at x=0.",
+          "expr": "x**2",
+          "expected_expr": null,
+          "x_val": null,
+          "expected_value": 0.0,
+          "expected_degree": null,
+          "prior": null,
+          "likelihood": null,
+          "false_positive": null,
+          "mu": null,
+          "sigma": null,
+          "tolerance": 0.1
+        }
+      ],
+      "objects": [
+        {
+          "id": "eq_min",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "success",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "\\min f(x) = x^2",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "eq_min",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "gd_path",
+          "source_id": null,
+          "anchor_mark": "minimum",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "purpose": "Summarize how learning rate affects convergence speed and stability.",
+      "narration": "Choosing the right learning rate prevents overshooting, ensuring a smooth and steady descent to the *solution*.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "summary_text",
+          "kind": "annotation",
+          "persist": false,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": "Convergence Achieved",
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            7.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "ax",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "summary_text",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

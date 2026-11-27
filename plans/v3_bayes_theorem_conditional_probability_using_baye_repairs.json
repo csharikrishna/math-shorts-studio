@@ -1,0 +1,11 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (scene_2) claim conditional_probability: requires prior, likelihood, false_positive, expected_value.",
+      "scene 3 (scene_3): event highlight on 'tp_region' before it is created/drawn.",
+      "scene 4 (scene_4): event highlight on 'fp_region' before it is created/drawn.",
+      "Narration too short for 55s target (91 words < 104); expand explanations of WHY each step works."
+    ]
+  }
+]

@@ -71,6 +71,12 @@ ConstructionKind = Literal[
     "pythagorean_dissection",
     "translate_polygon",
     "rotate_polygon",
+    "gradient_descent_path",
+    "bayes_area_model",
+    "dice_sum_distribution",
+    "gaussian_approx",
+    "taylor_approximation",
+    "fourier_partial_sum",
 ]
 
 
@@ -81,6 +87,7 @@ class ConstructionParams(BaseModel):
     b: Optional[float] = None
     origin: Optional[list[float]] = None
     edge_index: Optional[int] = None
+    edge_role: Optional[Literal["leg_a", "leg_b", "hypotenuse"]] = None
     outward: Optional[bool] = None
     dx: Optional[float] = None
     dy: Optional[float] = None
@@ -88,6 +95,20 @@ class ConstructionParams(BaseModel):
     center: Optional[list[float]] = None
     p1: Optional[list[float]] = None
     p2: Optional[list[float]] = None
+    # Computational & statistical construction params
+    expr: Optional[str] = None
+    axes_id: Optional[str] = None
+    x0: Optional[float] = None
+    lr: Optional[float] = None
+    steps: Optional[int] = None
+    degree: Optional[int] = None
+    n_terms: Optional[int] = None
+    prior: Optional[float] = None
+    p_e_given_h: Optional[float] = None
+    p_e_given_not_h: Optional[float] = None
+    n_dice: Optional[int] = None
+    mu: Optional[float] = None
+    sigma: Optional[float] = None
 
 
 class ConstructionOp(BaseModel):
@@ -107,18 +128,41 @@ ClaimRuleKind = Literal[
     "square",
     "congruent_triangles",
     "area_conservation",
+    "area_equality",
     "partition_of",
     "nonzero_area",
+    "point_on_function",
+    "stationary_point",
+    "local_minimum",
+    "derivative_equality",
+    "function_equivalence",
+    "polynomial_degree",
+    "coefficient_correctness",
+    "probability_normalization",
+    "conditional_probability",
+    "distribution_stats",
+    "convergence_assumptions",
 ]
 
 
 class StructuredClaim(BaseModel):
-    """Explicit mathematical constraint verified against live geometry."""
+    """Explicit mathematical constraint verified against live objects and symbolic/numeric truth."""
 
     kind: ClaimRuleKind
     object_ids: list[str] = Field(default_factory=list)
     container_id: Optional[str] = None
     statement: str = ""
+    expr: Optional[str] = None
+    expected_expr: Optional[str] = None
+    x_val: Optional[float] = None
+    expected_value: Optional[float] = None
+    expected_degree: Optional[int] = None
+    prior: Optional[float] = None
+    likelihood: Optional[float] = None
+    false_positive: Optional[float] = None
+    mu: Optional[float] = None
+    sigma: Optional[float] = None
+    tolerance: float = 1e-3
 
 
 class AnimationEvent(BaseModel):

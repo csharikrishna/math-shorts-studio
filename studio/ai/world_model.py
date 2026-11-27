@@ -138,6 +138,52 @@ def all_coords_finite(pts: Sequence[Sequence[float]]) -> bool:
     return all(len(v) >= 2 and math.isfinite(float(v[0])) and math.isfinite(float(v[1])) for v in pts)
 
 
+def is_convex_polygon(vertices: Sequence[Sequence[float]], tol: float = 1e-6) -> bool:
+    """Verify polygon has >=3 vertices and consistent turn sign (convex)."""
+    pts = clean_polygon_vertices(vertices)
+    n = len(pts)
+    if n < 3:
+        return False
+    sign = 0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        x3, y3 = pts[(i + 2) % n]
+        cross = (x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2)
+        if abs(cross) <= tol:
+            continue
+        cur = 1 if cross > 0 else -1
+        if sign == 0:
+            sign = cur
+        elif cur != sign:
+            return False
+    return sign != 0
+
+
+def has_self_intersection(vertices: Sequence[Sequence[float]], tol: float = 1e-6) -> bool:
+    """Detect non-adjacent edge intersections in a polygon."""
+    pts = clean_polygon_vertices(vertices)
+    n = len(pts)
+    if n < 4:
+        return False
+
+    def _ccw(a: Sequence[float], b: Sequence[float], c: Sequence[float]) -> float:
+        return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def _seg_inter(a: Sequence[float], b: Sequence[float], c: Sequence[float], d: Sequence[float]) -> bool:
+        d1, d2 = _ccw(a, b, c), _ccw(a, b, d)
+        d3, d4 = _ccw(c, d, a), _ccw(c, d, b)
+        return (d1 * d2 < -tol) and (d3 * d4 < -tol)
+
+    for i in range(n):
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue
+            if _seg_inter(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n]):
+                return True
+    return False
+
+
 def _ensure_ccw(pts: list[list[float]]) -> list[list[float]]:
     s = 0.0
     for i in range(len(pts)):
@@ -220,7 +266,8 @@ def verify_partition(pieces: Sequence[Sequence[Sequence[float]]], outer: Sequenc
 
 
 def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
-    """Deterministically materialize typed ConstructionOps into SceneObject polygons."""
+    """Deterministically materialize typed ConstructionOps into SceneObject definitions."""
+    from studio.ai.math_truth import bayes_posterior, discrete_convolution, extract_taylor_coefficients, gradient_descent_trajectory
     from studio.ai.v3_schema import SceneObject
 
     out = plan.model_copy(deep=True)
@@ -247,14 +294,19 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                     sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "triangle"))
                     existing_ids.add(oid)
             elif c.op == "square_on_segment":
-                src = registry.get(c.source_id or "")
-                idx0 = int(p.edge_index if p.edge_index is not None else 0)
+                role_map = {"leg_a": 0, "hypotenuse": 1, "leg_b": 2}
+                idx0 = role_map[p.edge_role] if p.edge_role in role_map else int(p.edge_index if p.edge_index is not None else 0)
                 outward = bool(p.outward if p.outward is not None else True)
-                if src and len(src) >= 2:
+                if c.source_id:
+                    if c.source_id not in registry:
+                        raise ValueError(f"square_on_segment missing source_id {c.source_id!r} in registry.")
+                    src = registry[c.source_id]
                     p1, p2 = src[idx0 % len(src)], src[(idx0 + 1) % len(src)]
+                elif p.p1 and p.p2:
+                    p1 = [float(x) for x in p.p1]
+                    p2 = [float(x) for x in p.p2]
                 else:
-                    p1 = [float(x) for x in (p.p1 or [0.0, 0.0])]
-                    p2 = [float(x) for x in (p.p2 or [1.0, 0.0])]
+                    raise ValueError("square_on_segment requires valid source_id or explicit p1, p2.")
                 verts = square_on_segment(p1, p2, outward=outward)
                 oid = c.output_ids[0] if c.output_ids else f"sq_{idx0}"
                 registry[oid] = verts
@@ -279,7 +331,9 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                     if oid not in existing_ids:
                         sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=role, vertices=verts, label=lbl))  # type: ignore[arg-type]
                         existing_ids.add(oid)
-            elif c.op == "translate_polygon" and c.source_id in registry:
+            elif c.op == "translate_polygon":
+                if not c.source_id or c.source_id not in registry:
+                    raise ValueError(f"translate_polygon missing source_id {c.source_id!r} in registry.")
                 dx = float(p.dx if p.dx is not None else 0.0)
                 dy = float(p.dy if p.dy is not None else 0.0)
                 verts = translate_polygon(registry[c.source_id], dx, dy)
@@ -288,7 +342,9 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                 if oid not in existing_ids:
                     sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "polygon"))
                     existing_ids.add(oid)
-            elif c.op == "rotate_polygon" and c.source_id in registry:
+            elif c.op == "rotate_polygon":
+                if not c.source_id or c.source_id not in registry:
+                    raise ValueError(f"rotate_polygon missing source_id {c.source_id!r} in registry.")
                 ang = math.radians(float(p.angle_deg if p.angle_deg is not None else 90.0))
                 ctr = tuple(float(x) for x in (p.center or [0.0, 0.0]))
                 verts = rotate_polygon(registry[c.source_id], ang, (ctr[0], ctr[1]))
@@ -296,5 +352,68 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                 registry[oid] = verts
                 if oid not in existing_ids:
                     sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "polygon"))
+                    existing_ids.add(oid)
+            elif c.op == "gradient_descent_path":
+                expr = p.expr or "x**2"
+                x0 = float(p.x0 if p.x0 is not None else 2.0)
+                lr = float(p.lr if p.lr is not None else 0.2)
+                steps = int(p.steps if p.steps is not None else 5)
+                traj = gradient_descent_trajectory(expr, x0, lr, steps)
+                for idx_pt, (xv, yv, _) in enumerate(traj):
+                    oid = c.output_ids[idx_pt] if idx_pt < len(c.output_ids) else f"gd_pt_{idx_pt}"
+                    if oid not in existing_ids:
+                        role = "highlight" if idx_pt == len(traj) - 1 else c.color_role
+                        sc.objects.append(SceneObject(id=oid, kind="point", persist=c.persist, color_role=role, coords=[xv, yv], axes_id=p.axes_id, label=f"step_{idx_pt}"))
+                        existing_ids.add(oid)
+            elif c.op == "bayes_area_model":
+                prior = float(p.prior if p.prior is not None else 0.2)
+                peh = float(p.p_e_given_h if p.p_e_given_h is not None else 0.9)
+                penh = float(p.p_e_given_not_h if p.p_e_given_not_h is not None else 0.15)
+                bayes_posterior(prior, peh, penh)
+                ids = c.output_ids or ["bayes_space", "bayes_prior", "bayes_tp", "bayes_fp"]
+                boxes: list[tuple[str, list[list[float]], str, str]] = [
+                    (ids[0], [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], "primary", "sample_space"),
+                    (ids[1], [[0.0, 0.0], [prior, 0.0], [prior, 1.0], [0.0, 1.0]], "secondary", "prior_region"),
+                    (ids[2], [[0.0, 0.0], [prior, 0.0], [prior, peh], [0.0, peh]], "highlight", "true_positive"),
+                    (ids[3], [[prior, 0.0], [1.0, 0.0], [1.0, penh], [prior, penh]], "danger", "false_positive"),
+                ]
+                for oid, verts, role, lbl in boxes:
+                    registry[oid] = verts
+                    if oid not in existing_ids:
+                        sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=role, vertices=verts, axes_id=p.axes_id, label=lbl))  # type: ignore[arg-type]
+                        existing_ids.add(oid)
+            elif c.op == "dice_sum_distribution":
+                n_dice = int(p.n_dice if p.n_dice is not None else 2)
+                support, probs = discrete_convolution([1.0 / 6.0] * 6, n_dice, offset_per_trial=1)
+                oid = c.output_ids[0] if c.output_ids else f"dice_{n_dice}_dist"
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=probs, bar_labels=[str(s) for s in support], label=c.label or f"{n_dice}_dice_sum"))
+                    existing_ids.add(oid)
+            elif c.op == "gaussian_approx":
+                mu = float(p.mu if p.mu is not None else 0.0)
+                sigma = max(1e-3, float(p.sigma if p.sigma is not None else 1.0))
+                oid = c.output_ids[0] if c.output_ids else "gaussian_curve"
+                expr = f"exp(-0.5*((x-({mu}))/({sigma}))**2)/({sigma}*sqrt(2*pi))"
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="function_plot", persist=c.persist, color_role=c.color_role, expr=expr, axes_id=p.axes_id, label=c.label or "gaussian"))
+                    existing_ids.add(oid)
+            elif c.op == "taylor_approximation":
+                expr = p.expr or "cos(x)"
+                deg = int(p.degree if p.degree is not None else 4)
+                x0 = float(p.x0 if p.x0 is not None else 0.0)
+                coeffs = extract_taylor_coefficients(expr, deg, x0=x0)
+                terms = [f"({c_k:.8g})*(x-({x0}))**{k}" for k, c_k in enumerate(coeffs) if abs(c_k) > 1e-12]
+                poly_expr = " + ".join(terms) if terms else "0"
+                oid = c.output_ids[0] if c.output_ids else f"taylor_{deg}"
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="function_plot", persist=c.persist, color_role=c.color_role, expr=poly_expr, axes_id=p.axes_id, label=c.label or f"taylor_{deg}"))
+                    existing_ids.add(oid)
+            elif c.op == "fourier_partial_sum":
+                n_terms = max(1, int(p.n_terms if p.n_terms is not None else 5))
+                stop = 2 * n_terms - 1
+                expr = f"4/pi*sum(k, 1, {stop}, 2, sin(k*x)/k)"
+                oid = c.output_ids[0] if c.output_ids else f"fourier_{n_terms}"
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="function_plot", persist=c.persist, color_role=c.color_role, expr=expr, axes_id=p.axes_id, label=c.label or f"fourier_{n_terms}"))
                     existing_ids.add(oid)
     return out

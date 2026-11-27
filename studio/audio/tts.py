@@ -306,6 +306,7 @@ def build_voice_timeline(
     pitch: str = "+0Hz",
     engine: str = "edge",
     kokoro_voice: str = "am_michael",
+    allow_edge_fallback: bool = True,
 ) -> AudioTimeline:
     """Synthesize every beat independently, measure exact durations, and assemble master voiceover."""
     build_dir = Path(build_dir)
@@ -314,16 +315,18 @@ def build_voice_timeline(
     ffmpeg_bin = find_ffmpeg()
 
     if engine == "kokoro" and not kokoro_available():
+        if not allow_edge_fallback:
+            raise RuntimeError("kokoro is not installed and allow_edge_fallback=False.")
         print("      ! kokoro not installed (uv sync --extra kokoro); falling back to edge-tts")
         engine = "edge"
 
     async def _run_all(engine: str, active_voice: str) -> list[tuple[BeatSpec, Path, float, list[list]]]:
         results: list[tuple[BeatSpec, Path, float, list[list]]] = []
         for beat in beats:
-            from studio.audio.pronounce import normalize_for_speech
+            from studio.audio.pronounce import normalize_for_speech_with_map
 
-            clean, _, _ = parse_script(beat.narration)
-            spoken = normalize_for_speech(clean)
+            mapped = normalize_for_speech_with_map(beat.narration)
+            spoken = str(mapped["spoken"])
             key = hashlib.sha1(f"v4|{engine}|{active_voice}|{rate}|{pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
             raw_path = segments_dir / f"{beat.id}_{key}.{'raw.wav' if engine == 'kokoro' else 'mp3'}"
             wav_path = segments_dir / f"{beat.id}_{key}.wav"
@@ -351,7 +354,7 @@ def build_voice_timeline(
     try:
         synthesized = asyncio.run(_run_all(engine, active_voice))
     except Exception as exc:  # noqa: BLE001 - one engine for the whole Short, never mixed voices
-        if engine != "kokoro":
+        if engine != "kokoro" or not allow_edge_fallback:
             raise
         print(f"      ! kokoro synthesis failed ({type(exc).__name__}: {exc}); re-voicing with edge-tts")
         engine, active_voice = "edge", voice
@@ -363,6 +366,8 @@ def build_voice_timeline(
     chunks: list[np.ndarray] = [np.zeros(int(lead_in * SAMPLE_RATE), dtype=np.int16)]
 
     for beat, wav_path, speech_dur, boundaries in synthesized:
+        from studio.audio.pronounce import normalize_for_speech_with_map
+
         with wave.open(str(wav_path), "rb") as wf:
             pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
         chunks.append(pcm)
@@ -371,7 +376,27 @@ def build_voice_timeline(
             chunks.append(np.zeros(pause_samples, dtype=np.int16))
 
         clean, tokens, mark_idx = parse_script(beat.narration)
-        token_times = align_words(clean, tokens, boundaries, speech_dur)
+        mapped = normalize_for_speech_with_map(beat.narration)
+        spoken_text = str(mapped["spoken"])
+        sp_words = spoken_text.split()
+        if sp_words and sp_words != [t.text for t in tokens]:
+            # Align TTS boundaries against normalized spoken tokens, then map back to display tokens
+            sp_tokens: list[ScriptToken] = []
+            scur = 0
+            for sw in sp_words:
+                if sp_tokens:
+                    scur += 1
+                sp_tokens.append(ScriptToken(sw, scur, scur + len(sw), False))
+                scur += len(sw)
+            sp_times = align_words(spoken_text, sp_tokens, boundaries, speech_dur)
+            token_times = []
+            for entry in mapped["token_map"]:  # type: ignore[attr-defined]
+                r0, r1 = entry["spoken_range"]  # type: ignore[index]
+                r0 = min(r0, max(0, len(sp_times) - 1))
+                r1 = min(max(r0 + 1, r1), len(sp_times))
+                token_times.append((sp_times[r0][0], sp_times[r1 - 1][1]))
+        else:
+            token_times = align_words(clean, tokens, boundaries, speech_dur)
         words = [
             [tok.text, round(cursor + a, 4), round(cursor + b, 4), tok.emphasis]
             for tok, (a, b) in zip(tokens, token_times)

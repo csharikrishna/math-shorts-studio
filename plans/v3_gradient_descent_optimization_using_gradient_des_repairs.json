@@ -1,0 +1,10 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (scene_2): event highlight on 'gd_path' before it is created/drawn.",
+      "scene 2 (scene_2) claim local_minimum: x=2.5 is not a valid local_minimum of x**2.",
+      "Narration too short for 55s target (53 words < 104); expand explanations of WHY each step works."
+    ]
+  }
+]

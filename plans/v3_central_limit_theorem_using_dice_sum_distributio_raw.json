@@ -1,0 +1,464 @@
+{
+  "schema_version": "3.0",
+  "topic": "Central Limit Theorem",
+  "title": "The Bell Curve Emergence from Dice Sums",
+  "audience": "general",
+  "strategy": "Demonstrate how summing independent random variables naturally gives rise to the normal distribution through exact convolution and Gaussian approximation.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "purpose": "Introduce a single die roll distribution as a flat, uniform probability bar chart.",
+      "narration": "When we roll a single die, every outcome is equally likely, forming a <bookmark mark='flat'/> *uniform* distribution.",
+      "color_role": "primary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "dist_chart_1",
+          "kind": "bar_chart",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [
+            0.166,
+            0.166,
+            0.166,
+            0.166,
+            0.166,
+            0.166
+          ],
+          "bar_labels": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "dist_chart_1",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "dist_chart_1",
+          "source_id": null,
+          "anchor_mark": "flat",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "purpose": "Show the distribution of the sum of two dice using the exact deterministic dice_sum_distribution construction.",
+      "narration": "Adding a second die changes everything. The sums begin to pile up in the middle, creating a <bookmark mark='triangle'/> *triangular* shape.",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [
+        {
+          "op": "dice_sum_distribution",
+          "output_ids": [
+            "sum_dist_2"
+          ],
+          "source_id": null,
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": null,
+            "edge_role": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null,
+            "expr": null,
+            "axes_id": null,
+            "x0": null,
+            "lr": null,
+            "steps": null,
+            "degree": null,
+            "n_terms": null,
+            "prior": null,
+            "p_e_given_h": null,
+            "p_e_given_not_h": null,
+            "n_dice": 2,
+            "mu": null,
+            "sigma": null
+          },
+          "color_role": "secondary",
+          "persist": true,
+          "label": "Two Dice Sums"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "distribution_stats",
+          "object_ids": [
+            "sum_dist_2"
+          ],
+          "container_id": null,
+          "statement": "Sum of two dice distribution is symmetric and centered at 7.",
+          "expr": null,
+          "expected_expr": null,
+          "x_val": null,
+          "expected_value": null,
+          "expected_degree": null,
+          "prior": null,
+          "likelihood": null,
+          "false_positive": null,
+          "mu": null,
+          "sigma": null,
+          "tolerance": 0.01
+        }
+      ],
+      "objects": [],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "sum_dist_2",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sum_dist_2",
+          "source_id": null,
+          "anchor_mark": "triangle",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "purpose": "Advance to summing three dice to show further smoothing.",
+      "narration": "With three dice combined, the sharp corners round off and a smooth <bookmark mark='dome'/> *dome* starts taking form.",
+      "color_role": "tertiary",
+      "sfx_cue": "tick_soft",
+      "constructions": [
+        {
+          "op": "dice_sum_distribution",
+          "output_ids": [
+            "sum_dist_3"
+          ],
+          "source_id": null,
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": null,
+            "edge_role": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null,
+            "expr": null,
+            "axes_id": null,
+            "x0": null,
+            "lr": null,
+            "steps": null,
+            "degree": null,
+            "n_terms": null,
+            "prior": null,
+            "p_e_given_h": null,
+            "p_e_given_not_h": null,
+            "n_dice": 3,
+            "mu": null,
+            "sigma": null
+          },
+          "color_role": "tertiary",
+          "persist": true,
+          "label": "Three Dice Sums"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "distribution_stats",
+          "object_ids": [
+            "sum_dist_3"
+          ],
+          "container_id": null,
+          "statement": "Sum of three dice distribution maintains symmetry and normal-like central tendency.",
+          "expr": null,
+          "expected_expr": null,
+          "x_val": null,
+          "expected_value": null,
+          "expected_degree": null,
+          "prior": null,
+          "likelihood": null,
+          "false_positive": null,
+          "mu": null,
+          "sigma": null,
+          "tolerance": 0.01
+        }
+      ],
+      "objects": [],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "sum_dist_3",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sum_dist_3",
+          "source_id": null,
+          "anchor_mark": "dome",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_4",
+      "purpose": "Scale up to five dice to clearly reveal the bell curve pattern.",
+      "narration": "By the time we sum five independent dice, the discrete bars closely trace a continuous <bookmark mark='bell'/> *bell curve*.",
+      "color_role": "highlight",
+      "sfx_cue": "chime_reveal",
+      "constructions": [
+        {
+          "op": "dice_sum_distribution",
+          "output_ids": [
+            "sum_dist_5"
+          ],
+          "source_id": null,
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": null,
+            "edge_role": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null,
+            "expr": null,
+            "axes_id": null,
+            "x0": null,
+            "lr": null,
+            "steps": null,
+            "degree": null,
+            "n_terms": null,
+            "prior": null,
+            "p_e_given_h": null,
+            "p_e_given_not_h": null,
+            "n_dice": 5,
+            "mu": null,
+            "sigma": null
+          },
+          "color_role": "highlight",
+          "persist": true,
+          "label": "Five Dice Sums"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "distribution_stats",
+          "object_ids": [
+            "sum_dist_5"
+          ],
+          "container_id": null,
+          "statement": "Sum of five dice closely matches central limit theorem approximations.",
+          "expr": null,
+          "expected_expr": null,
+          "x_val": null,
+          "expected_value": null,
+          "expected_degree": null,
+          "prior": null,
+          "likelihood": null,
+          "false_positive": null,
+          "mu": null,
+          "sigma": null,
+          "tolerance": 0.01
+        }
+      ],
+      "objects": [],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "sum_dist_5",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sum_dist_5",
+          "source_id": null,
+          "anchor_mark": "bell",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_5",
+      "purpose": "Overlay the theoretical Gaussian approximation curve onto the distribution.",
+      "narration": "This universal phenomenon is the *Central Limit Theorem*, matching any mean and variance with a precise <bookmark mark='gaussian'/> *Gaussian* function.",
+      "color_role": "success",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            35.0
+          ],
+          "y_range": [
+            0.0,
+            0.25
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_6",
+      "purpose": "Display the core theorem equation card as a final takeaway.",
+      "narration": "No matter the starting shape, summing random variables always converges to this <bookmark mark='limit'/> *limit*.",
+      "color_role": "success",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "clt_equation",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "success",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "S_n \\sim \\mathcal{N}(n\\mu, n\\sigma^2)",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "clt_equation",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "clt_equation",
+          "source_id": null,
+          "anchor_mark": "limit",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (scene_2) claim distribution_stats: requires labeled bar_chart, mu, and sigma.",
+      "scene 3 (scene_3) claim distribution_stats: requires labeled bar_chart, mu, and sigma.",
+      "scene 4 (scene_4) claim distribution_stats: requires labeled bar_chart, mu, and sigma.",
+      "Narration too short for 55s target (98 words < 104); expand explanations of WHY each step works."
+    ]
+  }
+]

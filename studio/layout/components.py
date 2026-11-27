@@ -444,20 +444,57 @@ class CaptionCard:
             self._chunks[0] = (beat_start, self._chunks[0][1])
         self._shown = (-1, -1)
 
+    def set_segments(self, segments: list, beat_start: float) -> None:
+        """Bind precomputed semantic CaptionSegment list (single source of truth with SRT/VTT)."""
+        self._chunks = []
+        self._built = {}
+        for seg in segments:
+            if seg.words:
+                self._chunks.append((float(seg.start_s), [tuple(w) for w in seg.words]))
+            else:
+                toks = seg.text.replace("\n", " ").split()
+                if not toks:
+                    continue
+                span = max(0.1, float(seg.end_s) - float(seg.start_s))
+                step = span / len(toks)
+                wds = [(t, float(seg.start_s) + i * step, float(seg.start_s) + (i + 1) * step, False) for i, t in enumerate(toks)]
+                self._chunks.append((float(seg.start_s), wds))
+        if self._chunks:
+            self._chunks[0] = (beat_start, self._chunks[0][1])
+        self._shown = (-1, -1)
+
     def set_beat(self, words: list, narration: str, start: float, speech_end: float) -> None:
-        """Bind a beat: real WordBoundary timings, or length-weighted estimates as a fallback."""
-        if words:
-            timed = [tuple(w) for w in words]
-        else:
+        """Bind a beat using the shared build_semantic_captions() single source of truth."""
+        from studio.audio.tts import SyncedBeat
+        from studio.timeline import build_semantic_captions
+
+        timed = [tuple(w) for w in words] if words else []
+        if not timed:
             toks = narration.split()
             total = sum(len(t) + 1 for t in toks) or 1
             span = max(0.1, speech_end - start)
-            timed, cur = [], start
+            cur = start
             for tok in toks:
                 d = span * (len(tok) + 1) / total
                 timed.append((tok, cur, cur + d, False))
                 cur += d
-        self.set_words(timed, start)
+        beat = SyncedBeat(
+            id="_live",
+            narration=narration,
+            caption=narration,
+            audio_path="",
+            start_time=start,
+            end_time=speech_end,
+            speech_duration=max(0.1, speech_end - start),
+            total_duration=max(0.1, speech_end - start),
+            words=[list(w) for w in timed],
+            marks={},
+        )
+        segs = build_semantic_captions([beat])
+        if segs:
+            self.set_segments(segs, start)
+        else:
+            self.set_words(timed, start)
         self._tick(scene_time())
 
     # -- per-frame drive ------------------------------------------------------

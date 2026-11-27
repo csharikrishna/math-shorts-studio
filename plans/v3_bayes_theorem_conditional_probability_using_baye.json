@@ -1,0 +1,486 @@
+{
+  "schema_version": "3.0",
+  "topic": "Bayes theorem conditional probability using bayes_area_model construction",
+  "title": "Visualizing Bayes Theorem with Area Models",
+  "audience": "general",
+  "strategy": "Use a segmented area model representing probability space to visually demonstrate how prior probabilities are updated by new evidence, revealing the mechanics of Bayes theorem.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "purpose": "Introduce the sample space and prior probability of a hypothesis.",
+      "narration": "When evaluating new evidence in any scenario, we begin by establishing a <bookmark mark='prior'/> *prior* probability representing our initial belief about a specific hypothesis before seeing any new data.",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "bayes_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            1.0
+          ],
+          "y_range": [
+            0.0,
+            1.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "bayes_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "purpose": "Construct the Bayes area model displaying prior, true positives, and false positives.",
+      "narration": "We then partition the unit square into distinct regions for our hypothesis and evidence, because geometry helps us see how <bookmark mark='likelihood'/> *conditional* likelihoods scale our initial assumptions across the full sample space.",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [
+        {
+          "op": "bayes_area_model",
+          "output_ids": [
+            "space_region",
+            "prior_region",
+            "tp_region",
+            "fp_region"
+          ],
+          "source_id": null,
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": null,
+            "edge_role": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null,
+            "expr": null,
+            "axes_id": "bayes_axes",
+            "x0": null,
+            "lr": null,
+            "steps": null,
+            "degree": null,
+            "n_terms": null,
+            "prior": 0.4,
+            "p_e_given_h": 0.8,
+            "p_e_given_not_h": 0.2,
+            "n_dice": null,
+            "mu": null,
+            "sigma": null
+          },
+          "color_role": "secondary",
+          "persist": true,
+          "label": "Bayes Area Partition"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "conditional_probability",
+          "object_ids": [
+            "tp_region",
+            "fp_region"
+          ],
+          "container_id": null,
+          "statement": "Posterior probability correctly reflects the ratio of true positive area to total evidence area.",
+          "expr": null,
+          "expected_expr": null,
+          "x_val": null,
+          "expected_value": 0.72727,
+          "expected_degree": null,
+          "prior": 0.4,
+          "likelihood": 0.8,
+          "false_positive": 0.2,
+          "mu": null,
+          "sigma": null,
+          "tolerance": 0.001
+        }
+      ],
+      "objects": [
+        {
+          "id": "bayes_eq",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "P(H|E) = \\frac{P(E|H)P(H)}{P(E)}",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        },
+        {
+          "id": "space_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              0.0,
+              1.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "bayes_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "sample_space",
+          "card": false
+        },
+        {
+          "id": "prior_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "secondary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.4,
+              0.0
+            ],
+            [
+              0.4,
+              1.0
+            ],
+            [
+              0.0,
+              1.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "bayes_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "prior_region",
+          "card": false
+        },
+        {
+          "id": "tp_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.4,
+              0.0
+            ],
+            [
+              0.4,
+              0.8
+            ],
+            [
+              0.0,
+              0.8
+            ]
+          ],
+          "radius": null,
+          "axes_id": "bayes_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "true_positive",
+          "card": false
+        },
+        {
+          "id": "fp_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "danger",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              0.4,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.2
+            ],
+            [
+              0.4,
+              0.2
+            ]
+          ],
+          "radius": null,
+          "axes_id": "bayes_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "false_positive",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "prior_region",
+          "source_id": null,
+          "anchor_mark": "likelihood",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "create",
+          "target_id": "bayes_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "purpose": "Highlight the true positive region where both hypothesis and evidence occur.",
+      "narration": "The overlapping rectangular section specifically isolates <bookmark mark='true_pos'/> *true positives*, representing the exact zone where our hypothesis is completely correct and the expected evidence actually appears.",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "constructions": [],
+      "claims": [],
+      "objects": [],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "tp_region",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "tp_region",
+          "source_id": null,
+          "anchor_mark": "true_pos",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_4",
+      "purpose": "Highlight the false positive region where evidence occurs without the hypothesis.",
+      "narration": "Meanwhile, adjacent shaded <bookmark mark='false_pos'/> *false positives* account for those tricky instances where validating evidence arises even when the underlying hypothesis is entirely false.",
+      "color_role": "danger",
+      "sfx_cue": "tick_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "fp_region",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "fp_region",
+          "source_id": null,
+          "anchor_mark": "false_pos",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_5",
+      "purpose": "Combine evidence areas to form the denominator of Bayes theorem.",
+      "narration": "Adding both of these evidence-containing sections together gives us our total denominator, representing the complete <bookmark mark='total_ev'/> *marginal* probability of observing that evidence anywhere.",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [],
+      "events": [
+        {
+          "op": "focus",
+          "target_id": "bayes_axes",
+          "source_id": null,
+          "anchor_mark": "total_ev",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_6",
+      "purpose": "Conclude with the full probabilistic insight of updating beliefs.",
+      "narration": "Thus, Bayes theorem successfully updates our perspective by scaling our prior with new <bookmark mark='evidence'/> *empirical* evidence to yield our final refined probability.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "conclusion_eq",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "P(H|E) = \\frac{0.8 \\times 0.4}{0.8 \\times 0.4 + 0.2 \\times 0.6}",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "conclusion_eq",
+          "source_id": null,
+          "anchor_mark": "evidence",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

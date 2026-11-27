@@ -230,6 +230,10 @@ def main() -> None:
     parser.add_argument("--rate", type=str, default="-4%")
     parser.add_argument("--pitch", type=str, default="-2Hz", help="edge-tts pitch offset, e.g. -2Hz for a warmer read")
     parser.add_argument("--tts", type=str, default="kokoro", choices=["edge", "kokoro"], help="kokoro (local 82M neural TTS, falls back to edge if not installed)")
+    parser.add_argument("--no-edge-fallback", action="store_true", help="Fail instead of falling back to network edge-tts if kokoro fails")
+    parser.add_argument("--longform", action="store_true", help="Generate autonomous multi-chapter long-form video from --topic")
+    parser.add_argument("--duration", type=float, default=300.0, help="Target duration in seconds for --longform (e.g. 300, 600, 1200)")
+    parser.add_argument("--audience", type=str, default="general", choices=["school", "beginner", "undergraduate", "advanced", "general"])
     parser.add_argument("--look", type=str, default="none", choices=list(LOOKS), help="Cinematic grade + vignette + grain")
     parser.add_argument("--ui", type=str, default="minimal", choices=["minimal", "card", "neon"], help="minimal: box-free outlined captions; card: frosted-glass pill; neon: fullwidth gradient bar with glow")
     parser.add_argument("--lut", type=Path, default=None, help="Optional .cube LUT applied before the look")
@@ -241,7 +245,36 @@ def main() -> None:
         tts_engine=args.tts, strict_layout=not args.allow_layout_warnings, look=args.look, lut_path=args.lut, ui=args.ui,
     )
 
-    if args.topic or args.prompt or (args.ai and not args.plan):
+    if args.longform:
+        if not (args.topic or args.prompt):
+            parser.error("--longform needs --topic or --prompt")
+        from studio.ai.director import slugify
+        from studio.longform import build_longform_video, create_longform_plan
+
+        topic_str = args.topic or args.prompt or "math_documentary"
+        lf_plan, ch_plans = create_longform_plan(
+            topic_str,
+            target_duration_s=args.duration,
+            audience=args.audience,
+            model=args.model,
+            provider_name=args.provider,
+            free_only=not args.allow_paid,
+            on_progress=lambda m: print(f"[longform] {m}", flush=True),
+        )
+        res = build_longform_video(
+            slugify(topic_str),
+            lf_plan,
+            ch_plans,
+            format_name="widescreen_hd" if args.format == "shorts_hd" else args.format,
+            tts_engine=args.tts,
+            voice=args.voice,
+            rate=args.rate,
+            ui=args.ui,
+            look=args.look,
+            on_progress=lambda m: print(f"[longform] {m}", flush=True),
+        )
+        print(f"DONE! Long-form video ready: {res['output_mp4']} ({res['total_duration_s']}s)")
+    elif args.topic or args.prompt or (args.ai and not args.plan):
         if not (args.topic or args.prompt):
             parser.error("--ai needs --topic or --prompt")
         from studio.ai.director import create_plan, create_v2_plan, create_v3_plan

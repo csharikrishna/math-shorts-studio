@@ -66,8 +66,8 @@ def _balance_two_lines(words: list[str], max_chars: int) -> list[str]:
 
 def build_semantic_captions(
     beats: list[SyncedBeat],
-    max_chars_per_line: int = 34,
-    max_lines: int = 2,
+    max_chars_per_line: int = 30,
+    max_lines: int = 1,
 ) -> list[CaptionSegment]:
     """Group timed words into grammatical 1-2 line phrases for burned-in, SRT, and WebVTT."""
     segments: list[CaptionSegment] = []
