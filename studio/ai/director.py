@@ -340,24 +340,19 @@ STORYTELLING & DURATION RULES:
 - NEVER use dramatic cliché phrases like "Welcome to a mathematical journey", "Unlocking profound mathematical secrets", "treacherous mountain range", or "Mathematical relationships that last forever".
 - Explain WHY mathematical relationships work in clear, warm educator English (no vague hype).
 - Put 1-2 key words in *asterisks* for caption emphasis, and use <bookmark mark='name'/> before key words to trigger synchronized animation events.
-- Match target_duration_s (~2.5 spoken words/sec): for 55s, write 6-8 scenes of 18-24 words each (~135-160 total spoken words).
+- Match target_duration_s (~2.5 spoken words/sec): write crisp scenes aligned to natural speaking cadence.
 - Objects persist across scenes when persist=true (keep axes, target curves, or geometric shapes on screen!).
-- Use `strategy` to state the pedagogical explanation strategy before the storyboard, and `card=true` only on key takeaway equations.
-OBJECT KINDS:
-- axes (x_range, y_range, equal_aspect=true for geometry/complex plane), function_plot (expr, axes_id),
-- parametric_curve (expr="X(t);Y(t)", t_range, axes_id), bar_chart (values, bar_labels, log_scale),
-- equation (tex, card), point (coords or param_name+expr="cos(theta);sin(theta)", axes_id),
-- line / vector (coords, end_coords or param_name+expr, axes_id), angle_arc (axes_id, param_name, radius),
-- projection (axes_id, param_name), polygon (vertices, axes_id), circle (coords, radius, axes_id),
-- number_line (x_range), annotation (text, coords, axes_id).
-DETERMINISTIC CONSTRUCTIONS (`constructions` list per scene — ALWAYS prefer these over guessing coordinates!):
-- Geometry: right_triangle (a, b, origin), square_on_segment (source_id, edge_role="leg_a"|"leg_b"|"hypotenuse", outward), pythagorean_dissection (a, b), translate_polygon, rotate_polygon.
-- Optimization/Calculus: gradient_descent_path (expr, x0, lr, steps, axes_id) -> exact (x_k, f(x_k)) points! taylor_approximation (expr, degree, x0, axes_id), fourier_partial_sum (n_terms, axes_id).
-- Probability/Stats: bayes_area_model (prior, p_e_given_h, p_e_given_not_h, axes_id) -> 4 distinct colored regions [space, prior, tp, fp] where P(H|E) != P(H) (verify with `conditional_probability`, not `partition_of` on tp+fp); dice_sum_distribution (n_dice) -> exact convolved bar_chart! gaussian_approx (mu, sigma, axes_id).
-REQUIRED STRUCTURED CLAIMS (`claims` list per scene — every plan MUST include verifiable claims!):
-- right_triangle, square, congruent_triangles, area_conservation, partition_of, point_on_function (specify `expr` of objective), stationary_point / local_minimum (specify `expr` of objective, e.g. `x**2`, NOT the derivative!), probability_normalization, conditional_probability, distribution_stats, convergence_assumptions.
-EVENTS:
-- op in {create, draw, transform, highlight, move, scale, rotate, remove, focus, animate_param} with `target_id` and optional `anchor_mark`.
+- Vary `composition` across scenes (`centered_focus`, `main_with_equation_panel`, `side_by_side_comparison`/`stacked_comparison`, `step_by_step_sequence`, `grid_of_multiple_examples`, `spotlight_zoom`, `timeline_progression`) rather than repeating boxed cards every scene.
+- Use `strategy` to state the pedagogical explanation strategy before the storyboard, and `card=true` ONLY on key takeaway equations.
+- Prefer deterministic `constructions` (geometry, gradient descent, RK4 ODEs, eigen/matrix transforms, Riemann integrals, arbitrary discrete PMF convolutions, Fourier partial sums, Newton roots, Markov chains) over guessing coordinates!
+  * IMPORTANT: Do NOT duplicate `constructions[].output_ids` in `scenes[].objects` (the engine generates them automatically!). Declare the parent `axes` in `objects` and pass `params.axes_id="<axes_id>"` (NEVER include `<axes_id>` inside `output_ids`).
+  * For `ode_phase_trajectory`, set `params={dx_expr, dy_expr, x0, y0, dt, steps, axes_id}` and `output_ids=["orbit_1"]` (emits a `data_series`, NOT a separate `parametric_curve`).
+  * For any manual `parametric_curve`, ALWAYS set `expr="X(t); Y(t)"` (NEVER leave `expr=null` or put formulas in `label`).
+- Every plan MUST include verifiable `claims`:
+  * Polygon-ONLY claims (`right_triangle`, `square`, `congruent_triangles`, `area_conservation`, `partition_of`, `nonzero_area`) MUST ONLY reference `kind="polygon"` object_ids (NEVER `particle_system`, `matrix`, `circle`, or `axes`).
+  * `point_on_function` requires exact `coords = [x, f(x)]`; if introducing phase-plane trajectories or ODE equilibria, prefer `ode_phase_trajectory` + `ode_equilibrium` (`dx_expr`, `dy_expr`, `x_val`, `expected_value=0.0`).
+  * `eigenvalue_determinant` requires `matrix_2x2` + exact determinant `expected_value = a*d - b*c`.
+  * `stationary_point`, `local_minimum`, `derivative_equality`, `function_equivalence`, `polynomial_degree`, `coefficient_correctness`, `definite_integral_value`, `probability_normalization`, `conditional_probability`, `distribution_stats`, `convergence_assumptions`, `markov_stochastic_invariant`.
 Ensure mathematical accuracy: formulas, degrees, plotted expressions, and numerical examples must agree.
 """
 
@@ -371,28 +366,86 @@ def create_v3_plan(
     free_only: bool = True,
     audience: str = "general",
     target_duration_s: float = 55.0,
+    narration_mode: str = "single_educator",
+    look_name: str = "midnight_studio",
+    format_name: str = "widescreen_hd",
+    backend: str = "manimgx",
+    use_creative_director: bool = True,
+    script_ir: object | None = None,
+    artifact_dir: Path | None = None,
 ) -> Path:
-    """Generate and validate a composable object-and-event VideoPlanV3 from a topic or prompt."""
+    """Generate and validate a composable VideoPlanV3 grounded by CreativeDirector + Registry."""
     from studio.ai.v3_schema import VideoPlanV3
     from studio.ai.validate_v3 import validate_v3_plan
     from studio.ai.world_model import materialize_constructions
     from studio.audio.tts import parse_script
+    from studio.creative.director import CreativeDirector
+    from studio.design.spec import default_design_spec, export_design_md
+    from studio.qa.engine import audit_educational_quality
+    from studio.registry import capabilities_prompt_summary
+    from studio.storyboard import export_review_md, export_storyboard_md, storyboard_from_v3_plan
 
     if not topic and not prompt:
         raise ValueError("Give a topic or a prompt.")
     label = prompt or topic or "video"
+    slug = slugify(label)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    art_dir = artifact_dir or (out_dir / f"v3_{slug}_artifacts")
+    art_dir.mkdir(parents=True, exist_ok=True)
+
     director = GeminiDirector(model=model, provider_name=provider_name, free_only=free_only)
+    aspect = "9:16" if "shorts" in format_name else "16:9"
+    registry_prompt = capabilities_prompt_summary(backend=backend, aspect=aspect, compact=True)
+    system_prompt = f"{V3_STYLE_GUIDE}\n\n{registry_prompt}"
+
+    creative_context = ""
+    active_script = script_ir
+    if active_script is None and use_creative_director:
+        cdir = CreativeDirector(model=model, provider_name=provider_name, free_only=free_only)
+        pkg = cdir.produce_creative_package(
+            label,
+            audience=audience,
+            narration_mode=narration_mode,  # type: ignore[arg-type]
+            format_name=format_name,
+            look_name=look_name,
+            backend=backend,
+            target_duration_s=target_duration_s,
+            artifact_dir=art_dir,
+        )
+        active_script = pkg.script
+        beat_summary = "\n".join(
+            f"- {b.scene_id} [speaker={b.speaker}]: {b.spoken_text} | visual_intent={b.visual_intent} | marks={b.anchor_marks} | math={b.latex_refs}"
+            for b in pkg.script.beats
+        )
+        creative_context = (
+            f"\n\nAPPROVED CREATIVE STRATEGY & SCRIPT (follow beat count, speakers, narration, and visual intent):\n"
+            f"Title: {pkg.script.title}\nStrategy: {pkg.brief.selected_strategy}\nCentral Question: {pkg.brief.concept.central_question}\n"
+            f"Beats:\n{beat_summary}\n"
+        )
+    elif active_script is not None:
+        beats = getattr(active_script, "beats", [])
+        beat_summary = "\n".join(
+            f"- {b.scene_id} [speaker={b.speaker}]: {b.spoken_text} | visual_intent={b.visual_intent} | marks={b.anchor_marks}"
+            for b in beats
+        )
+        creative_context = (
+            f"\n\nPROVIDED SCRIPT IR (map each beat 1:1 to a SceneV3 preserving speaker, spoken_text, and marks):\n"
+            f"{beat_summary}\n"
+        )
+        design = default_design_spec(format_name=format_name, look_name=look_name)
+        (art_dir / "DESIGN.md").write_text(export_design_md(design), encoding="utf-8")
+
     min_words = max(45, int(target_duration_s * 1.9))
     req = (
-        f"{V3_STYLE_GUIDE}\n\nTopic/Concept: {label}\nAudience: {audience}\n"
+        f"{system_prompt}\n\nTopic/Concept: {label}\nAudience: {audience}\n"
+        f"Format aspect: {aspect} ({format_name}), Narration mode: {narration_mode}, Look: {look_name}.\n"
         f"Target duration: {target_duration_s:.0f}s (~{int(target_duration_s * 2.5)} total spoken words across scenes, minimum {min_words} words).\n"
-        "Generate a complete VideoPlanV3 JSON with deterministic constructions and verifiable claims."
+        f"{creative_context}\n"
+        "Generate a complete VideoPlanV3 JSON with deterministic constructions, varied compositions, and verifiable claims."
     )
-    plan, resp = director.provider.generate_structured(req, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.5)
+    plan, resp = director.provider.generate_structured(req, VideoPlanV3, system=system_prompt, temperature=0.45)
     director._log(f"{resp.provider}/{resp.model}: V3 plan generated in {resp.latency_s:.1f}s (tokens: {resp.prompt_tokens}+{resp.completion_tokens})")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    slug = slugify(label)
     raw_path = out_dir / f"v3_{slug}_raw.json"
     raw_path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -407,7 +460,7 @@ def create_v3_plan(
         repair_log.append({"round": round_idx, "issues": issues})
         director._log(f"V3 repair round {round_idx}/{MAX_REPAIRS} ({len(issues)} issues)")
         fix_prompt = "Fix these VideoPlanV3 issues:\n- " + "\n- ".join(issues) + f"\n\nCurrent JSON:\n{plan.model_dump_json()}"
-        plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.3)
+        plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=system_prompt, temperature=0.3)
 
     issues = validate_v3_plan(plan, require_claims=True)
     if issues:
@@ -419,6 +472,25 @@ def create_v3_plan(
         (out_dir / f"v3_{slug}_repairs.json").write_text(json.dumps(repair_log, indent=2), encoding="utf-8")
 
     plan = materialize_constructions(plan)
+    if active_script is not None:
+        beats_by_sc = {b.scene_id: b for b in getattr(active_script, "beats", [])}
+        for sc in plan.scenes:
+            if sc.scene_id in beats_by_sc and not sc.speaker:
+                sc.speaker = beats_by_sc[sc.scene_id].speaker
+
+    sb = storyboard_from_v3_plan(plan, format_name=format_name, look_name=look_name, script=active_script)  # type: ignore[arg-type]
+    export_storyboard_md(sb, art_dir / "STORYBOARD.md")
+    rev = audit_educational_quality(
+        topic=plan.topic,
+        title=plan.title,
+        plan=plan,
+        format_name=format_name,
+        backend=backend,
+        script=active_script,
+        look_name=look_name,
+    )
+    export_review_md(rev, art_dir / "REVIEW.md")  # type: ignore[arg-type]
+
     path = out_dir / f"v3_{slug}.json"
     path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
     return path

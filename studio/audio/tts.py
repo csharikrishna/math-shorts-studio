@@ -40,6 +40,7 @@ class BeatSpec:
     narration: str
     caption: str
     pause_after: float = 0.25
+    speaker: str = "narrator"
 
 
 @dataclass(frozen=True)
@@ -307,6 +308,7 @@ def build_voice_timeline(
     engine: str = "edge",
     kokoro_voice: str = "am_michael",
     allow_edge_fallback: bool = True,
+    speaker_voices: dict[str, tuple[str, str]] | None = None,
 ) -> AudioTimeline:
     """Synthesize every beat independently, measure exact durations, and assemble master voiceover."""
     build_dir = Path(build_dir)
@@ -327,15 +329,19 @@ def build_voice_timeline(
 
             mapped = normalize_for_speech_with_map(beat.narration)
             spoken = str(mapped["spoken"])
-            key = hashlib.sha1(f"v4|{engine}|{active_voice}|{rate}|{pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
+            beat_voice = active_voice
+            if speaker_voices and beat.speaker in speaker_voices:
+                k_voice, e_voice = speaker_voices[beat.speaker]
+                beat_voice = k_voice if engine == "kokoro" else e_voice
+            key = hashlib.sha1(f"v4|{engine}|{beat_voice}|{rate}|{pitch}|{spoken}".encode("utf-8")).hexdigest()[:12]
             raw_path = segments_dir / f"{beat.id}_{key}.{'raw.wav' if engine == 'kokoro' else 'mp3'}"
             wav_path = segments_dir / f"{beat.id}_{key}.wav"
             words_path = segments_dir / f"{beat.id}_{key}.words.json"
             if not (wav_path.exists() and words_path.exists()):
                 if engine == "kokoro":
-                    raw_words = _synth_kokoro(spoken, active_voice, _rate_to_speed(rate), raw_path)
+                    raw_words = _synth_kokoro(spoken, beat_voice, _rate_to_speed(rate), raw_path)
                 else:
-                    raw_words = await _synth_edge_tts(spoken, voice, rate, raw_path, pitch=pitch)
+                    raw_words = await _synth_edge_tts(spoken, beat_voice, rate, raw_path, pitch=pitch)
                 dur, head_trim = _decode_and_trim_wav(ffmpeg_bin, raw_path, wav_path)
                 # Re-base word times onto the trimmed clip so captions lock to the audible syllables
                 words = [

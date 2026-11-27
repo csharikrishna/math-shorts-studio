@@ -267,14 +267,28 @@ def verify_partition(pieces: Sequence[Sequence[Sequence[float]]], outer: Sequenc
 
 def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
     """Deterministically materialize typed ConstructionOps into SceneObject definitions."""
-    from studio.ai.math_truth import bayes_posterior, discrete_convolution, extract_taylor_coefficients, gradient_descent_trajectory
+    from studio.ai.math_truth import (
+        bayes_posterior,
+        definite_integral,
+        discrete_pmf_convolution,
+        extract_taylor_coefficients,
+        fourier_partial_sum_terms,
+        gradient_descent_trajectory,
+        markov_chain_trajectory,
+        matrix_transform_and_eigen,
+        newton_raphson_trajectory,
+        rk4_ode_trajectory,
+        transform_points_2x2,
+    )
     from studio.ai.v3_schema import SceneObject
 
     out = plan.model_copy(deep=True)
     registry: dict[str, list[list[float]]] = {}
+    obj_axes_map: dict[str, str | None] = {}
 
     for sc in out.scenes:
         for obj in sc.objects:
+            obj_axes_map[obj.id] = obj.axes_id
             if obj.kind == "polygon" and obj.vertices:
                 registry[obj.id] = clean_polygon_vertices(obj.vertices)
         if not sc.constructions:
@@ -384,10 +398,20 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                         existing_ids.add(oid)
             elif c.op == "dice_sum_distribution":
                 n_dice = int(p.n_dice if p.n_dice is not None else 2)
-                support, probs = discrete_convolution([1.0 / 6.0] * 6, n_dice, offset_per_trial=1)
+                support, probs, _, _ = discrete_pmf_convolution([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [1.0 / 6.0] * 6, n_trials=n_dice)
                 oid = c.output_ids[0] if c.output_ids else f"dice_{n_dice}_dist"
                 if oid not in existing_ids:
-                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=probs, bar_labels=[str(s) for s in support], label=c.label or f"{n_dice}_dice_sum"))
+                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=probs, bar_labels=[str(int(s)) for s in support], label=c.label or f"{n_dice}_dice_sum"))
+                    existing_ids.add(oid)
+            elif c.op == "discrete_pmf_convolution":
+                supp = p.support_vals or [0.0, 1.0]
+                prbs = p.prob_vals or [0.5, 0.5]
+                nt = int(p.n_trials if p.n_trials is not None else 1)
+                xs_conv, ps_conv, _, _ = discrete_pmf_convolution(supp, prbs, n_trials=nt)
+                oid = c.output_ids[0] if c.output_ids else f"pmf_conv_{nt}"
+                if oid not in existing_ids:
+                    lbls = [str(int(x)) if abs(x - round(x)) < 1e-6 else f"{x:.2f}" for x in xs_conv]
+                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=ps_conv, bar_labels=lbls, label=c.label or f"conv_{nt}"))
                     existing_ids.add(oid)
             elif c.op == "gaussian_approx":
                 mu = float(p.mu if p.mu is not None else 0.0)
@@ -415,5 +439,100 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                 oid = c.output_ids[0] if c.output_ids else f"fourier_{n_terms}"
                 if oid not in existing_ids:
                     sc.objects.append(SceneObject(id=oid, kind="function_plot", persist=c.persist, color_role=c.color_role, expr=expr, axes_id=p.axes_id, label=c.label or f"fourier_{n_terms}"))
+                    existing_ids.add(oid)
+            elif c.op == "fourier_general_synthesis":
+                expr_in = p.expr or "x"
+                period = float(p.period if p.period is not None else 2.0 * math.pi)
+                n_harm = int(p.n_terms if p.n_terms is not None else 5)
+                f_res = fourier_partial_sum_terms(expr_in, period=period, n_harmonics=n_harm)
+                oid = c.output_ids[0] if c.output_ids else f"fourier_gen_{n_harm}"
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="function_plot", persist=c.persist, color_role=c.color_role, expr=str(f_res["expr"]), axes_id=p.axes_id, label=c.label or f"fourier_{n_harm}"))
+                    existing_ids.add(oid)
+            elif c.op == "riemann_integral":
+                expr_in = p.expr or "x**2"
+                a_b = float(p.a_bound if p.a_bound is not None else 0.0)
+                b_b = float(p.b_bound if p.b_bound is not None else 2.0)
+                n_r = int(p.n_rects if p.n_rects is not None else 8)
+                meth = p.riemann_method or "midpoint"
+                res = definite_integral(expr_in, a_b, b_b, n=n_r, method=meth)
+                boxes = res["boxes"]  # type: ignore[assignment]
+                for i, (rx, rw, ry) in enumerate(boxes):  # type: ignore[misc]
+                    if abs(ry) <= 1e-6:
+                        continue
+                    oid = c.output_ids[i] if i < len(c.output_ids) else f"rect_{i}"
+                    y0, y1 = (0.0, ry) if ry >= 0 else (ry, 0.0)
+                    verts = [[rx, y0], [rx + rw, y0], [rx + rw, y1], [rx, y1]]
+                    registry[oid] = verts
+                    if oid not in existing_ids:
+                        sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, axes_id=p.axes_id, label=f"riemann_{i}"))
+                        existing_ids.add(oid)
+            elif c.op == "ode_phase_trajectory":
+                dx_e = p.dx_expr or "y"
+                dy_e = p.dy_expr or "-x - 0.25*y"
+                init_s = p.initial_state or []
+                x0 = float(p.x0 if p.x0 is not None else (init_s[0] if len(init_s) >= 1 else 1.5))
+                y0 = float(p.y0 if p.y0 is not None else (init_s[1] if len(init_s) >= 2 else 0.0))
+                dt = float(p.dt if p.dt is not None else 0.08)
+                st = int(p.steps if p.steps is not None else 60)
+                traj = rk4_ode_trajectory(dx_e, dy_e, x0=x0, y0=y0, dt=dt, steps=st)
+                pts = [[xt, yt] for (_, xt, yt) in traj]
+                oid = next((cand for cand in c.output_ids if cand not in existing_ids), c.output_ids[0] if c.output_ids else "ode_orbit")
+                ax_ref = p.axes_id or next((cand for cand in c.output_ids if any(o.id == cand and o.kind == "axes" for o in sc.objects)), None)
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="data_series", persist=c.persist, color_role=c.color_role, points_list=pts, axes_id=ax_ref, label=c.label or "phase_orbit"))
+                    existing_ids.add(oid)
+            elif c.op == "linear_transform_2x2":
+                mat = p.matrix_2x2 or [[1.0, 0.0], [0.0, 1.0]]
+                src_verts = p.vertices_list or registry.get(c.source_id or "", [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+                t_verts = transform_points_2x2(src_verts, mat)
+                cleaned = clean_polygon_vertices(t_verts)
+                oid = c.output_ids[0] if c.output_ids else "transformed_shape"
+                ax_ref = p.axes_id or obj_axes_map.get(c.source_id or "")
+                registry[oid] = cleaned
+                obj_axes_map[oid] = ax_ref
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=cleaned, axes_id=ax_ref, label=c.label or "linear_image"))
+                    existing_ids.add(oid)
+                elif ax_ref:
+                    for existing_o in sc.objects:
+                        if existing_o.id == oid and existing_o.axes_id is None:
+                            existing_o.axes_id = ax_ref
+                            obj_axes_map[oid] = ax_ref
+            elif c.op == "eigen_decomposition_2x2":
+                mat = p.matrix_2x2 or [[2.0, 1.0], [1.0, 2.0]]
+                eig = matrix_transform_and_eigen(mat)
+                mat_id = c.output_ids[0] if c.output_ids else "eigen_matrix"
+                if mat_id not in existing_ids:
+                    rows = [[f"{mat[0][0]:.2g}", f"{mat[0][1]:.2g}"], [f"{mat[1][0]:.2g}", f"{mat[1][1]:.2g}"]]
+                    sc.objects.append(SceneObject(id=mat_id, kind="matrix", persist=c.persist, color_role=c.color_role, matrix_rows=rows, label=str(eig["regime"])))
+                    existing_ids.add(mat_id)
+                vecs = eig["real_eigenvectors"]  # type: ignore[assignment]
+                vals = eig["real_eigenvalues"]  # type: ignore[assignment]
+                for i, (vec, val) in enumerate(zip(vecs, vals)):  # type: ignore[arg-type]
+                    vid = c.output_ids[i + 1] if (i + 1) < len(c.output_ids) else f"eigvec_{i}"
+                    if vid not in existing_ids:
+                        sc.objects.append(SceneObject(id=vid, kind="vector", persist=c.persist, color_role="highlight" if i == 0 else "secondary", coords=[0.0, 0.0], end_coords=[vec[0] * val, vec[1] * val], axes_id=p.axes_id, label=f"lambda={val:.2f}"))
+                        existing_ids.add(vid)
+            elif c.op == "newton_root_path":
+                expr_in = p.expr or "x**2 - 2"
+                x0 = float(p.x0 if p.x0 is not None else 2.5)
+                steps = int(p.steps if p.steps is not None else 4)
+                traj = newton_raphson_trajectory(expr_in, x0, steps=steps)
+                for idx_pt, (xv, yv, _) in enumerate(traj):
+                    oid = c.output_ids[idx_pt] if idx_pt < len(c.output_ids) else f"newton_pt_{idx_pt}"
+                    if oid not in existing_ids:
+                        sc.objects.append(SceneObject(id=oid, kind="point", persist=c.persist, color_role="highlight" if idx_pt == len(traj) - 1 else c.color_role, coords=[xv, yv], axes_id=p.axes_id, label=f"iter_{idx_pt}"))
+                        existing_ids.add(oid)
+            elif c.op == "markov_chain_evolution":
+                P = p.transition_matrix or [[0.8, 0.2], [0.3, 0.7]]
+                p0 = p.initial_state or [1.0 / len(P)] * len(P)
+                steps = int(p.steps if p.steps is not None else 8)
+                mk = markov_chain_trajectory(P, p0, steps=steps)
+                oid = c.output_ids[0] if c.output_ids else "markov_stationary"
+                stat = mk["stationary"]  # type: ignore[assignment]
+                if oid not in existing_ids:
+                    lbls = [f"S{i}" for i in range(len(stat))]  # type: ignore[arg-type]
+                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=stat, bar_labels=lbls, label=c.label or "stationary_dist"))  # type: ignore[arg-type]
                     existing_ids.add(oid)
     return out

@@ -22,6 +22,13 @@ ObjectKind = Literal[
     "annotation",
     "angle_arc",
     "projection",
+    "matrix",
+    "table",
+    "data_series",
+    "graph_network",
+    "probability_region",
+    "particle_system",
+    "waveform",
 ]
 
 EventOp = Literal[
@@ -35,6 +42,29 @@ EventOp = Literal[
     "remove",
     "focus",
     "animate_param",
+    "reveal",
+    "morph",
+    "duplicate",
+    "group",
+    "zoom",
+    "trace",
+    "iterate_states",
+    "interpolate_values",
+    "sequence",
+    "parallel",
+]
+
+CompositionKind = Literal[
+    "auto",
+    "centered_focus",
+    "side_by_side_comparison",
+    "stacked_comparison",
+    "main_with_equation_panel",
+    "step_by_step_sequence",
+    "grid_of_multiple_examples",
+    "spotlight_zoom",
+    "annotated_overlay",
+    "timeline_progression",
 ]
 
 
@@ -63,6 +93,13 @@ class SceneObject(BaseModel):
     param_init: float = 0.0
     label: str = ""
     card: bool = False
+    matrix_rows: list[list[str]] = Field(default_factory=list)
+    table_headers: list[str] = Field(default_factory=list)
+    table_rows: list[list[str]] = Field(default_factory=list)
+    points_list: list[list[float]] = Field(default_factory=list)
+    edge_pairs: list[list[str]] = Field(default_factory=list)
+    node_labels: list[str] = Field(default_factory=list)
+    panel_slot: Literal["auto", "left", "right", "top", "bottom", "center"] = "auto"
 
 
 ConstructionKind = Literal[
@@ -77,6 +114,14 @@ ConstructionKind = Literal[
     "gaussian_approx",
     "taylor_approximation",
     "fourier_partial_sum",
+    "ode_phase_trajectory",
+    "linear_transform_2x2",
+    "eigen_decomposition_2x2",
+    "riemann_integral",
+    "discrete_pmf_convolution",
+    "fourier_general_synthesis",
+    "newton_root_path",
+    "markov_chain_evolution",
 ]
 
 
@@ -109,6 +154,23 @@ class ConstructionParams(BaseModel):
     n_dice: Optional[int] = None
     mu: Optional[float] = None
     sigma: Optional[float] = None
+    # General ODE, Linear Algebra, Integral, Arbitrary PMF, Markov params
+    dx_expr: Optional[str] = None
+    dy_expr: Optional[str] = None
+    y0: Optional[float] = None
+    dt: Optional[float] = None
+    matrix_2x2: Optional[list[list[float]]] = None
+    vertices_list: Optional[list[list[float]]] = None
+    a_bound: Optional[float] = None
+    b_bound: Optional[float] = None
+    n_rects: Optional[int] = None
+    riemann_method: Optional[Literal["left", "right", "midpoint"]] = None
+    support_vals: Optional[list[float]] = None
+    prob_vals: Optional[list[float]] = None
+    n_trials: Optional[int] = None
+    period: Optional[float] = None
+    transition_matrix: Optional[list[list[float]]] = None
+    initial_state: Optional[list[float]] = None
 
 
 class ConstructionOp(BaseModel):
@@ -142,6 +204,10 @@ ClaimRuleKind = Literal[
     "conditional_probability",
     "distribution_stats",
     "convergence_assumptions",
+    "definite_integral_value",
+    "eigenvalue_determinant",
+    "ode_equilibrium",
+    "markov_stochastic_invariant",
 ]
 
 
@@ -162,6 +228,17 @@ class StructuredClaim(BaseModel):
     false_positive: Optional[float] = None
     mu: Optional[float] = None
     sigma: Optional[float] = None
+    a_bound: Optional[float] = None
+    b_bound: Optional[float] = None
+    dx_expr: Optional[str] = None
+    dy_expr: Optional[str] = None
+    matrix_2x2: Optional[list[list[float]]] = None
+    verification_level: Literal[
+        "deterministically_verified",
+        "numerically_tested",
+        "source_supported",
+        "ai_reviewed",
+    ] = "deterministically_verified"
     tolerance: float = 1e-3
 
 
@@ -174,12 +251,16 @@ class AnimationEvent(BaseModel):
     scale_factor: Optional[float] = None
     angle_deg: Optional[float] = None
     param_range: Optional[list[float]] = None
+    param_values: list[float] = Field(default_factory=list)
+    duration_s: Optional[float] = None
 
 
 class SceneV3(BaseModel):
     scene_id: str
     purpose: str
     narration: str
+    speaker: str = "narrator"
+    composition: CompositionKind = "auto"
     color_role: ColorRole = "primary"
     sfx_cue: SfxCue = "pop_marimba"
     constructions: list[ConstructionOp] = Field(default_factory=list)

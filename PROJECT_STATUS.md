@@ -1,4 +1,28 @@
-# Math Shorts Studio — Project Status (V3.5)
+# Math Shorts Studio — Project Status (Adaptive Educational Engine)
+
+## Newly Implemented & Verified
+- **Creative Intelligence, Storylines, Dialogue & Script IR (`studio/creative/`, `studio/design/`, `studio/storyboard/`)**
+  - Separated pre-render filmmaking into `CreativeDirector` (`ConceptAnalysis`, 3 distinct `StorylineOption` strategies, `CreativeBrief` exported as `STORYLINES.md`) -> renderer-independent `ScriptIR` + revision log (`SCRIPT.md`) -> shot-level `Storyboard` (`STORYBOARD.md`) -> unified QA audit (`VideoReviewReport` exported as `REVIEW.md`).
+  - Added 6 pedagogical dialogue profiles (`single_educator`, `conversational_explainer`, `socratic`, `discussion`, `documentary`, `technical_instructor`), anti-cliché/filler detection, speaker-turn merging, and per-speaker voice routing in `build_voice_timeline()` (`studio/audio/tts.py`).
+  - Defined explicit visual `DesignSpec` (`DESIGN.md`) with 4 named looks (`midnight_studio`, `obsidian_chalk`, `cartesian_stone`, `editorial_paper`), aspect-aware `SafeZoneSpec` (16:9 vs 9:16), and closed-form Motion Canvas easing/spring specs.
+- **Discoverable Component Registry & Generalized Computational Engines (`studio/registry/`, `studio/ai/math_truth.py`, `studio/ai/world_model.py`, `studio/ai/v3_schema.py`, `scenes/v3_scene.py`)**
+  - Implemented dynamic `ComponentRegistry` (`capabilities_prompt_summary()`) across `math_operation`, `visual_object`, `animation_mechanism`, `composition_template`, `caption_style`, and `audio_cue`.
+  - Generalized `math_truth.py` and `world_model.py` beyond benchmark routines with arbitrary `definite_integral` (Riemann partitions), `rk4_ode_trajectory` (1D/2D ODEs), `matrix_transform_and_eigen` (2x2 determinants, eigenvalues, eigenvectors, dynamical classification), `discrete_pmf_convolution` (arbitrary float support), `fourier_partial_sum_terms` (midpoint trigonometric projection), `newton_raphson_trajectory`, `solve_equation_roots`, `compose_expressions`, and `markov_chain_trajectory`.
+  - Extended `VideoPlanV3`, `validate_v3.py`, and `V3Scene` with 7 new `ObjectKind`s (`matrix`, `table`, `data_series`, `graph_network`, `probability_region`, `particle_system`, `waveform`), 10 new `EventOp`s (`reveal`, `morph`, `duplicate`, `group`, `zoom`, `trace`, `iterate_states`, `interpolate_values`, `sequence`, `parallel`), 4 new `ClaimRuleKind`s, automatic multi-equation/annotation slot separation, and persisted `axes_id` inheritance.
+- **Dual-Backend Rendering & OSI-Clean HyperFrames Adapter (`studio/renderers/`)**
+  - Introduced `RenderBackend` (`ManimGXBackend`, `HyperFramesBackend`, `benchmark_backends()`) with local path-traversal-guarded loopback HTTP serving (`validate_safe_relpath`), CDP `Fetch.enable` offline isolation, inline SVG/HTML5 closed-form seek runtime (`window.__HF_SEEK(t)` with zero GSAP/CDN/eval), DOM layout bounds auditing (`__HF_AUDIT_LAYOUT`), and 6-word active caption windows.
+- **Dependency-Aware Caching, Cohesive Long-Form & Derived Portrait Shorts (`studio/storage/cache.py`, `studio/longform.py`, `studio/qa/engine.py`, `studio/pipeline.py`)**
+  - Added `ArtifactCache` with multi-stage dependency tracking (`research`, `knowledge`, `script`, `storyboard`, `design`, `math_model`, `tts`, `captions`, `scene_render`, `chapter_assembly`) and SHA-256 tamper verification.
+  - Replaced shallow `target/20` long-form slicing with conceptual chapter orchestration (`_ChapterBridge` continuity) + `derive_recomposed_short()` native `9:16` recomposition + `audit_educational_quality()` claim coverage classification (`deterministically_verified`, `numerically_tested`, etc.).
+- **Production Verification & Documentation (`docs/OPEN_SOURCE_ADOPTION.md`, `docs/LICENSE_MANIFEST.md`, `docs/BENCHMARK_REPORT.md`)**
+  - **9–11 Min Autonomous Long-Form ("Eigenvalues, Phase Space, and Dynamical Stability"):** `output/LF_eigenvalues_phase_space_and_dynamical_stability_widescreen_hd.mp4` (`688.62s` / `11m 28.6s`, 7 chapters, 38 scenes, `-15.2 LUFS`, `48000 Hz`, `drift=0.05s`, `0` chapter layout issues, `REVIEW.md` score `100.0/100`).
+  - **Derived Native 9:16 Short:** `output/SHORT_eigenvalues_phase_space_and_dynamical_stability_shorts_hd.mp4` (`58.40s`, `layout: no problems in 6 samples`, `-15.3 LUFS`, `REVIEW.md` score `100.0/100`).
+  - **ManimGX vs HyperFrames Benchmark (`58.4s` @ `1080x1920 60fps`):** `ManimGXBackend` `84.506s` (`3.93 MB`, `0` layout issues) vs `HyperFramesBackend` `266.696s` (`3.48 MB`, `0` layout issues).
+  - **Test Suite:** 44 unit, generalization, and security tests passing (`tests/test_generalization.py` + regression suites).
+
+---
+
+# Prior Baseline (V3.5)
 
 ## Implemented & Tested
 - **Extended Mathematical World Model & Computational Registry (`studio/ai/math_truth.py`, `studio/ai/world_model.py`, `studio/ai/v3_schema.py`)**

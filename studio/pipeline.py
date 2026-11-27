@@ -97,8 +97,14 @@ def run_pipeline(
     jobs.upsert_job(job_id, stem, "tts", "running")
 
     print(f"[1/5] Synthesizing beat-synced TTS ({len(scene_cls.BEATS)} beats, engine={tts_engine}, rate={rate})...")
+    from studio.creative.dialogue import DIALOGUE_PROFILES
+
+    sp_voices: dict[str, tuple[str, str]] = {}
+    for prof in DIALOGUE_PROFILES.values():
+        for sp in prof.speakers:
+            sp_voices[sp.role] = (sp.kokoro_voice, sp.edge_voice)
     timeline = build_voice_timeline(
-        scene_cls.BEATS, build_dir=build_dir, voice=voice, rate=rate, pitch=pitch, engine=tts_engine
+        scene_cls.BEATS, build_dir=build_dir, voice=voice, rate=rate, pitch=pitch, engine=tts_engine, speaker_voices=sp_voices
     )
     mt = MasterTimeline(audio=timeline)
     tl_issues = mt.validate()
@@ -235,6 +241,17 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=300.0, help="Target duration in seconds for --longform (e.g. 300, 600, 1200)")
     parser.add_argument("--audience", type=str, default="general", choices=["school", "beginner", "undergraduate", "advanced", "general"])
     parser.add_argument("--look", type=str, default="none", choices=list(LOOKS), help="Cinematic grade + vignette + grain")
+    parser.add_argument("--backend", type=str, default="manimgx", choices=["manimgx", "hyperframes"], help="Video render backend (default: manimgx GPU)")
+    parser.add_argument(
+        "--narration-mode",
+        type=str,
+        default="single_educator",
+        choices=["single_educator", "conversational_explainer", "socratic", "discussion", "documentary", "technical_instructor"],
+        help="Pedagogical narration or multi-speaker dialogue style",
+    )
+    parser.add_argument("--derive-short", action="store_true", help="Derive a native recomposed 9:16 Short when running --longform")
+    parser.add_argument("--benchmark-backends", action="store_true", help="Render both ManimGX and HyperFrames for --plan comparison")
+    parser.add_argument("--no-creative-director", action="store_true", help="Skip separate CreativeDirector brief/script stages")
     parser.add_argument("--ui", type=str, default="minimal", choices=["minimal", "card", "neon"], help="minimal: box-free outlined captions; card: frosted-glass pill; neon: fullwidth gradient bar with glow")
     parser.add_argument("--lut", type=Path, default=None, help="Optional .cube LUT applied before the look")
     parser.add_argument("--allow-layout-warnings", action="store_true")
@@ -245,17 +262,30 @@ def main() -> None:
         tts_engine=args.tts, strict_layout=not args.allow_layout_warnings, look=args.look, lut_path=args.lut, ui=args.ui,
     )
 
+    if args.benchmark_backends and args.plan:
+        from studio.ai.v3_schema import VideoPlanV3
+        from studio.ai.world_model import materialize_constructions
+        from studio.renderers import benchmark_backends
+
+        p3 = materialize_constructions(VideoPlanV3.model_validate_json(args.plan.read_text(encoding="utf-8")))
+        res_list = benchmark_backends(p3, slug=args.plan.stem, format_name=args.format, look_name=args.theme, out_dir=PROJECT_ROOT / "output")
+        for r in res_list:
+            print(f"[benchmark] backend={r.backend} time={r.render_time_s}s size={r.file_size_bytes}B rss={r.peak_rss_mb}MB dur={r.duration_s}s out={r.video_path}")
+        return
+
     if args.longform:
         if not (args.topic or args.prompt):
             parser.error("--longform needs --topic or --prompt")
         from studio.ai.director import slugify
-        from studio.longform import build_longform_video, create_longform_plan
+        from studio.longform import build_longform_video, create_longform_plan, derive_recomposed_short
 
         topic_str = args.topic or args.prompt or "math_documentary"
+        lf_mode = "documentary" if args.narration_mode == "single_educator" else args.narration_mode
         lf_plan, ch_plans = create_longform_plan(
             topic_str,
             target_duration_s=args.duration,
             audience=args.audience,
+            narration_mode=lf_mode,
             model=args.model,
             provider_name=args.provider,
             free_only=not args.allow_paid,
@@ -271,9 +301,26 @@ def main() -> None:
             rate=args.rate,
             ui=args.ui,
             look=args.look,
+            look_name=args.theme,
+            backend=args.backend,
             on_progress=lambda m: print(f"[longform] {m}", flush=True),
         )
         print(f"DONE! Long-form video ready: {res['output_mp4']} ({res['total_duration_s']}s)")
+        if args.derive_short:
+            s_res = derive_recomposed_short(
+                slugify(topic_str),
+                lf_plan,
+                ch_plans,
+                format_name="shorts_hd",
+                tts_engine=args.tts,
+                voice=args.voice,
+                rate=args.rate,
+                ui=args.ui,
+                look=args.look,
+                look_name=args.theme,
+                backend=args.backend,
+            )
+            print(f"DONE! Derived portrait Short ready: {s_res['output_mp4']} ({s_res['duration_s']}s)")
     elif args.topic or args.prompt or (args.ai and not args.plan):
         if not (args.topic or args.prompt):
             parser.error("--ai needs --topic or --prompt")
@@ -287,6 +334,12 @@ def main() -> None:
                 model=args.model,
                 provider_name=args.provider,
                 free_only=not args.allow_paid,
+                audience=args.audience,
+                narration_mode=args.narration_mode,
+                look_name=args.theme,
+                format_name=args.format,
+                backend=args.backend,
+                use_creative_director=not args.no_creative_director,
             )
         elif args.engine == "v2":
             plan_path = create_v2_plan(
@@ -305,9 +358,25 @@ def main() -> None:
                 free_only=not args.allow_paid,
             )
         print(f"      -> Plan saved: {plan_path}")
-        run_plan(plan_path, **common)
+        if args.backend == "hyperframes" and args.engine == "v3":
+            from studio.ai.v3_schema import VideoPlanV3
+            from studio.renderers import get_backend
+
+            p3 = VideoPlanV3.model_validate_json(plan_path.read_text(encoding="utf-8"))
+            r = get_backend("hyperframes").render(p3, slug=plan_path.stem, format_name=args.format, look_name=args.theme)
+            print(f"DONE! HyperFrames render ready: {r.video_path} ({r.duration_s}s)")
+        else:
+            run_plan(plan_path, **common)
     elif args.plan:
-        run_plan(args.plan, **common)
+        if args.backend == "hyperframes":
+            from studio.ai.v3_schema import VideoPlanV3
+            from studio.renderers import get_backend
+
+            p3 = VideoPlanV3.model_validate_json(args.plan.read_text(encoding="utf-8"))
+            r = get_backend("hyperframes").render(p3, slug=args.plan.stem, format_name=args.format, look_name=args.theme)
+            print(f"DONE! HyperFrames render ready: {r.video_path} ({r.duration_s}s)")
+        else:
+            run_plan(args.plan, **common)
     elif args.script:
         run_pipeline(script_path=args.script, scene_name=args.scene, **common)
     else:

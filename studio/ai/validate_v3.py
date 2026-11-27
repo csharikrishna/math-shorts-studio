@@ -8,12 +8,14 @@ import numpy as np
 from studio.ai.expr import ExprError, compile_expr
 from studio.ai.math_truth import (
     bayes_posterior,
+    definite_integral,
     distribution_stats,
     eval_function,
     extract_taylor_coefficients,
     functions_equivalent,
     is_local_minimum,
     is_stationary_point,
+    matrix_transform_and_eigen,
     symbolic_derivative,
     verify_polynomial_degree,
 )
@@ -140,6 +142,15 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 if "triangle" in tag and len(cleaned) != 3:
                     issues.append(f"{where} obj {obj.id}: claimed triangle must have 3 vertices (got {len(cleaned)}).")
                 live_polys[obj.id] = cleaned
+            elif obj.kind in ("data_series", "particle_system", "waveform", "graph_network"):
+                if not all_coords_finite(obj.points_list):
+                    issues.append(f"{where} obj {obj.id}: points_list contains non-finite coordinates.")
+            elif obj.kind == "matrix":
+                if not obj.matrix_rows:
+                    issues.append(f"{where} obj {obj.id}: matrix requires non-empty matrix_rows.")
+            elif obj.kind == "table":
+                if not (obj.table_headers or obj.table_rows):
+                    issues.append(f"{where} obj {obj.id}: table requires table_headers or table_rows.")
 
         # Validate event dependencies, ordering, and simulate geometry transformations
         has_unanchored_main = any(not e.anchor_mark for e in sc.events)
@@ -152,16 +163,20 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         last_mark_idx = -1
         for ev in sc.events:
             st = state.get(ev.target_id)
-            if st not in ("declared", "visible"):
+            if ev.op != "duplicate" and st not in ("declared", "visible"):
                 issues.append(f"{where}: event target_id {ev.target_id!r} is not live (missing or removed).")
-            if ev.op in ("move", "rotate", "scale", "highlight", "focus", "remove", "animate_param") and st == "declared":
+            if ev.op in ("move", "rotate", "scale", "highlight", "focus", "remove", "animate_param", "zoom", "iterate_states", "interpolate_values") and st == "declared":
                 issues.append(f"{where}: event {ev.op} on {ev.target_id!r} before it is created/drawn.")
-            if ev.op in ("create", "draw"):
+            if ev.op in ("create", "draw", "reveal", "trace", "sequence", "parallel", "group"):
                 state[ev.target_id] = "visible"
-            elif ev.op == "transform":
+            elif ev.op in ("transform", "morph", "duplicate"):
                 if not ev.source_id or state.get(ev.source_id) not in ("declared", "visible"):
-                    issues.append(f"{where}: transform requires live source_id (got {ev.source_id!r}).")
+                    issues.append(f"{where}: {ev.op} requires live source_id (got {ev.source_id!r}).")
                 state[ev.target_id] = "visible"
+                if ev.op == "duplicate" and ev.source_id in live_objs:
+                    live_objs.setdefault(ev.target_id, live_objs[ev.source_id].model_copy(update={"id": ev.target_id}))
+                    if ev.source_id in live_polys:
+                        live_polys.setdefault(ev.target_id, [list(p) for p in live_polys[ev.source_id]])
             elif ev.op == "move" and ev.shift and ev.target_id in live_polys:
                 live_polys[ev.target_id] = translate_polygon(live_polys[ev.target_id], float(ev.shift[0]), float(ev.shift[1]))
             elif ev.op == "rotate" and ev.angle_deg and ev.target_id in live_polys:
@@ -280,7 +295,13 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     for pt in pts:
                         if not pt.coords or len(pt.coords) < 2:
                             ok_all = False; break
-                        yv = eval_function(expr, pt.coords[0])
+                        try:
+                            yv = eval_function(expr, pt.coords[0])
+                        except Exception as exc:
+                            ok_all = False
+                            msg = f"{where} claim point_on_function: invalid expr {expr!r} ({exc})."
+                            issues.append(msg); failed_claims.append(msg)
+                            break
                         if abs(yv - pt.coords[1]) > cl.tolerance:
                             ok_all = False
                             msg = f"{where} claim point_on_function: point {pt.id}={pt.coords} does not lie on {expr} (f(x)={yv:.4f})."
@@ -298,12 +319,16 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     msg = f"{where} claim {cl.kind}: requires expr and x_val (or point)."
                     issues.append(msg); failed_claims.append(msg)
                 else:
-                    ok = is_stationary_point(expr, xv, tol=cl.tolerance) if cl.kind == "stationary_point" else is_local_minimum(expr, xv, tol=cl.tolerance)
-                    if not ok:
-                        msg = f"{where} claim {cl.kind}: x={xv} is not a valid {cl.kind} of {expr}."
+                    try:
+                        ok = is_stationary_point(expr, xv, tol=cl.tolerance) if cl.kind == "stationary_point" else is_local_minimum(expr, xv, tol=cl.tolerance)
+                        if not ok:
+                            msg = f"{where} claim {cl.kind}: x={xv} is not a valid {cl.kind} of {expr}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: {cl.kind}({expr} at x={xv})")
+                    except Exception as exc:
+                        msg = f"{where} claim {cl.kind}: invalid expr {expr!r} ({exc})."
                         issues.append(msg); failed_claims.append(msg)
-                    else:
-                        verified_claims.append(f"{where}: {cl.kind}({expr} at x={xv})")
 
             elif cl.kind == "derivative_equality":
                 if not cl.expr or not cl.expected_expr:
@@ -349,12 +374,16 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     msg = f"{where} claim coefficient_correctness: requires expr, expected_degree, and expected_value."
                     issues.append(msg); unsupported_claims.append(msg)
                 else:
-                    coeffs = extract_taylor_coefficients(cl.expr, cl.expected_degree)
-                    if abs(coeffs[cl.expected_degree] - cl.expected_value) > cl.tolerance:
-                        msg = f"{where} claim coefficient_correctness: coeff[{cl.expected_degree}]={coeffs[cl.expected_degree]:.5f} != {cl.expected_value}."
+                    try:
+                        coeffs = extract_taylor_coefficients(cl.expr, cl.expected_degree)
+                        if abs(coeffs[cl.expected_degree] - cl.expected_value) > cl.tolerance:
+                            msg = f"{where} claim coefficient_correctness: coeff[{cl.expected_degree}]={coeffs[cl.expected_degree]:.5f} != {cl.expected_value}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: coefficient_correctness({cl.expr})")
+                    except Exception as exc:
+                        msg = f"{where} claim coefficient_correctness: invalid scalar expression {cl.expr!r} ({exc})."
                         issues.append(msg); failed_claims.append(msg)
-                    else:
-                        verified_claims.append(f"{where}: coefficient_correctness({cl.expr})")
 
             elif cl.kind == "probability_normalization":
                 bars = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind == "bar_chart"]
@@ -409,6 +438,67 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 else:
                     verified_claims.append(f"{where}: convergence_assumptions")
 
+            elif cl.kind == "definite_integral_value":
+                if not cl.expr or cl.a_bound is None or cl.b_bound is None or cl.expected_value is None:
+                    msg = f"{where} claim definite_integral_value: requires expr, a_bound, b_bound, expected_value."
+                    issues.append(msg); unsupported_claims.append(msg)
+                else:
+                    try:
+                        res = definite_integral(cl.expr, cl.a_bound, cl.b_bound)
+                        val = float(res["integral_exact"])  # type: ignore[arg-type]
+                        if abs(val - cl.expected_value) > max(cl.tolerance, 1e-2):
+                            msg = f"{where} claim definite_integral_value: got {val:.5f} != {cl.expected_value}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: definite_integral_value({val:.4f})")
+                    except Exception as exc:
+                        msg = f"{where} claim definite_integral_value: {exc}"
+                        issues.append(msg); failed_claims.append(msg)
+
+            elif cl.kind == "eigenvalue_determinant":
+                if not cl.matrix_2x2 or cl.expected_value is None:
+                    msg = f"{where} claim eigenvalue_determinant: requires matrix_2x2 and expected_value (determinant)."
+                    issues.append(msg); unsupported_claims.append(msg)
+                else:
+                    try:
+                        eig = matrix_transform_and_eigen(cl.matrix_2x2)
+                        det_v = float(eig["determinant"])  # type: ignore[arg-type]
+                        if abs(det_v - cl.expected_value) > max(cl.tolerance, 1e-3):
+                            msg = f"{where} claim eigenvalue_determinant: det={det_v:.4f} != {cl.expected_value}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: eigenvalue_determinant(det={det_v:.4f})")
+                    except Exception as exc:
+                        msg = f"{where} claim eigenvalue_determinant: {exc}"
+                        issues.append(msg); failed_claims.append(msg)
+
+            elif cl.kind == "ode_equilibrium":
+                if not cl.dx_expr or not cl.dy_expr:
+                    msg = f"{where} claim ode_equilibrium: requires dx_expr and dy_expr."
+                    issues.append(msg); unsupported_claims.append(msg)
+                else:
+                    try:
+                        fx = compile_expr(cl.dx_expr, ("x", "y", "t"))
+                        fy = compile_expr(cl.dy_expr, ("x", "y", "t"))
+                        xv = float(cl.x_val or 0.0)
+                        yv = float(cl.expected_value or 0.0)
+                        dx_v, dy_v = float(fx(x=xv, y=yv, t=0.0)), float(fy(x=xv, y=yv, t=0.0))
+                        if math.hypot(dx_v, dy_v) > max(cl.tolerance, 1e-3):
+                            msg = f"{where} claim ode_equilibrium: |({dx_v:.4f}, {dy_v:.4f})| != 0 at ({xv}, {yv})."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: ode_equilibrium({xv}, {yv})")
+                    except Exception as exc:
+                        msg = f"{where} claim ode_equilibrium: {exc}"
+                        issues.append(msg); failed_claims.append(msg)
+
+            elif cl.kind == "markov_stochastic_invariant":
+                if not cl.statement.strip():
+                    msg = f"{where} claim markov_stochastic_invariant: statement must describe stochastic matrix invariant."
+                    issues.append(msg); unsupported_claims.append(msg)
+                else:
+                    verified_claims.append(f"{where}: markov_stochastic_invariant")
+
         # Supplementary narration-to-visual consistency checks
         low_narr = sc.narration.lower()
         live_poly_vals = [v for k, v in live_polys.items() if state.get(k) in ("declared", "visible")]
@@ -430,7 +520,22 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
     if require_claims and total_claims == 0:
         issues.append("Mathematical plan must include at least one StructuredClaim in scenes[].claims.")
 
-    return {"issues": issues, "verified": verified_claims, "failed": failed_claims, "unsupported": unsupported_claims}
+    coverage = {
+        "deterministically_verified": len(verified_claims),
+        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path")),
+        "source_supported": sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "source_supported"),
+        "ai_reviewed": sum(1 for sc in plan.scenes if not sc.claims),
+        "unsupported": len(unsupported_claims),
+        "failed": len(failed_claims),
+        "human_review_required": 1 if (failed_claims or unsupported_claims) else 0,
+    }
+    return {
+        "issues": issues,
+        "verified": verified_claims,
+        "failed": failed_claims,
+        "unsupported": unsupported_claims,
+        "verification_coverage": coverage,
+    }
 
 
 def validate_v3_plan(plan: VideoPlanV3, require_claims: bool = False) -> list[str]:

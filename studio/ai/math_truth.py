@@ -213,3 +213,304 @@ def bayes_posterior(prior: float, p_e_given_h: float, p_e_given_not_h: float) ->
         "posterior": float(posterior),
         "delta": float(posterior - prior),
     }
+
+
+def definite_integral(
+    expr_str: str,
+    a: float,
+    b: float,
+    n: int = 12,
+    method: str = "midpoint",
+    var: str = "x",
+) -> dict[str, object]:
+    """Compute definite integral and Riemann rectangle partition [(x0, w, y), ...] over [a, b]."""
+    import math
+
+    a_f, b_f = float(a), float(b)
+    if n < 1 or b_f <= a_f:
+        raise ValueError(f"Expected n >= 1 and b > a (got n={n}, [{a}, {b}]).")
+    dx = (b_f - a_f) / n
+    boxes: list[tuple[float, float, float]] = []
+    r_sum = 0.0
+    for i in range(n):
+        x0 = a_f + i * dx
+        if method == "left":
+            xs = x0
+        elif method == "right":
+            xs = x0 + dx
+        else:
+            xs = x0 + 0.5 * dx
+        y = eval_function(expr_str, xs, var=var)
+        if not math.isfinite(y):
+            raise ValueError(f"Non-finite sample y={y} at {var}={xs}.")
+        boxes.append((float(x0), float(dx), float(y)))
+        r_sum += y * dx
+
+    exact_val: float
+    try:
+        sym = sp.Symbol(var, real=True)
+        res = sp.integrate(ast_to_sympy(expr_str, var), (sym, a_f, b_f))
+        exact_val = float(sp.N(res))
+        if not math.isfinite(exact_val):
+            raise ValueError("Non-finite symbolic integral")
+    except Exception:
+        # High-resolution composite Simpson fallback
+        m_steps = 200
+        h = (b_f - a_f) / m_steps
+        s = eval_function(expr_str, a_f, var=var) + eval_function(expr_str, b_f, var=var)
+        for k in range(1, m_steps):
+            s += (4.0 if k % 2 else 2.0) * eval_function(expr_str, a_f + k * h, var=var)
+        exact_val = float(s * h / 3.0)
+
+    return {"integral_exact": exact_val, "riemann_sum": float(r_sum), "boxes": boxes}
+
+
+def rk4_ode_trajectory(
+    dx_expr: str,
+    dy_expr: str | None = None,
+    x0: float = 1.0,
+    y0: float = 0.0,
+    t0: float = 0.0,
+    dt: float = 0.05,
+    steps: int = 80,
+) -> list[tuple[float, float, float]]:
+    """Integrate 1D/2D ODE dx/dt=f(x,y,t), dy/dt=g(x,y,t) via 4th-order Runge-Kutta."""
+    import math
+
+    if dt <= 0 or steps < 1:
+        raise ValueError("dt must be positive and steps >= 1.")
+    fx = compile_expr(dx_expr, ("x", "y", "t"))
+    fy = compile_expr(dy_expr, ("x", "y", "t")) if dy_expr else None
+
+    def _rhs(t_v: float, x_v: float, y_v: float) -> tuple[float, float]:
+        vx = float(fx(x=x_v, y=y_v, t=t_v))
+        vy = float(fy(x=x_v, y=y_v, t=t_v)) if fy is not None else 0.0
+        if not (math.isfinite(vx) and math.isfinite(vy)):
+            raise ValueError(f"Non-finite ODE RHS at t={t_v}, x={x_v}, y={y_v}.")
+        return vx, vy
+
+    t_c, x_c, y_c = float(t0), float(x0), float(y0)
+    out: list[tuple[float, float, float]] = [(t_c, x_c, y_c)]
+    for _ in range(steps):
+        k1x, k1y = _rhs(t_c, x_c, y_c)
+        k2x, k2y = _rhs(t_c + 0.5 * dt, x_c + 0.5 * dt * k1x, y_c + 0.5 * dt * k1y)
+        k3x, k3y = _rhs(t_c + 0.5 * dt, x_c + 0.5 * dt * k2x, y_c + 0.5 * dt * k2y)
+        k4x, k4y = _rhs(t_c + dt, x_c + dt * k3x, y_c + dt * k3y)
+        x_c += (dt / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
+        y_c += (dt / 6.0) * (k1y + 2.0 * k2y + 2.0 * k3y + k4y)
+        t_c += dt
+        if not (math.isfinite(x_c) and math.isfinite(y_c)):
+            raise ValueError("ODE integration diverged to non-finite state.")
+        out.append((round(t_c, 6), float(x_c), float(y_c)))
+    return out
+
+
+def matrix_transform_and_eigen(matrix_2x2: list[list[float]]) -> dict[str, object]:
+    """Compute exact 2x2 determinant, trace, classification, eigenvalues, and eigenvectors."""
+    import numpy as np
+
+    if len(matrix_2x2) != 2 or any(len(r) != 2 for r in matrix_2x2):
+        raise ValueError("matrix_2x2 must be 2x2.")
+    A = np.asarray(matrix_2x2, dtype=float)
+    det = float(np.linalg.det(A))
+    tr = float(np.trace(A))
+    disc = tr * tr - 4.0 * det
+    vals, vecs = np.linalg.eig(A)
+    is_complex = bool(np.any(np.abs(vals.imag) > 1e-7))
+
+    real_eigvals: list[float] = []
+    eig_pairs: list[tuple[float, float]] = []
+    real_eigvecs: list[list[float]] = []
+    for i in range(2):
+        eig_pairs.append((float(vals[i].real), float(vals[i].imag)))
+        if abs(float(vals[i].imag)) <= 1e-7:
+            real_eigvals.append(float(vals[i].real))
+            vec = vecs[:, i].real
+            norm = float(np.linalg.norm(vec)) or 1.0
+            real_eigvecs.append([float(vec[0] / norm), float(vec[1] / norm)])
+
+    if is_complex:
+        re_p = eig_pairs[0][0]
+        regime = "center" if abs(re_p) < 1e-5 else ("stable_spiral" if re_p < 0 else "unstable_spiral")
+    elif abs(det) < 1e-7:
+        regime = "degenerate"
+    elif det < 0:
+        regime = "saddle"
+    elif tr < 0:
+        regime = "stable_node"
+    elif tr > 0:
+        regime = "unstable_node"
+    else:
+        regime = "degenerate"
+
+    return {
+        "matrix": [[float(A[0, 0]), float(A[0, 1])], [float(A[1, 0]), float(A[1, 1])]],
+        "determinant": det,
+        "trace": tr,
+        "discriminant": float(disc),
+        "is_complex": is_complex,
+        "eigenvalues_ri": eig_pairs,
+        "real_eigenvalues": real_eigvals,
+        "real_eigenvectors": real_eigvecs,
+        "regime": regime,
+    }
+
+
+def transform_points_2x2(points: list[list[float]], matrix_2x2: list[list[float]]) -> list[list[float]]:
+    """Transform 2D coordinates by linear matrix A."""
+    a, b = float(matrix_2x2[0][0]), float(matrix_2x2[0][1])
+    c, d = float(matrix_2x2[1][0]), float(matrix_2x2[1][1])
+    return [[a * float(p[0]) + b * float(p[1]), c * float(p[0]) + d * float(p[1])] for p in points]
+
+
+def discrete_pmf_convolution(
+    support: list[float],
+    probs: list[float],
+    n_trials: int = 1,
+) -> tuple[list[float], list[float], float, float]:
+    """Compute exact n-fold sum distribution for ANY arbitrary discrete PMF, plus mean & std."""
+    if not support or len(support) != len(probs) or n_trials < 1:
+        raise ValueError("support and probs must be non-empty of equal length with n_trials >= 1.")
+    total = sum(probs)
+    if total <= 0:
+        raise ValueError("Sum of probs must be positive.")
+    base_norm = [(round(float(x), 8), float(p) / total) for x, p in zip(support, probs) if p > 0]
+    acc: dict[float, float] = {x: p for x, p in base_norm}
+    for _ in range(n_trials - 1):
+        nxt: dict[float, float] = {}
+        for x1, p1 in acc.items():
+            for x2, p2 in base_norm:
+                s = round(x1 + x2, 6)
+                nxt[s] = nxt.get(s, 0.0) + p1 * p2
+        acc = nxt
+    xs = sorted(acc.keys())
+    ps = [float(acc[x]) for x in xs]
+    mu, sig = distribution_stats(xs, ps)
+    return xs, ps, mu, sig
+
+
+def fourier_partial_sum_terms(
+    expr_str: str,
+    period: float = 6.283185307179586,
+    n_harmonics: int = 5,
+    var: str = "x",
+) -> dict[str, object]:
+    """Project arbitrary periodic function onto trig basis over [-L, L] via inner products."""
+    import math
+    import numpy as np
+
+    L = 0.5 * float(period)
+    if L <= 0 or n_harmonics < 1:
+        raise ValueError("Period must be positive and n_harmonics >= 1.")
+    fn = compile_expr(expr_str, (var,))
+    n_grid = 1024
+    dx = (2.0 * L) / n_grid
+    xs = -L + (np.arange(n_grid, dtype=float) + 0.5) * dx
+    ys = np.array([float(fn(**{var: float(xv)})) for xv in xs], dtype=float)
+    a0 = float((1.0 / L) * float(np.sum(ys)) * dx)
+    terms: list[str] = [f"{a0 * 0.5:.6g}"] if abs(a0) > 1e-6 else []
+    harmonics: list[tuple[int, float, float]] = []
+    for n in range(1, n_harmonics + 1):
+        omega = (n * math.pi) / L
+        an = float((1.0 / L) * float(np.sum(ys * np.cos(omega * xs))) * dx)
+        bn = float((1.0 / L) * float(np.sum(ys * np.sin(omega * xs))) * dx)
+        harmonics.append((n, an, bn))
+        if abs(an) > 1e-5:
+            terms.append(f"({an:.6g})*cos({omega:.6g}*{var})")
+        if abs(bn) > 1e-5:
+            terms.append(f"({bn:.6g})*sin({omega:.6g}*{var})")
+    partial_expr = " + ".join(terms) if terms else "0"
+    return {"a0": a0, "harmonics": harmonics, "expr": partial_expr}
+
+
+def newton_raphson_trajectory(
+    expr_str: str,
+    x0: float,
+    steps: int = 5,
+    var: str = "x",
+) -> list[tuple[float, float, float]]:
+    """Compute exact Newton root-finding iterations [(x_k, f(x_k), f'(x_k)), ...]."""
+    x = float(x0)
+    out: list[tuple[float, float, float]] = []
+    for _ in range(max(1, steps) + 1):
+        y = eval_function(expr_str, x, var=var)
+        d = eval_derivative(expr_str, x, var=var, order=1)
+        out.append((x, y, d))
+        if abs(d) < 1e-9:
+            break
+        x = x - y / d
+    return out
+
+
+def solve_equation_roots(
+    lhs_expr: str,
+    rhs_expr: str = "0",
+    x_min: float = -6.0,
+    x_max: float = 6.0,
+    var: str = "x",
+) -> list[float]:
+    """Find real roots of lhs_expr = rhs_expr on [x_min, x_max] via bracketing + SymPy nsolve."""
+    sym = sp.Symbol(var, real=True)
+    diff_sym = sp.simplify(ast_to_sympy(lhs_expr, var) - ast_to_sympy(rhs_expr, var))
+    f_l = compile_expr(lhs_expr, (var,))
+    f_r = compile_expr(rhs_expr, (var,))
+    roots: list[float] = []
+    n_scan = 200
+    xs = [x_min + (x_max - x_min) * i / n_scan for i in range(n_scan + 1)]
+    vals: list[float | None] = []
+    for xv in xs:
+        try:
+            vals.append(float(f_l(**{var: xv})) - float(f_r(**{var: xv})))
+        except Exception:
+            vals.append(None)
+    for i in range(n_scan):
+        v0, v1 = vals[i], vals[i + 1]
+        if v0 is None or v1 is None:
+            continue
+        if abs(v0) < 1e-8 or v0 * v1 <= 0:
+            guess = 0.5 * (xs[i] + xs[i + 1])
+            try:
+                r = float(sp.re(sp.nsolve(diff_sym, sym, guess)))
+                if x_min - 1e-4 <= r <= x_max + 1e-4 and all(abs(r - prev) > 1e-3 for prev in roots):
+                    roots.append(round(r, 6))
+            except Exception:
+                pass
+    return roots
+
+
+def compose_expressions(outer_expr: str, inner_expr: str, var: str = "x") -> str:
+    """Return simplified symbolic composition outer(inner(var))."""
+    sym = sp.Symbol(var, real=True)
+    outer = ast_to_sympy(outer_expr, var)
+    inner = ast_to_sympy(inner_expr, var)
+    return str(sp.simplify(outer.subs(sym, inner)))
+
+
+def markov_chain_trajectory(
+    transition_matrix: list[list[float]],
+    initial_state: list[float],
+    steps: int = 8,
+) -> dict[str, object]:
+    """Propagate state distribution p_{k+1} = p_k @ P for an arbitrary square row-stochastic Markov chain."""
+    import numpy as np
+
+    P = np.asarray(transition_matrix, dtype=float)
+    p = np.asarray(initial_state, dtype=float)
+    if P.ndim != 2 or P.shape[0] != P.shape[1] or p.shape != (P.shape[0],):
+        raise ValueError("Invalid Markov dimensions.")
+    if np.any(P < -1e-9) or np.any(np.abs(P.sum(axis=1) - 1.0) > 1e-3):
+        raise ValueError("Transition matrix rows must be non-negative and sum to 1.")
+    if np.any(p < -1e-9) or abs(float(p.sum()) - 1.0) > 1e-3:
+        raise ValueError("Initial distribution must be non-negative and sum to 1.")
+    p = p / p.sum()
+    states: list[list[float]] = [[float(v) for v in p]]
+    cur = p.copy()
+    for _ in range(max(1, steps)):
+        cur = cur @ P
+        states.append([float(v) for v in cur])
+    # Exact left eigenvector pi @ P = pi
+    vals, vecs = np.linalg.eig(P.T)
+    idx = int(np.argmin(np.abs(vals - 1.0)))
+    pi_vec = np.abs(vecs[:, idx].real)
+    pi_vec = pi_vec / (pi_vec.sum() or 1.0)
+    return {"states": states, "stationary": [float(v) for v in pi_vec]}

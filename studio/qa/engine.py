@@ -250,3 +250,137 @@ def verify_longform_bundle(
         return QACheck("longform_bundle", "failed", f"Duration {dur:.1f}s < required minimum {min_duration_s:.1f}s")
 
     return QACheck("longform_bundle", "passed", f"dur={dur:.2f}s; {loud.detail}; {streams.detail}")
+
+
+def audit_educational_quality(
+    *,
+    topic: str,
+    title: str,
+    plan: object,
+    format_name: str,
+    backend: str = "manimgx",
+    video_path: Path | None = None,
+    storyboard_image: Path | None = None,
+    script: object | None = None,
+    look_name: str = "midnight_studio",
+    chapter_plans: list[object] | None = None,
+) -> object:
+    """Comprehensive pre/post-render quality audit returning a VideoReviewReport."""
+    from studio.ai.validate_v3 import verify_v3_plan_detailed
+    from studio.creative.script_ir import validate_script_ir
+    from studio.storyboard.model import VerificationCoverageSummary, VideoReviewReport, VisualReviewNote
+
+    notes: list[VisualReviewNote] = []
+    metrics: list[str] = []
+
+    plans_to_check = list(chapter_plans) if chapter_plans else [plan]
+    cov_acc = {
+        "deterministically_verified": 0,
+        "numerically_tested": 0,
+        "source_supported": 0,
+        "ai_reviewed": 0,
+        "unsupported": 0,
+        "failed": 0,
+        "human_review_required": 0,
+    }
+    plan_issues: list[str] = []
+    for p_item in plans_to_check:
+        det = verify_v3_plan_detailed(p_item, require_claims=False)  # type: ignore[arg-type]
+        cov_raw = det.get("verification_coverage", {})
+        if isinstance(cov_raw, dict):
+            for k in cov_acc:
+                cov_acc[k] += int(cov_raw.get(k, 0))
+        plan_issues.extend(str(m) for m in det.get("issues", []))  # type: ignore[arg-type]
+
+    cov = VerificationCoverageSummary(**cov_acc)
+    for msg in plan_issues[:20]:
+        notes.append(VisualReviewNote(shot_id="plan", severity="blocker", category="math_grounding", finding=str(msg)))
+
+    script_ok = True
+    if script is not None:
+        s_issues = validate_script_ir(script)  # type: ignore[arg-type]
+        if s_issues:
+            script_ok = False
+            for si in s_issues[:15]:
+                notes.append(VisualReviewNote(shot_id="script", severity="blocker", category="caption", finding=si))
+
+    scenes = getattr(plan, "scenes", [])
+    compositions = {str(getattr(sc, "composition", "auto")) for sc in scenes}
+    obj_kinds = {str(o.kind) for sc in scenes for o in getattr(sc, "objects", [])}
+    eq_cards = sum(1 for sc in scenes for o in getattr(sc, "objects", []) if o.kind == "equation" and o.card)
+    variety_ok = (len(obj_kinds) >= 2) or (len(scenes) <= 2)
+    if len(scenes) >= 4 and eq_cards == len(scenes):
+        variety_ok = False
+        notes.append(
+            VisualReviewNote(
+                shot_id="global",
+                severity="warning",
+                category="visual_variety",
+                finding="Every scene uses a boxed equation card; vary compositions and inline annotations.",
+            )
+        )
+    metrics.append(f"scenes={len(scenes)}, unique_object_kinds={len(obj_kinds)}, compositions={sorted(compositions)}")
+
+    layout_ok = True
+    is_portrait = "shorts" in format_name
+    for sc in scenes:
+        comp = str(getattr(sc, "composition", "auto"))
+        if is_portrait and comp == "side_by_side_comparison":
+            layout_ok = False
+            notes.append(
+                VisualReviewNote(
+                    shot_id=sc.scene_id,
+                    severity="warning",
+                    category="safe_zone",
+                    finding="side_by_side_comparison should be adapted to stacked_comparison on 9:16.",
+                    fix="Run adapt_composition_for_aspect(comp, '9:16')",
+                )
+            )
+
+    audio_ok = True
+    if video_path is not None and video_path.exists():
+        loud = verify_audio_loudness(video_path)
+        streams = verify_media_streams(video_path)
+        metrics.append(f"loudness: {loud.detail}")
+        metrics.append(f"streams: {streams.detail}")
+        if not (loud.passed and streams.passed):
+            audio_ok = False
+            notes.append(
+                VisualReviewNote(
+                    shot_id="media",
+                    severity="blocker",
+                    category="audio",
+                    finding=f"Media QA issue: {loud.detail}; {streams.detail}",
+                )
+            )
+
+    if storyboard_image is not None and storyboard_image.exists():
+        sb_chk = verify_storyboard_image(storyboard_image)
+        metrics.append(sb_chk.detail)
+        if sb_chk.status == "failed":
+            layout_ok = False
+            notes.append(VisualReviewNote(shot_id="storyboard", severity="blocker", category="layout", finding=sb_chk.detail))
+
+    math_ok = len(plan_issues) == 0 and cov.failed == 0
+    blockers = sum(1 for n in notes if n.severity == "blocker")
+    warnings = sum(1 for n in notes if n.severity == "warning")
+    score = max(0.0, 100.0 - blockers * 22.0 - warnings * 6.0)
+    approved = blockers == 0 and score >= 75.0
+
+    return VideoReviewReport(
+        topic=topic,
+        title=title,
+        format_name=format_name,
+        backend=backend,
+        approved=approved,
+        overall_score=score,
+        script_clarity_ok=script_ok,
+        math_grounding_ok=math_ok,
+        layout_safe_zone_ok=layout_ok,
+        audio_sync_ok=audio_ok,
+        visual_variety_ok=variety_ok,
+        verification_summary=cov,
+        notes=notes,
+        metrics=metrics,
+        summary=f"Audited {len(scenes)} scenes ({look_name}, {format_name}, {backend}): score={score:.1f}/100, blockers={blockers}, warnings={warnings}.",
+    )
