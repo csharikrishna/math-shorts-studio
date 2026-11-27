@@ -79,31 +79,33 @@ def _synth_whoosh_soft() -> tuple[np.ndarray, np.ndarray]:
 
 
 def _synth_pop_marimba() -> tuple[np.ndarray, np.ndarray]:
-    dur = 0.22
+    dur = 0.26
     n = int(SAMPLE_RATE * dur)
     t = np.linspace(0.0, dur, n, endpoint=False)
     f0 = 440.0
-    pitch = f0 + 260.0 * np.exp(-t * 85.0)
+    pitch = f0 + 160.0 * np.exp(-t * 95.0)
     phase = 2.0 * np.pi * np.cumsum(pitch) / SAMPLE_RATE
+    att = 1.0 - np.exp(-t * 280.0)
     body = (
-        0.70 * np.sin(phase) * np.exp(-t * 22.0)
-        + 0.22 * np.sin(phase * 2.0) * np.exp(-t * 36.0)
-        + 0.10 * np.sin(phase * 3.98) * np.exp(-t * 55.0)
+        0.74 * np.sin(phase) * np.exp(-t * 17.5)
+        + 0.20 * np.sin(phase * 2.0) * np.exp(-t * 28.0)
+        + 0.08 * np.sin(phase * 3.0) * np.exp(-t * 42.0)
     )
     rng = np.random.default_rng(202)
-    click = rng.normal(0.0, 0.25, n) * np.exp(-t * 260.0)
-    mono = (body + click) * 0.72
-    return _stereo_room(*_pan(mono, -0.18), wet=0.18, tail_s=0.35)
+    felt = rng.normal(0.0, 0.06, n) * np.exp(-t * 220.0)
+    mono = (body + felt) * att * 0.70
+    return _stereo_room(*_pan(mono, -0.16), wet=0.22, tail_s=0.42)
 
 
 def _synth_tick_soft() -> tuple[np.ndarray, np.ndarray]:
-    dur = 0.09
+    dur = 0.11
     n = int(SAMPLE_RATE * dur)
     t = np.linspace(0.0, dur, n, endpoint=False)
-    f0 = 980.0 + 600.0 * np.exp(-t * 140.0)
+    f0 = 880.0 + 380.0 * np.exp(-t * 150.0)
     phase = 2.0 * np.pi * np.cumsum(f0) / SAMPLE_RATE
-    mono = np.sin(phase) * np.exp(-t * 55.0) * 0.55
-    return _stereo_room(*_pan(mono, 0.22), wet=0.20, tail_s=0.30)
+    att = 1.0 - np.exp(-t * 320.0)
+    mono = np.sin(phase) * np.exp(-t * 44.0) * att * 0.54
+    return _stereo_room(*_pan(mono, 0.20), wet=0.24, tail_s=0.36)
 
 
 def _synth_chime_reveal() -> tuple[np.ndarray, np.ndarray]:
@@ -173,7 +175,7 @@ _GENERATORS = {
     "riser_soft": _synth_riser_soft,
 }
 
-SFX_VERSION = "v2"  # bump to invalidate cached renders when synthesis changes
+SFX_VERSION = "v3"  # bump to invalidate cached renders when synthesis changes
 
 
 class SfxLibrary:

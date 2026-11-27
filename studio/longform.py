@@ -86,7 +86,15 @@ def _allocate_chapter_budgets(chapters: list[ChapterSpec], total_duration_s: flo
 
 def _source_code_digest() -> str:
     h = hashlib.sha256()
-    for rel in ("scenes/v3_scene.py", "studio/ai/world_model.py", "studio/layout/components.py", "studio/layout/solver.py"):
+    for rel in (
+        "scenes/v3_scene.py",
+        "studio/ai/world_model.py",
+        "studio/layout/components.py",
+        "studio/layout/solver.py",
+        "studio/audio/bgm.py",
+        "studio/audio/master.py",
+        "studio/audio/sfx.py",
+    ):
         p = PROJECT_ROOT / rel
         if p.exists():
             h.update(p.read_bytes())

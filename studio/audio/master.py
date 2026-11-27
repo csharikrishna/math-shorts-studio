@@ -63,19 +63,20 @@ def _nvenc_flags() -> list[str]:
 
 
 def build_audio_mix_graph(voice_idx: int = 1, bgm_idx: int = 2, sfx_idx: int | None = 0,
-                          sfx_gain: float = 0.85, voice_gain: float = 1.15, bgm_gain: float = 0.24) -> str:
+                          sfx_gain: float = 0.85, voice_gain: float = 1.15, bgm_gain: float = 0.30) -> str:
     """Build FFmpeg sidechain-ducked audio mix graph (2 inputs without SFX or 3 inputs with SFX)."""
     base = (
         f"[{voice_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={voice_gain},asplit=2[voice_mix][voice_sc];"
-        f"[{bgm_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_gain}[bgm_pre];"
-        f"[bgm_pre]extrastereo=m=1.15[bgm_wide];"
-        f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.03:ratio=4.5:attack=40:release=320[bgm_ducked];"
+        f"[{bgm_idx}:a]aresample=48000,aformat=channel_layouts=stereo,"
+        f"equalizer=f=1600:width_type=q:width=0.7:g=-3.5,lowpass=f=7200,volume={bgm_gain}[bgm_pre];"
+        f"[bgm_pre]extrastereo=m=1.18[bgm_wide];"
+        f"[bgm_wide][voice_sc]sidechaincompress=threshold=0.045:ratio=2.3:attack=110:release=750:knee=4.0[bgm_ducked];"
     )
     if sfx_idx is None:
         return base + "[voice_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0"
     return (
         base
-        + f"[{sfx_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.25[sfx];"
+        + f"[{sfx_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={sfx_gain},extrastereo=m=1.22[sfx];"
         + "[sfx][voice_mix][bgm_ducked]amix=inputs=3:duration=first:normalize=0"
     )
 
@@ -114,7 +115,7 @@ def master_video(
     output_mp4: Path,
     sfx_gain: float = 0.85,
     voice_gain: float = 1.15,
-    bgm_gain: float = 0.24,
+    bgm_gain: float = 0.30,
     look: str = "none",
     lut_path: Path | None = None,
 ) -> Path:

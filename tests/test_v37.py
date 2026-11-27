@@ -364,6 +364,32 @@ class TestV37Suite(unittest.TestCase):
             finally:
                 ac.store._conn.close()
 
+    def test_smooth_bell_bgm_sfx_and_velvet_mix_graph(self) -> None:
+        import wave
+        import numpy as np
+        from studio.audio.bgm import generate_ambient_bgm
+        from studio.audio.master import build_audio_mix_graph
+        from studio.audio.sfx import SFX_VERSION, SfxLibrary
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            bgm_path = generate_ambient_bgm(tdir / "bgm.wav", duration=10.0)
+            with wave.open(str(bgm_path), "rb") as wf:
+                self.assertEqual((wf.getframerate(), wf.getnchannels()), (48000, 2))
+                pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(np.float32).reshape(-1, 2) / 32768.0
+            self.assertLess(float(np.max(np.abs(pcm[:480]))), 0.01)
+            self.assertLess(float(np.max(np.abs(pcm[-480:]))), 0.01)
+            self.assertGreater(float(np.mean(np.abs(pcm[:, 0] - pcm[:, 1]))), 0.01)
+            self.assertEqual(SFX_VERSION, "v3")
+            sfx_files = SfxLibrary(tdir / "sfx").ensure_all()
+            self.assertIn("chime_reveal", sfx_files)
+            self.assertTrue(all(p.exists() and p.stat().st_size > 1000 for p in sfx_files.values()))
+
+        mix = build_audio_mix_graph(1, 2, 0)
+        self.assertIn("equalizer=", mix)
+        self.assertIn("sidechaincompress=", mix)
+        self.assertIn("ratio=2.3", mix)
+
 
 if __name__ == "__main__":
     unittest.main()
