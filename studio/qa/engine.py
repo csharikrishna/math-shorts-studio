@@ -447,6 +447,10 @@ def audit_educational_quality(
         "human_review_required": 0,
     }
     plan_issues: list[str] = []
+    agg_animated = 0
+    agg_dyn_total = 0
+    agg_dyn_gaps: list[str] = []
+    agg_param_sync: list[str] = []
     for p_item in plans_to_check:
         det = verify_v3_plan_detailed(p_item, require_claims=True)  # type: ignore[arg-type]
         cov_raw = det.get("verification_coverage", {})
@@ -454,6 +458,10 @@ def audit_educational_quality(
             for k in cov_acc:
                 cov_acc[k] += int(cov_raw.get(k, 0))
         plan_issues.extend(str(m) for m in det.get("issues", []))  # type: ignore[arg-type]
+        agg_animated += int(det.get("animated_scenes", 0))
+        agg_dyn_total += int(det.get("total_dynamic_scenes", 0))
+        agg_dyn_gaps.extend(str(g) for g in (det.get("dynamic_motion_gaps", []) or []))
+        agg_param_sync.extend(str(g) for g in (det.get("parameter_sync_issues", []) or []))
 
     cov = VerificationCoverageSummary(**cov_acc)
     for msg in plan_issues[:20]:
@@ -514,18 +522,33 @@ def audit_educational_quality(
             )
         )
     cats["scene_composition_variety"] = "passed" if variety_ok else "failed"
-    motion_ops = event_ops & {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "iterate_states", "interpolate_values", "duplicate"}
-    cats["animation_meaningfulness"] = "passed" if (len(scenes) <= 2 or bool(motion_ops)) else "failed"
-    if cats["animation_meaningfulness"] == "failed":
+    motion_ops = event_ops & {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "set_param", "iterate_states", "interpolate_values", "duplicate"}
+    animated_scenes = agg_animated
+    total_dyn = agg_dyn_total
+    dyn_gaps = agg_dyn_gaps
+    min_anim_req = 1 if len(scenes) <= 2 else (max(2, len(scenes) // 3) if len(scenes) >= 6 else 1)
+    dyn_coverage_ok = (len(scenes) <= 2) or (total_dyn == 0) or ((total_dyn - len(dyn_gaps)) >= max(1, int(0.65 * total_dyn)))
+    motion_ok = (len(scenes) <= 2) or (bool(motion_ops) and animated_scenes >= min_anim_req and dyn_coverage_ok)
+    cats["animation_meaningfulness"] = "passed" if motion_ok else "failed"
+    if not motion_ok:
+        detail_msg = (
+            "No state-changing or mathematical motion events used (only fade/create)."
+            if not motion_ops
+            else f"Insufficient state-changing scene coverage ({animated_scenes}/{len(scenes)} animated scenes; dynamic gaps={len(dyn_gaps)}/{total_dyn})."
+        )
         notes.append(
             VisualReviewNote(
                 shot_id="global",
                 severity="warning",
                 category="motion",
-                finding="No state-changing or mathematical motion events used (only fade/create).",
+                finding=detail_msg,
             )
         )
-    metrics.append(f"scenes={len(scenes)}, unique_object_kinds={len(obj_kinds)}, motion_ops={sorted(motion_ops)}, compositions={sorted(compositions)}")
+    param_sync_issues = agg_param_sync
+    for ps_msg in param_sync_issues:
+        cats["math_accuracy"] = "failed"
+        notes.append(VisualReviewNote(shot_id="sync", severity="blocker", category="math", finding=str(ps_msg)))
+    metrics.append(f"scenes={len(scenes)}, animated_scenes={animated_scenes}/{len(scenes)}, dynamic_gaps={len(dyn_gaps)}/{total_dyn}, unique_object_kinds={len(obj_kinds)}, motion_ops={sorted(motion_ops)}, compositions={sorted(compositions)}")
 
     layout_ok = True
     is_portrait = "shorts" in format_name

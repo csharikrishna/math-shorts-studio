@@ -280,14 +280,19 @@ def rk4_ode_trajectory(
 
     if dt <= 0 or steps < 1:
         raise ValueError("dt must be positive and steps >= 1.")
-    fx = compile_expr(dx_expr, ("x", "y", "t"))
-    fy = compile_expr(dy_expr, ("x", "y", "t")) if dy_expr else None
+    from studio.ai.simulation import infer_phase_var_names
+
+    v0, v1 = infer_phase_var_names(dx_expr, dy_expr or "0")
+    scope = tuple(dict.fromkeys([v0, v1, "t"]))
+    fx = compile_expr(dx_expr, scope)
+    fy = compile_expr(dy_expr, scope) if dy_expr else None
 
     def _rhs(t_v: float, x_v: float, y_v: float) -> tuple[float, float]:
-        vx = float(fx(x=x_v, y=y_v, t=t_v))
-        vy = float(fy(x=x_v, y=y_v, t=t_v)) if fy is not None else 0.0
+        kw = {v0: x_v, v1: y_v, "t": t_v}
+        vx = float(fx(**kw))
+        vy = float(fy(**kw)) if fy is not None else 0.0
         if not (math.isfinite(vx) and math.isfinite(vy)):
-            raise ValueError(f"Non-finite ODE RHS at t={t_v}, x={x_v}, y={y_v}.")
+            raise ValueError(f"Non-finite ODE RHS at t={t_v}, {v0}={x_v}, {v1}={y_v}.")
         return vx, vy
 
     t_c, x_c, y_c = float(t0), float(x0), float(y0)

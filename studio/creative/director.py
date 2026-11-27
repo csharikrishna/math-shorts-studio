@@ -125,7 +125,11 @@ class CreativeDirector:
             "- Connect each beat smoothly with natural `transition_from_prev` reasoning (never repeat opening stems or dramatic hype).\n"
             "- Use 1-2 *asterisk* emphasis words and place `<bookmark mark='m1'/>` right before key visual trigger words.\n"
             "- Every mark listed in `anchor_marks` MUST appear verbatim as `<bookmark mark='...'/>` in `spoken_text`.\n"
-            "- Populate `visual_intent`, `educational_purpose`, `mathematical_claims`, `latex_refs`, and `beat_id` cleanly.\n"
+            "- Populate `visual_intent`, `educational_purpose`, `mathematical_claims`, `latex_refs`, `beat_id`, and `demo_contract` "
+            "(`learner_takeaway`, `relationship_explained`, `required_state_change`, `visual_components`, `changing_parameters`, "
+            "`displayed_measurements`, `persisting_objects`, `intentional_static`) cleanly.\n"
+            "- Whenever a beat explains motion, oscillation, convergence, phase flow, damping, resonance, or transformation, specify "
+            "real state changes in `demo_contract.required_state_change` and `changing_parameters` instead of static plots.\n"
             "- Populate `revisions` as empty list (tracked automatically).\n\n"
             f"{caps}"
         )
@@ -209,12 +213,25 @@ class CreativeDirector:
         prompt = (
             f"Fix ONLY the listed editorial/validation issues in this ScriptIR for target {target_duration_s:.0f}s:\n"
             f"{issue_lines}\n\n"
-            f"Rules: Keep clean speakable English (no raw LaTeX), ensure `anchor_marks` match `<bookmark mark='...'/>`, "
-            f"zero banned cliches.\n\nCURRENT SCRIPT:\n{script.model_dump_json()}"
+            f"Rules: Preserve ALL {len(script.beats)} beats and their exact beat_id/chapter_id/scene_id in order! "
+            f"Keep clean speakable English (no raw LaTeX), ensure `anchor_marks` match `<bookmark mark='...'/>`, "
+            f"zero banned cliches.\n\nCURRENT SCRIPT:\n{script.model_dump_json(exclude_none=True)}"
         )
         fixed, _ = self.provider.generate_structured(prompt, ScriptIR, system=BRIEF_SYSTEM, temperature=0.3)
+        fixed_map: dict[str, NarrationBeatIR] = {}
         for b in fixed.beats:
             b.spoken_text = clean_spoken_text(b.spoken_text)
+            if b.beat_id:
+                fixed_map[b.beat_id] = b
+        # Never allow LLM truncation to drop existing beats or chapters during repair
+        if len(fixed.beats) < len(script.beats):
+            merged_beats = [fixed_map.get(orig.beat_id, orig.model_copy(deep=True)) for orig in script.beats]
+            known_ids = {b.beat_id for b in merged_beats}
+            for extra_b in fixed.beats:
+                if extra_b.beat_id and extra_b.beat_id not in known_ids:
+                    merged_beats.append(extra_b)
+                    known_ids.add(extra_b.beat_id)
+            fixed.beats = merged_beats
         fixed.concept_analysis = script.concept_analysis
         fixed.narration_mode = script.narration_mode
         fixed.strategy = script.strategy

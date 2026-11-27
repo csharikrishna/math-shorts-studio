@@ -169,4 +169,6 @@ class CaptionIR(BaseModel):
     cues: list[CaptionCue] = Field(default_factory=list)
     preset: Optional[CaptionPresetConfig] = None
     timing_provenance_counts: dict[str, int] = Field(default_factory=dict)
+    raw_timing_evidence_count: int = 0
+    timing_repairs: list[dict] = Field(default_factory=list)
     source_timeline_hash: str = ""

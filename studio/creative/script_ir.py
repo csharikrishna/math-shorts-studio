@@ -19,6 +19,19 @@ from studio.creative.dialogue import (
 from studio.creative.models import ConceptAnalysis, ExplanationStrategyKind, NarrationMode, SpeakerRole
 
 
+class DemonstrationContract(BaseModel):
+    """Explicit pedagogical demonstration contract tying narration to dynamic state changes and visual components."""
+
+    learner_takeaway: str = ""
+    relationship_explained: str = ""
+    required_state_change: str = ""
+    visual_components: list[str] = Field(default_factory=list)
+    changing_parameters: list[str] = Field(default_factory=list)
+    displayed_measurements: list[str] = Field(default_factory=list)
+    persisting_objects: list[str] = Field(default_factory=list)
+    intentional_static: bool = False
+
+
 class NarrationBeatIR(BaseModel):
     """Single renderer-independent narrative beat linked to visual intent and mathematical claims."""
 
@@ -39,6 +52,7 @@ class NarrationBeatIR(BaseModel):
     emphasis_words: list[str] = Field(default_factory=list)
     pause_after_s: float = 0.25
     visual_intent: str
+    demo_contract: DemonstrationContract | None = None
     anchor_marks: list[str] = Field(default_factory=list)
     anchor_token_offsets: dict[str, int] = Field(default_factory=dict)
     estimated_duration_s: float = 4.5

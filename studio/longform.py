@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -281,17 +282,21 @@ def create_longform_plan(
 
     # --- STAGE 2: Authoritative Script-First Generation (ScriptIR BEFORE Scene Plans) ---
     script_cache_file = logs_dir / f"script_{req_sig}_approved.json"
+    doc_script = None
     if script_cache_file.exists():
-        doc_script = ScriptIR.model_validate_json(script_cache_file.read_text(encoding="utf-8"))
-        gen_log.append({"stage": "script_ir_cache_hit", "beats": len(doc_script.beats)})
-    else:
+        cand_doc = ScriptIR.model_validate_json(script_cache_file.read_text(encoding="utf-8"))
+        cand_cids = {b.chapter_id or (b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "") for b in cand_doc.beats}
+        if all(c.chapter_id in cand_cids for c in lf_plan.chapters) and len(cand_doc.beats) >= len(lf_plan.chapters) * 2:
+            doc_script = cand_doc
+            gen_log.append({"stage": "script_ir_cache_hit", "beats": len(doc_script.beats)})
+    if doc_script is None:
         cdir = CreativeDirector(model=model, provider_name=provider_name, free_only=free_only)
         ch_beat_lists: list[list[NarrationBeatIR]] = [None] * len(lf_plan.chapters)  # type: ignore[list-item]
 
         def _draft_ch_script(idx: int, ch: ChapterSpec) -> tuple[int, list[NarrationBeatIR]]:
             ch_target_s = float(ch.target_duration_s or per_ch_s)
-            ch_min_words = max(55, int(ch_target_s * 1.85))
-            ch_max_words = max(ch_min_words + 25, int(ch_target_s * 2.28))
+            ch_min_words = max(32, int(ch_target_s * 1.55))
+            ch_max_words = max(ch_min_words + 16, int(ch_target_s * 1.92))
             prev_fallback = (
                 f"Previous Chapter ({lf_plan.chapters[idx - 2].title}): {lf_plan.chapters[idx - 2].summary}"
                 if idx >= 2
@@ -307,7 +312,7 @@ def create_longform_plan(
                 if bridge
                 else f"Previous Summary: {prev_fallback}\n"
             )
-            n_beats = max(4, min(8, round(ch_target_s / 13.0)))
+            n_beats = max(2, min(7, round(ch_target_s / 15.0)))
             s_prompt = (
                 f"Authoritative Script-First Beat Sequence (NO rendering code) for Chapter {idx}/{len(lf_plan.chapters)}:\n"
                 f"TOPIC: {topic}\nCENTRAL QUESTION: {brief.concept.central_question or outline.central_question}\n"
@@ -353,7 +358,7 @@ def create_longform_plan(
             return idx, ch_ir.beats
 
         log_lock = threading.Lock()
-        script_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "3"))))
+        script_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "1"))))
         with ThreadPoolExecutor(max_workers=script_workers) as pool:
             sfuts = [pool.submit(_draft_ch_script, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
             for fut in as_completed(sfuts):
@@ -393,14 +398,61 @@ def create_longform_plan(
         )
         commit_script_revision(doc_script, stage="initial", notes="Assembled chapter-ordered ScriptIR before visual scene planning", approve=False)
         rep_global = cdir.review_script(doc_script, use_llm=True)
-        gen_log.append({"stage": "editorial_review_global", "approved": rep_global.approved, "summary": rep_global.summary})
-        if not rep_global.approved:
+        pre_s_issues = validate_script_ir(doc_script)
+        gen_log.append({"stage": "editorial_review_global", "approved": rep_global.approved, "summary": rep_global.summary, "schema_issues": pre_s_issues})
+        if (not rep_global.approved) or pre_s_issues:
+            if pre_s_issues:
+                from studio.creative.director import EditorialIssue
+
+                existing_issues = list(getattr(rep_global, "issues", []) or [])
+                for si_msg in pre_s_issues:
+                    existing_issues.append(EditorialIssue(beat_id="global", category="clarity", detail=str(si_msg)))
+                rep_global.issues = existing_issues
             doc_script = cdir.repair_script(doc_script, rep_global, target_duration_s=target_duration_s)
             for bi, b in enumerate(doc_script.beats, 1):
                 if not b.chapter_id:
                     b.chapter_id = b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "ch_1"
                 b.beat_id = f"{b.chapter_id}__{b.scene_id}"
                 b.spoken_text = clean_spoken_text(b.spoken_text)
+        # Deterministic sentence-boundary split for any beat still slightly above max word limit (48)
+        normalized_beats: list[NarrationBeatIR] = []
+        used_beat_keys: set[str] = set()
+        for b in doc_script.beats:
+            plain_w = parse_script(b.spoken_text)[0].split()
+            if len(plain_w) > 46:
+                parts_s = [s.strip() for s in re.split(r"(?<=[.!?])\s+", b.spoken_text.strip()) if s.strip()]
+                if len(parts_s) >= 2:
+                    mid = max(1, len(parts_s) // 2)
+                    chunks_s = [" ".join(parts_s[:mid]), " ".join(parts_s[mid:])]
+                else:
+                    raw_toks = b.spoken_text.split()
+                    mid = max(1, len(raw_toks) // 2)
+                    chunks_s = [" ".join(raw_toks[:mid]), " ".join(raw_toks[mid:])]
+                for ci, ch_txt in enumerate(chunks_s):
+                    sc_id = b.scene_id if ci == 0 else f"{b.scene_id}_p{ci + 1}"
+                    while f"{b.chapter_id}__{sc_id}" in used_beat_keys:
+                        sc_id = f"{sc_id}x"
+                    used_beat_keys.add(f"{b.chapter_id}__{sc_id}")
+                    c_marks = re.findall(r"<bookmark\s+mark=['\"]([^'\"]+)['\"]\s*/>", ch_txt)
+                    nb = b.model_copy(
+                        deep=True,
+                        update={
+                            "scene_id": sc_id,
+                            "beat_id": f"{b.chapter_id}__{sc_id}",
+                            "spoken_text": ch_txt,
+                            "anchor_marks": c_marks,
+                        },
+                    )
+                    normalized_beats.append(nb)
+                continue
+            sc_id = b.scene_id
+            while f"{b.chapter_id}__{sc_id}" in used_beat_keys:
+                sc_id = f"{sc_id}_2"
+            used_beat_keys.add(f"{b.chapter_id}__{sc_id}")
+            if sc_id != b.scene_id:
+                b = b.model_copy(deep=True, update={"scene_id": sc_id, "beat_id": f"{b.chapter_id}__{sc_id}"})
+            normalized_beats.append(b)
+        doc_script.beats = normalized_beats
         approve_script_ir(doc_script, notes="Global ScriptIR approved and permanently locked prior to scene compilation")
         script_cache_file.write_text(doc_script.model_dump_json(indent=2), encoding="utf-8")
 
@@ -438,7 +490,7 @@ def create_longform_plan(
 
             cached_det = _v3_det(cached_cp, require_claims=True)
             cached_cov = cached_det.get("verification_coverage", {}) if isinstance(cached_det, dict) else {}
-            if not cached_det.get("issues") and int(cached_cov.get("unsupported", 0)) == 0:
+            if not cached_det.get("issues") and int(cached_cov.get("unsupported", 0)) == 0 and (not ch_beats or len(cached_cp.scenes) >= len(ch_beats)):
                 try:
                     if ch_beats:
                         lock_script_to_plan(cached_cp, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
@@ -452,6 +504,11 @@ def create_longform_plan(
         node_ctx = "; ".join(f"{node_map[nid].title}: {[c.statement for c in node_map[nid].claims]}" for nid in ch.node_ids if nid in node_map)
         locked_spec_lines = "\n".join(
             f"- scene_id='{b.scene_id}' | speaker='{b.speaker}' | visual_intent='{b.visual_intent}' | claims={b.mathematical_claims} | spoken_text={json.dumps(b.spoken_text)}"
+            + (
+                f" | contract={b.demo_contract.model_dump(exclude_none=True)}"
+                if getattr(b, "demo_contract", None) is not None
+                else ""
+            )
             for b in ch_beats
         )
         ch_prompt = (
@@ -459,14 +516,15 @@ def create_longform_plan(
             f"Overall Topic: {topic}\nChapter {idx}/{len(lf_plan.chapters)}: {ch.title}\n"
             f"Summary: {ch.summary}\nKnowledge context: {node_ctx}\n"
             f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
-            "APPROVED BEATS (preserve exact `scene_id`, `speaker`, and `narration` verbatim; add deterministic constructions, visual objects, meaningful motion events, and verified StructuredClaim objects):\n"
-            "CLAIM & CONSTRUCTION RULES:\n"
+            "APPROVED BEATS (preserve exact `scene_id`, `speaker`, and `narration` verbatim; add deterministic simulations/constructions, visual objects, meaningful state-changing motion events, and verified StructuredClaim objects):\n"
+            "CLAIM, SIMULATION & MOTION RULES:\n"
+            "- NEVER rely only on static fade/create across dynamic explanation beats: whenever narration describes motion, oscillation, decay, phase portraits, trajectories, convergence, or resonance, declare shared `math_models` (`dynamical_simulation`, `frequency_response`, `signal_spectral_pipeline`, etc.) + reusable components (`mechanical_body` with `spring`/`damper`/`spring_damper`/`rod`, `vector_field`, `data_series`, `vector`, live `bar_chart` `energy_bars`, `annotation` readout) driven by `op='animate_param'` or `'trace'`!\n"
+            "- Use `frequency_response` for driven steady-state gain & verify damping threshold: nonzero resonance peak ONLY occurs when damping_ratio < 1/sqrt(2) (~0.707) at w_res = w0*sqrt(1 - 2*zeta^2) (distinct from free damped frequency w_d = w0*sqrt(1 - zeta^2)); ALWAYS leave expected_value=null on frequency_response_peak unless citing an exact verified number, and declare a second model_id when comparing another damping_ratio!\n"
             "- NEVER attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to `axes`, `parametric_curve`, `function_plot`, `point`, or `vector`.\n"
             "- NEVER emit `stationary_point` without BOTH `expr` and `x_val`; for ODE fixed points use `ode_equilibrium` with `dx_expr` and `dy_expr`.\n"
-            "- ALL expression strings (`expr`, `expected_expr`, `dx_expr`, `dy_expr`) MUST evaluate cleanly using numeric constants and ONLY `x` (or `t` / `x, y` in ODEs); NEVER write symbolic Greek constants like `omega`, `gamma`, `zeta`, `k`, `m`, `A` inside `expr`.\n"
-            "- Whenever visuals plot coupled signals, complex winding z(t)=x(t)e^{-i*w*t}, spectra, filtering, optimization, Bayes posteriors, ODE orbits, or series approximations, declare a shared `math_models` (`LinkedMathModelSpec`) entry and bind objects with `model_id` and `model_output`, plus explicit `x_label`, `y_label`, and `legend_items`.\n"
+            "- ALL expression strings (`expr`, `expected_expr`, `dx_expr`, `dy_expr`) MUST evaluate cleanly using numeric constants and ONLY `x` (or `t` / `x, y` in ODEs); NEVER write symbolic Greek constants like `omega`, `gamma`, `zeta`, `k`, `m`, `A` inside `expr` (put numeric parameters inside `math_models[].params` or plug in concrete numbers).\n"
             "- Every `claim_ledger[].exact_narration_span` MUST copy an exact plain-English substring from `scene.narration` (without `<bookmark>` tags).\n"
-            "- For curves, waves, winding paths, spectra, and calculus/physics scenes use `fourier_winding_centroid`, `spectral_derivation_consistency`, `signal_filtering_equivalence`, `parseval_energy_conservation`, `function_equivalence`, `point_on_function`, `derivative_equality`, `definite_integral_value`, or `coefficient_correctness`, and populate `claim_ledger`.\n"
+            "- Populate `simulation_trajectory_bounds`, `frequency_response_peak`, `ode_equilibrium`, `fourier_winding_centroid`, `spectral_derivation_consistency`, `signal_filtering_equivalence`, `parseval_energy_conservation`, `function_equivalence`, `point_on_function`, `derivative_equality`, `definite_integral_value`, or `coefficient_correctness` cleanly.\n"
             f"{locked_spec_lines}"
         )
         ch_plan = None
@@ -474,7 +532,13 @@ def create_longform_plan(
         for _attempt in range(2):
             ch_plan, ch_resp = director.provider.generate_structured(ch_prompt, VideoPlanV3, system=ch_system, temperature=0.35)
             with log_lock:
-                gen_log.append({"stage": f"chapter_{ch.chapter_id}", "model": ch_resp.model, "latency_s": ch_resp.latency_s})
+                gen_log.append({
+                    "stage": f"chapter_{ch.chapter_id}",
+                    "model": ch_resp.model,
+                    "latency_s": round(ch_resp.latency_s, 3),
+                    "prompt_tokens": ch_resp.prompt_tokens,
+                    "completion_tokens": ch_resp.completion_tokens,
+                })
             if ch_beats:
                 lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
             for r_idx in range(1, MAX_REPAIRS + 1):
@@ -484,16 +548,26 @@ def create_longform_plan(
                 issues = list(det_r.get("issues", []))
                 for u_msg in det_r.get("unclaimed_math_scenes", []):
                     issues.append(str(u_msg))
+                if len(ch_plan.scenes) >= 2 and (det_r.get("dynamic_motion_gaps") or int(det_r.get("animated_scenes", 0)) < max(1, (len(ch_plan.scenes) + 1) // 2)):
+                    dyn_msgs = list(det_r.get("dynamic_motion_gaps", []))
+                    if not dyn_msgs:
+                        dyn_msgs = [f"Chapter has only {det_r.get('animated_scenes', 0)}/{len(ch_plan.scenes)} scenes with motion events; add real animate_param, trace, move, transform, or morph events on physical/mathematical objects."]
+                    issues.extend(dyn_msgs[:3])
                 if not issues:
                     break
                 fix_prompt = (
                     "Fix EVERY listed VideoPlanV3 validation issue strictly WITHOUT altering scene_id or spoken narration:\n- "
                     + "\n- ".join(issues)
                     + "\nRULES WHEN FIXING:\n"
-                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons.\n"
+                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; use `simulation_trajectory_bounds` with `model_id` for conserved simulation invariants.\n"
+                    "- For `ode_equilibrium`, `(x_val, expected_value)` MUST be a true fixed point where BOTH `dx_expr == 0` and `dy_expr == 0` (e.g. `(0, 0)` or nontrivial interior root); for oscillating/non-equilibrium states, use `simulation_trajectory_bounds` instead.\n"
+                    "- Never redeclare a persistent object ID from an earlier scene without a preceding `remove`, and never animate an object before its `create` event.\n"
                     "- For `markov_stochastic_invariant`, reference a `matrix` or `bar_chart` in `object_ids` whose entries verify row sums = 1.0 and invariant stationary distribution.\n"
+                    "- For `frequency_response_peak`, set `expected_value=null` (let engine verify exact `w_res = w0*sqrt(1 - 2*zeta^2)` from model) or declare a separate `frequency_response` `model_id` for a different damping_ratio.\n"
+                    "- For `polynomial_degree` or `coefficient_correctness`, ALWAYS set a scalar polynomial string `expr` in `x` (e.g. `x**2 + x + 1`), or replace with `simulation_trajectory_bounds` / `frequency_response_peak` / `ode_equilibrium`.\n"
+                    "- For dynamic motion gaps, add real state-changing animation events (`animate_param` on `mechanical_body`/model-linked object with `param_range`, `trace`/`draw` on curves, `move`/`transform`/`morph` on geometry) and NEVER rely only on `create`/`reveal`.\n"
                     "- Ensure every narrative mathematical claim has a matching verified StructuredClaim or ConstructionOp.\n"
-                    f"\nCurrent JSON:\n{ch_plan.model_dump_json()}"
+                    f"\nCurrent JSON:\n{ch_plan.model_dump_json(exclude_none=True)}"
                 )
                 ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.25)
                 if ch_beats:
@@ -516,7 +590,7 @@ def create_longform_plan(
         ch_cache_file.write_text(mat.model_dump_json(indent=2), encoding="utf-8")
         return idx, mat
 
-    llm_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "3"))))
+    llm_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "1"))))
     with ThreadPoolExecutor(max_workers=llm_workers) as pool:
         futs = [pool.submit(_compile_chapter_from_script, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
         for fut in as_completed(futs):
@@ -551,6 +625,12 @@ def build_longform_video(
     """Render chapters independently with multi-stage dependency cache and assemble a verified documentary."""
     if len(longform_plan.chapters) != len(chapter_plans):
         raise ValueError("chapters count must match chapter_plans count.")
+
+    t_build_0 = time.perf_counter()
+    tts_time_s = 0.0
+    render_time_s = 0.0
+    assembly_time_s = 0.0
+    qa_time_s = 0.0
 
     resolved_look = resolve_look(look_name).name
     resolved_cap = caption_style or ("kinetic" if "shorts" in format_name else "editorial")
@@ -660,6 +740,7 @@ def build_longform_video(
             else:
                 if backend in ("hyperframes", "hybrid"):
                     # Pre-synthesize once in main thread to keep Kokoro warm in RAM and avoid double TTS
+                    _t0 = time.perf_counter()
                     tl = build_voice_timeline(
                         [BeatSpec(id=s.scene_id, narration=s.narration, caption=s.purpose, speaker=s.speaker) for s in plan.scenes],
                         build_dir=ch_build,
@@ -671,10 +752,12 @@ def build_longform_video(
                         speaker_voices=sp_voices,
                     )
                     MasterTimeline(audio=tl).export_subtitles(ch_build, ch_stem, caption_style=resolved_cap, format_name=format_name, look_name=resolved_look)
+                    tts_time_s += time.perf_counter() - _t0
                     hf_timelines[idx] = tl
                 pending_jobs.append((idx, ch, plan, ch_plan_path, ckey, stage_key, upstream, ch_build))
 
         if pending_jobs:
+            _tr0 = time.perf_counter()
             if backend in ("hyperframes", "hybrid"):
                 from studio.renderers import get_backend
 
@@ -747,7 +830,9 @@ def build_longform_video(
                     slots_mp4[j_idx] = mp4
                     checkpoint[j_ch.chapter_id] = {"cache_key": j_ckey, "mp4": str(mp4), "backend": backend}
                     _atomic_write_json(ckpt_path, checkpoint)
+            render_time_s += time.perf_counter() - _tr0
 
+        _tasm0 = time.perf_counter()
         chapter_mp4s = [p for p in slots_mp4 if p is not None]
         chapter_srts = [p for p in slots_srt if p is not None]
         chapter_transcripts = [p for p in slots_txt if p is not None]
@@ -811,8 +896,14 @@ def build_longform_video(
                 pass
 
         ch_cap_p = c_bdir / "caption_ir.json"
-        if ch_cap_p.exists():
-            cap_ir_items.append((ch.chapter_id, cursor_s, ch_cap_p))
+        if not ch_cap_p.exists() and ch_tl is not None:
+            from studio.timeline import MasterTimeline as _MT
+
+            ch_stem_c = f"{slug}_{ch.chapter_id}"
+            _MT(audio=ch_tl).export_subtitles(c_bdir, ch_stem_c, caption_style=resolved_cap, format_name=format_name, look_name=resolved_look)
+        if not ch_cap_p.exists():
+            raise RuntimeError(f"Missing required chapter CaptionIR before global merge: {ch_cap_p}")
+        cap_ir_items.append((ch.chapter_id, cursor_s, ch_cap_p))
 
         ch_sb = storyboard_from_v3_plan(cp_plan, format_name=format_name, look_name=resolved_look, audio_timeline=ch_tl)
         for sh in ch_sb.shots:
@@ -916,6 +1007,7 @@ def build_longform_video(
             doc_script = ScriptIR.model_validate_json(approved_script_p.read_text(encoding="utf-8"))
         except Exception:
             doc_script = None
+    _tqa0 = time.perf_counter()
     loud = verify_audio_loudness(final_mp4)
     streams = verify_media_streams(final_mp4)
     base_target = sum(float(c.target_duration_s or 0.0) for c in longform_plan.chapters if not str(c.chapter_id).startswith("ext_"))
@@ -940,11 +1032,34 @@ def build_longform_video(
     )
     review_md_p = lf_dir / "REVIEW.md"
     export_review_md(rev_report, review_md_p)  # type: ignore[arg-type]
+    qa_time_s = time.perf_counter() - _tqa0
+    total_wall_s = time.perf_counter() - t_build_0
+    assembly_time_s = max(0.0, total_wall_s - tts_time_s - render_time_s - qa_time_s)
 
-    from studio.provenance import build_and_write_manifest
+    from studio.provenance import build_and_write_manifest, get_process_rss_mb
 
     gen_log_p = lf_dir / "logs" / "generation_log.json"
     prov_log = json.loads(gen_log_p.read_text(encoding="utf-8")) if gen_log_p.exists() else []
+    prov_list = prov_log if isinstance(prov_log, list) else []
+    telemetry = {
+        "cold_or_warm": "warm" if not pending_jobs else "mixed_or_cold",
+        "pending_chapters": len(pending_jobs),
+        "total_chapters": len(longform_plan.chapters),
+        "total_wall_s": round(total_wall_s, 3),
+        "tts_time_s": round(tts_time_s, 3),
+        "render_time_s": round(render_time_s, 3),
+        "assembly_time_s": round(assembly_time_s, 3),
+        "qa_time_s": round(qa_time_s, 3),
+        "peak_rss_mb": get_process_rss_mb(),
+        "cache_stats": cache_stats,
+        "provider_requests": len(prov_list),
+        "tokens": {
+            "prompt": sum(int(r.get("prompt_tokens", 0) or 0) for r in prov_list if isinstance(r, dict)),
+            "completion": sum(int(r.get("completion_tokens", 0) or 0) for r in prov_list if isinstance(r, dict)),
+            "total": sum(int(r.get("total_tokens") or (int(r.get("prompt_tokens", 0) or 0) + int(r.get("completion_tokens", 0) or 0))) for r in prov_list if isinstance(r, dict)),
+        },
+        "file_size_bytes": int(final_mp4.stat().st_size),
+    }
     manifest, manifest_p = build_and_write_manifest(
         slug=slug,
         topic=longform_plan.topic,
@@ -963,7 +1078,8 @@ def build_longform_video(
         review_report=rev_report,
         review_path=review_md_p,
         renderer_config={"ui": ui, "look": look, "tts_engine": tts_engine, "voice": voice, "rate": rate},
-        provider_provenance=prov_log if isinstance(prov_log, list) else [],
+        provider_provenance=prov_list,
+        telemetry_summary=telemetry,
     )
 
     return {
@@ -989,6 +1105,7 @@ def build_longform_video(
         "qa_loudness": {"passed": loud.passed, "detail": loud.detail},
         "qa_streams": {"passed": streams.passed, "detail": streams.detail},
         "qa_bundle": {"passed": bundle_chk.passed, "detail": bundle_chk.detail},
+        "telemetry": telemetry,
     }
 
 
@@ -1009,6 +1126,7 @@ def derive_recomposed_short(
     look_name: str = "midnight_studio",
     backend: str = "manimgx",
     caption_style: str | None = None,
+    script_ir: ScriptIR | None = None,
 ) -> dict[str, object]:
     """Derive a native recomposed 9:16 portrait Short from the core chapter (no 16:9 crop)."""
     resolved_look = resolve_look(look_name).name
@@ -1099,6 +1217,7 @@ def derive_recomposed_short(
     out_dir = PROJECT_ROOT / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     target_mp4 = out_dir / f"SHORT_{slug}_{format_name}.mp4"
+    t_short_0 = time.perf_counter()
     if backend in ("hyperframes", "hybrid"):
         from studio.renderers import get_backend
 
@@ -1136,6 +1255,8 @@ def derive_recomposed_short(
             target_mp4.write_bytes(rendered.read_bytes())
         mp4 = target_mp4
 
+    render_short_s = time.perf_counter() - t_short_0
+    t_sqa0 = time.perf_counter()
     loud = verify_audio_loudness(mp4)
     streams = verify_media_streams(mp4)
     v3_short_bdir = PROJECT_ROOT / "build" / f"SHORT_{slug}_{format_name}"
@@ -1169,9 +1290,26 @@ def derive_recomposed_short(
     )
     short_rev_p = short_dir / "REVIEW.md"
     export_review_md(rev, short_rev_p)  # type: ignore[arg-type]
+    qa_short_s = time.perf_counter() - t_sqa0
+    total_short_s = time.perf_counter() - t_short_0
 
-    from studio.provenance import build_and_write_manifest
+    from studio.provenance import build_and_write_manifest, get_process_rss_mb
 
+    if script_ir is None:
+        cand_s = PROJECT_ROOT / "build" / f"longform_{slug}" / "script_ir_approved.json"
+        if cand_s.exists():
+            try:
+                script_ir = ScriptIR.model_validate_json(cand_s.read_text(encoding="utf-8"))
+            except Exception:
+                script_ir = None
+
+    short_telemetry = {
+        "total_wall_s": round(total_short_s, 3),
+        "render_and_tts_s": round(render_short_s, 3),
+        "qa_time_s": round(qa_short_s, 3),
+        "peak_rss_mb": get_process_rss_mb(),
+        "file_size_bytes": int(mp4.stat().st_size),
+    }
     manifest, manifest_p = build_and_write_manifest(
         slug=f"{slug}_short",
         topic=short_plan.topic,
@@ -1183,12 +1321,14 @@ def derive_recomposed_short(
         look_name=resolved_look,
         caption_style=resolved_cap,
         build_dir=short_dir,
+        script_ir=script_ir,
         audio_timeline=short_tl,
         timeline_path=short_tl_p if short_tl_p.exists() else None,
         caption_ir_path=short_cap_ir if short_cap_ir.exists() else None,
         review_report=rev,
         review_path=short_rev_p,
         renderer_config={"ui": ui, "look": look, "tts_engine": tts_engine, "voice": voice, "rate": rate},
+        telemetry_summary=short_telemetry,
     )
     return {
         "output_mp4": str(mp4),
@@ -1204,4 +1344,5 @@ def derive_recomposed_short(
         "qa_review_score": float(getattr(rev, "overall_score", 0.0)),
         "qa_loudness": {"passed": loud.passed, "detail": loud.detail},
         "qa_streams": {"passed": streams.passed, "detail": streams.detail},
+        "telemetry": short_telemetry,
     }

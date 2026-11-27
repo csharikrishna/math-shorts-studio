@@ -438,7 +438,86 @@ MATH_OPERATION_SPECS: list[ComponentSpec] = [
         validate_fn=lambda d: ([] if d.get("expr") else ["expr required for signal_spectral_pipeline"]),
         test_fn=lambda: abs(float(evaluate_signal_spectral_pipeline(LinkedMathModelSpec(model_id="t", kind="signal_spectral_pipeline", expr="cos(2*pi*2*t)", selected_freq=2.0))["measurements"]["parseval_rel_error"])) < 1e-3,
     ),
+    ComponentSpec(
+        name="general_simulation_engine",
+        category="math_operation",
+        description="Integrate general coupled time-varying ODEs (RK4/adaptive RK45), recurrences, stochastic ensembles, and conserved observables driving moving bodies, phase orbits, force vectors, and energy charts.",
+        input_model="LinkedMathModelSpec",
+        output_model="SimulationResult",
+        input_schema_model=LinkedMathModelSpec,
+        output_schema_model=LinkedMathModelSpec,
+        inputs_schema=["state_vars", "rhs_exprs", "initial_state", "t_range", "derived_exprs", "solver"],
+        outputs=["time_series_x", "time_series_y", "phase_orbit", "energy_total", "energy_bars", "sweep_frames"],
+        render_implementations={
+            "manimgx": "world_model.materialize_constructions+mechanical_body+data_series",
+            "hyperframes": "world_model.materialize_constructions+svg_math+mechanical_body",
+        },
+        supported_ops=["create", "draw", "animate_param", "set_param", "trace", "iterate_states"],
+        layout_requirements={"requires_axes": True},
+        resource_constraints={"max_steps": 2000},
+        math_grounding="Adaptive RK45/RK4 quadrature + strict finite checking + derived invariant evaluation",
+        example_use_case="Damped/driven oscillators, pendulums, Lotka-Volterra phase portraits, circuits, energy dissipation.",
+        compute_fn=lambda **kw: _run_sim_op(kw),
+        validate_fn=lambda d: ([] if (d.get("rhs_exprs") or d.get("natural_freq") is not None) else ["rhs_exprs or natural_freq required"]),
+        test_fn=lambda: _test_general_sim_op(),
+    ),
+    ComponentSpec(
+        name="driven_frequency_response",
+        category="math_operation",
+        description="Compute steady-state amplitude gain, phase lag, natural frequency, damped frequency, and valid resonance peak threshold (zeta < 1/sqrt(2)).",
+        input_model="LinkedMathModelSpec",
+        output_model="FrequencyResponse",
+        input_schema_model=LinkedMathModelSpec,
+        output_schema_model=LinkedMathModelSpec,
+        inputs_schema=["natural_freq", "damping_ratio", "drive_amp", "freq_range"],
+        outputs=["response_curve", "phase_curve", "spectrum_peak", "measurements"],
+        render_implementations={
+            "manimgx": "world_model.materialize_constructions+data_series",
+            "hyperframes": "world_model.materialize_constructions+svg_math",
+        },
+        supported_ops=["create", "draw", "animate_param", "highlight"],
+        layout_requirements={"requires_axes": True},
+        resource_constraints={"max_samples": 400},
+        math_grounding="Exact 2nd-order transfer function amplitude/phase + analytical resonance criterion zeta < 1/sqrt(2)",
+        example_use_case="Driven mechanical resonance, RLC filter Q-factor, structural vibration limits.",
+        compute_fn=lambda **kw: _run_freq_resp_op(kw),
+        validate_fn=lambda d: ([] if float(d.get("natural_freq", 1.0)) > 0.0 else ["natural_freq must be positive"]),
+        test_fn=lambda: _test_freq_resp_op(),
+    ),
 ]
+
+
+def _run_sim_op(kw: dict[str, Any]) -> dict[str, Any]:
+    from studio.ai.linked_models import evaluate_dynamical_simulation_model
+
+    return evaluate_dynamical_simulation_model(
+        LinkedMathModelSpec.model_validate({"model_id": kw.get("model_id", "sim"), "kind": "dynamical_simulation", **kw})
+    )
+
+
+def _test_general_sim_op() -> bool:
+    from studio.ai.linked_models import evaluate_dynamical_simulation_model
+
+    res = evaluate_dynamical_simulation_model(
+        LinkedMathModelSpec(model_id="t_sim", kind="dynamical_simulation", state_vars=["x", "v"], rhs_exprs=["v", "-4.0*x - 0.6*v"], initial_state=[1.5, 0.0], steps=60)
+    )
+    return len(res["phase_orbit"]) == 61 and len(res["sweep_frames"]) >= 6
+
+
+def _run_freq_resp_op(kw: dict[str, Any]) -> dict[str, Any]:
+    from studio.ai.linked_models import evaluate_frequency_response_model
+
+    return evaluate_frequency_response_model(
+        LinkedMathModelSpec.model_validate({"model_id": kw.get("model_id", "resp"), "kind": "frequency_response", **kw})
+    )
+
+
+def _test_freq_resp_op() -> bool:
+    from studio.ai.linked_models import evaluate_frequency_response_model
+
+    low_z = evaluate_frequency_response_model(LinkedMathModelSpec(model_id="r1", kind="frequency_response", natural_freq=2.0, damping_ratio=0.15))
+    high_z = evaluate_frequency_response_model(LinkedMathModelSpec(model_id="r2", kind="frequency_response", natural_freq=2.0, damping_ratio=0.85))
+    return bool(low_z["measurements"]["has_nonzero_resonance_peak"]) and not bool(high_z["measurements"]["has_nonzero_resonance_peak"])
 
 
 def register_math_ops(registry: ComponentRegistry) -> None:

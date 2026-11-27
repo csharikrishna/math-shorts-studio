@@ -1,4 +1,27 @@
-# Math Shorts Studio — Project Status (V3.9 Mathematical Cinematography & Linked Visualization)
+# Math Shorts Studio — Project Status (V4.0 Simulation-Driven Educational Filmmaking)
+
+## V4.0 Implemented & Verified
+- **Kokoro Trailing-Bookmark Caption Integrity & Strict Semantic Highlighting (`studio/audio/tts.py`, `studio/captions/layout.py`)**
+  - Fixed trailing punctuation attached after final `<bookmark/>` tags in `normalize_for_speech_with_map()` and `_synthesize_kokoro()` so raw punctuation tokens can never produce inverted `(start > end)` caption timestamps; enforced non-monotonic timestamp rejection across `verify_caption_synchronization()`.
+  - Restricted `extract_semantic_emphasis_tokens()` to genuine technical/concept words so everyday prose never receives background highlight pills.
+- **Strict Production Certification, Windows Peak RSS Telemetry & Cost Accounting (`studio/provenance.py`, `studio/qa/engine.py`, `studio/longform.py`)**
+  - Enforced non-empty font SHAs, FFprobe stream metrics, `git_commit_sha`, `audio_timeline_sha256`, `caption_ir_sha256`, and approved QA gate inside `inspect_manifest_verification(..., require_certification=True)`, fixing the `REVIEW.md` vs pipeline telemetry `tokens.total` aggregation and adding Windows `K32GetProcessMemoryInfo` peak RSS instrumentation.
+- **Linked Parameter Synchronization & Endpoint-Exclusive Spectral Representation (`studio/ai/linked_models.py`, `studio/ai/validate_v3.py`, `scenes/v3_scene.py`, `studio/renderers/hyperframes/`, `studio/renderers/hybrid.py`)**
+  - Synchronized `set_param`, piecewise `SweepKeyframe` reset/continuity, active `ValueTracker` / model-linked curves, and `ReplacementTransform` equations across ManimGX, HyperFrames, and Hybrid cross-renderer segment handoffs (including persistent `axes` preservation and cross-segment `remove` carry-over).
+  - Switched discrete Fourier evaluation to endpoint-exclusive sampling (`endpoint=False`) with exact DFT frequency bin alignment, detected spectral peaks (`2*`, `5*`), and explicit reconstruction vs filtered-spectrum distinction with zero silent NaN/Inf coercion.
+- **General Dynamical Simulation Engine & Scientific Visual Components (`studio/ai/simulation.py`, `studio/registry/`, `studio/ai/v3_schema.py`, `studio/ai/math_truth.py`, `scenes/v3_scene.py`, `studio/renderers/hyperframes/components.py`)**
+  - Implemented general sandboxed pure-NumPy/SymPy numerical solvers (RK45 adaptive ODE integration with `dx/dy` equilibrium checks, 2nd-order frequency-response curves & resonance thresholds, discrete recurrences, Markov trajectories, trajectories & conserved-quantity diagnostics) with zero arbitrary LLM Python execution.
+  - Added certified scientific components (`mechanical_body`, `vector_field`) across both ManimGX and HyperFrames + offline KaTeX, plus coupled multi-view `bar_chart`/`data_series`/`axes` model bindings and general planning/repair rules (`studio/ai/director.py`, `studio/longform.py`).
+- **Multi-Scene Dynamic Motion Gate & Cross-Topic Verification (`tests/test_v40.py`, `docs/BENCHMARK_REPORT.md`)**
+  - Upgraded `audit_educational_quality()` to require multi-scene dynamic pixel delta and state-changing animation coverage (`animate_param`/`trace`/`move`/`transform`/`morph`) across documentaries, rejecting static-single-scene docs cleanly.
+  - **5-Target Fourier V4.0 Re-Benchmark (`ManimGX` dark, `HyperFrames` light & dark, `Hybrid` dark, `9:16` Portrait Short):** All 5 achieved **`100.0/100` (`publication_approved`, `production_certified=True`)**.
+  - **Regenerated Harmonic Oscillator (`"Damped Harmonic Oscillators, Resonance Curves, and Phase Portraits"`):** Derived `40.0 s` Short **`100.0/100` (`publication_approved`)**; `273.52 s` Documentary **`72.0/100` (`review_required`, `0` blockers, `animated_scenes=12/16`, `13.6x` warm cache speedup)**.
+  - **Held-Out Nonlinear ODE (`"Lotka-Volterra Predator-Prey Oscillations and Phase Orbits"`):** Derived `37.40 s` Short **`94.0/100` (`publication_approved`)**; `185.32 s` Documentary **`78.0/100` (`review_required`, `0` blockers, `animated_scenes=10/14`, `10.3x` warm cache speedup)**.
+  - **Test Suite:** **90 tests passing** (`tests/test_v40.py` + `test_v39.py` + `test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
+
+---
+
+# Prior Baseline: Math Shorts Studio — Project Status (V3.9 Mathematical Cinematography & Linked Visualization)
 
 ## V3.9 Implemented & Verified
 - **Immutable Production Manifests & Provenance (`studio/provenance.py`, `studio/longform.py`, `studio/pipeline.py`, `studio/renderers/`)**

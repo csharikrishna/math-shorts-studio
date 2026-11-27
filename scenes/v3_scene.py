@@ -144,6 +144,9 @@ class V3Scene(StoryScene):
         self._hidden_persisted: dict[str, m.Mobject] = {}
         self.axes_ranges: dict[str, tuple[list[float], list[float]]] = {}
         self.params: dict[str, m.ValueTracker] = {}
+        self._swept_models: set[str] = set()
+        self._model_selected_u: dict[str, float] = {}
+        self._model_keyframes: dict[str, list] = {}
         self._active_eq_id: str | None = None
         self._active_ann_id: str | None = None
         self._geom_frame: tuple[float, np.ndarray] | None = None
@@ -191,7 +194,7 @@ class V3Scene(StoryScene):
                     laxes = self.obj_axes.get(lid)
                     if lid in referenced_ids or laxes in referenced_ids:
                         continue
-                    if lkind in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series", "waveform", "particle_system"):
+                    if lkind in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series", "waveform", "particle_system", "mechanical_body", "vector_field"):
                         old_mob = self.registry.pop(lid)
                         self.obj_kinds.pop(lid, None)
                         self.obj_axes.pop(lid, None)
@@ -295,6 +298,7 @@ class V3Scene(StoryScene):
             self._cur_ann_total = sum(1 for o in sc.objects if o.kind == "annotation")
             self._cur_eq_index = 0
             self._cur_eq_total = sum(1 for o in sc.objects if o.kind == "equation")
+            self._cur_scene_obj_ids = {o.id for o in sc.objects}
 
             for obj in sc.objects:
                 if obj.id in self.registry:
@@ -394,6 +398,29 @@ class V3Scene(StoryScene):
                         cues.pop(mk)
                 cue_callables = {mark: (lambda evs=ev_list: _compile_cue_group(evs)) for mark, ev_list in cues.items()}
 
+            # Synchronize persisted swept models cleanly back to active_model_params or canonical selected_u when not re-swept
+            scene_sweep_keys: set[str] = set()
+            for ev_sw in sc.events:
+                if ev_sw.op in ("animate_param", "set_param", "iterate_states", "interpolate_values"):
+                    sp_tgt = self._obj_specs.get(ev_sw.target_id) or next((o for o in sc.objects if o.id == ev_sw.target_id), None)
+                    if sp_tgt is not None:
+                        scene_sweep_keys.add(f"__sweep_{getattr(sp_tgt, 'model_id', None) or ev_sw.target_id}")
+            active_m_params = dict(getattr(sc, "active_model_params", {}) or {})
+            for sw_k in list(self._swept_models):
+                if sw_k in scene_sweep_keys or sw_k not in self.params:
+                    continue
+                mid_name = sw_k.replace("__sweep_", "", 1)
+                tgt_u = float(self._model_selected_u.get(sw_k, 0.0))
+                if mid_name in active_m_params and sw_k in self._model_keyframes:
+                    kfs_m = self._model_keyframes[sw_k]
+                    f_t = float(active_m_params[mid_name])
+                    if kfs_m:
+                        best_i = min(range(len(kfs_m)), key=lambda i_k: abs(float(kfs_m[i_k].param) - f_t))
+                        tgt_u = float(kfs_m[best_i].u if getattr(kfs_m[best_i], "u", None) is not None else (best_i / max(1, len(kfs_m) - 1)))
+                tr_m = self.params[sw_k]
+                if abs(float(tr_m.get_value()) - tgt_u) > 1e-4:
+                    main_anims.append(tr_m.animate.set_value(tgt_u))
+
             self.play_beat(sc.scene_id, *main_anims, cues=cue_callables or None, sfx=sc.sfx_cue)
             if new_eq_ids:
                 self._active_eq_id = new_eq_ids[-1]
@@ -487,6 +514,8 @@ class V3Scene(StoryScene):
                 copy_mob.shift(np.array([ev.shift[0], ev.shift[1], 0.0]))
             self.registry[ev.target_id] = copy_mob
             return m.TransformFromCopy(self.registry[ev.source_id], copy_mob)
+        if ev.op == "remove" and ev.target_id not in self.registry:
+            return m.Wait(0.01)
         if ev.target_id not in self.registry:
             raise RuntimeError(f"AnimationEvent target_id {ev.target_id!r} not found in registry.")
         mob = self.registry[ev.target_id]
@@ -513,10 +542,10 @@ class V3Scene(StoryScene):
                     return m.TransformMatchingTex(src, mob)
                 except Exception:
                     return m.ReplacementTransform(src, mob)
-            if src_kind == "equation" and isinstance(src, m.VGroup) and isinstance(mob, m.VGroup) and len(src) >= 2 and len(mob) >= 2 and isinstance(src[1], m.MathTex) and isinstance(mob[1], m.MathTex):
+            if src_kind == "equation" and isinstance(src, m.VGroup) and isinstance(mob, m.VGroup) and len(src) >= 2 and len(mob) >= 2:
                 self.registry[ev.target_id] = mob
                 self.registry.pop(ev.source_id, None)
-                return m.AnimationGroup(m.Transform(src[0], mob[0]), m.TransformMatchingTex(src[1], mob[1]))
+                return m.ReplacementTransform(src, mob)
             self.registry[ev.target_id] = src
             if ev.source_id in self._live_unaxed_polys:
                 self._live_unaxed_polys.discard(ev.source_id)
@@ -573,8 +602,19 @@ class V3Scene(StoryScene):
                 targets.append(self.registry[ev.source_id])
             subs = [sub for t_m in targets for sub in (list(t_m) if isinstance(t_m, m.VGroup) and len(t_m) > 1 else [t_m])]
             return m.AnimationGroup(*(m.Create(sub) if isinstance(sub, m.VMobject) else m.FadeIn(sub) for sub in subs))
-        if ev.op in ("animate_param", "iterate_states", "interpolate_values"):
+        if ev.op in ("animate_param", "set_param", "iterate_states", "interpolate_values"):
             tracker = getattr(mob, "_param_tracker", None)
+            sw_key = getattr(mob, "_sweep_key", None)
+            if sw_key:
+                self._swept_models.add(str(sw_key))
+            if tracker is not None and ev.op == "set_param" and ev.target_param is not None:
+                kfs = getattr(mob, "_sweep_keyframes", None) or (self._model_keyframes.get(str(sw_key)) if sw_key else None)
+                if kfs:
+                    best_i = min(range(len(kfs)), key=lambda i_k: abs(float(kfs[i_k].param) - float(ev.target_param)))
+                    tgt_u = float(kfs[best_i].u if getattr(kfs[best_i], "u", None) is not None else (best_i / max(1, len(kfs) - 1)))
+                else:
+                    tgt_u = float(ev.target_param)
+                return tracker.animate.set_value(tgt_u)
             if tracker is not None and ev.param_range and len(ev.param_range) == 2:
                 tracker.set_value(float(ev.param_range[0]))
                 return tracker.animate.set_value(float(ev.param_range[1]))
@@ -603,7 +643,9 @@ class V3Scene(StoryScene):
                     return m.Succession(*anims_seq)
             if self.obj_kinds.get(ev.target_id) == "data_series" and isinstance(mob, m.VMobject):
                 return m.Create(mob)
-            if isinstance(mob, m.VGroup) and len(mob) > 1:
+            if isinstance(mob, m.VGroup) and len(mob) >= 1:
+                if len(mob) == 1:
+                    return m.ShowPassingFlash(mob[0].copy().set_stroke(color=self.theme.accent_highlight, width=5.0), time_width=0.35) if isinstance(mob[0], m.VMobject) else m.Indicate(mob[0], scale_factor=1.06)
                 return m.LaggedStart(*(m.Indicate(sub, scale_factor=1.06) for sub in mob), lag_ratio=0.14)
             if isinstance(mob, m.VMobject):
                 return m.ShowPassingFlash(mob.copy().set_stroke(color=self.theme.accent_highlight, width=5.0), time_width=0.35)
@@ -728,6 +770,8 @@ class V3Scene(StoryScene):
             return ax
 
         if obj.kind == "function_plot":
+            if not obj.expr and (obj.points_list or getattr(obj, "sweep_keyframes", None)):
+                return self._build_data_series_mob(obj, color)
             ax = self.registry.get(obj.axes_id or "")
             if isinstance(ax, m.Axes) and obj.axes_id in self.axes_ranges:
                 xr, yr = self.axes_ranges[obj.axes_id]
@@ -738,6 +782,8 @@ class V3Scene(StoryScene):
             return plot_clipped_segments(ax, fn, xr, yr, color=color, stroke_width=3.5)
 
         if obj.kind == "parametric_curve":
+            if not obj.expr and (obj.points_list or getattr(obj, "sweep_keyframes", None)):
+                return self._build_data_series_mob(obj, color)
             ax = self.registry.get(obj.axes_id or "")
             if not isinstance(ax, m.Axes):
                 xr, yr = obj.x_range or [-2.0, 2.0], obj.y_range or [-2.0, 2.0]
@@ -870,25 +916,52 @@ class V3Scene(StoryScene):
             txt.move_to(np.array([px_cx, px_cy, 0.0]))
             self._obj_boxes[obj.id] = placed_box
             self._scene_obstacles.append(placed_box)
+            if getattr(obj, "sweep_keyframes", None):
+                sw_key = f"__sweep_{obj.model_id or obj.id}"
+                init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+                self._model_selected_u.setdefault(sw_key, init_u)
+                kfs = list(obj.sweep_keyframes)
+                self._model_keyframes.setdefault(sw_key, kfs)
+                ctr_pos = np.array([px_cx, px_cy, 0.0])
+                col_ann = color
+                fs_ann = max(18, lbl_fs - 4)
+                def _mk_sw_ann(t=tracker, frames=kfs, pos_c=ctr_pos, c=col_ann, fs=fs_ann):
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
+                    lbl = frames[idx].label or raw_lbl or ""
+                    mob_a = m.Text(lbl, font_size=fs, font=CAPTION_FONT, weight="SEMIBOLD", color=c, **_FONT_KWARGS)
+                    fit_mobject(mob_a, max_width=L.safe_w * (0.84 if is_port else 0.34), max_height=0.58)
+                    return mob_a.move_to(pos_c)
+                dyn_ann = m.always_redraw(_mk_sw_ann)
+                dyn_ann._param_tracker = tracker  # type: ignore[attr-defined]
+                dyn_ann._sweep_key = sw_key  # type: ignore[attr-defined]
+                dyn_ann._sweep_keyframes = kfs  # type: ignore[attr-defined]
+                return dyn_ann
             return txt
 
         if obj.kind == "point":
             if getattr(obj, "sweep_keyframes", None):
                 sw_key = f"__sweep_{obj.model_id or obj.id}"
-                tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
+                init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+                self._model_selected_u.setdefault(sw_key, init_u)
                 kfs = list(obj.sweep_keyframes)
+                self._model_keyframes.setdefault(sw_key, kfs)
                 ax_ref = self.registry.get(obj.axes_id or "")
                 ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
-                is_spec_pk = obj.model_output == "spectrum_peak"
+                is_spec_pk = obj.model_output in ("spectrum_peak", "time_point")
                 def _mk_sw_dot(t=tracker, frames=kfs, a=ax, c=color, spec_mode=is_spec_pk):
                     u = max(0.0, min(1.0, float(t.get_value())))
-                    idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
                     kf = frames[idx]
                     xy = kf.spec_point if (spec_mode and kf.spec_point) else (kf.point or [0.0, 0.0])
                     pos = a.c2p(xy[0], xy[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([xy[0], xy[1], 0.0]))
                     return m.Dot(pos, radius=0.11, color=c)
                 mob = m.always_redraw(_mk_sw_dot)
                 mob._param_tracker = tracker  # type: ignore[attr-defined]
+                mob._sweep_key = sw_key  # type: ignore[attr-defined]
+                mob._sweep_keyframes = kfs  # type: ignore[attr-defined]
                 return mob
             if obj.param_name and obj.expr and ";" in obj.expr:
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
@@ -908,23 +981,29 @@ class V3Scene(StoryScene):
         if obj.kind in ("line", "vector"):
             if obj.kind == "vector" and getattr(obj, "sweep_keyframes", None):
                 sw_key = f"__sweep_{obj.model_id or obj.id}"
-                tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
+                init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+                self._model_selected_u.setdefault(sw_key, init_u)
                 kfs = list(obj.sweep_keyframes)
+                self._model_keyframes.setdefault(sw_key, kfs)
                 ax_ref = self.registry.get(obj.axes_id or "")
                 ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
                 c0 = obj.coords or [0.0, 0.0]
                 def _mk_sw_vec(t=tracker, frames=kfs, a=ax, c=color, orig=c0):
                     u = max(0.0, min(1.0, float(t.get_value())))
-                    idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
                     kf = frames[idx]
+                    st_xy = getattr(kf, "vector_start", None) or orig
                     end_xy = kf.vector_end or kf.point or [0.01, 0.0]
-                    s = a.c2p(orig[0], orig[1]) if isinstance(a, m.Axes) else L.stage_center
+                    s = a.c2p(st_xy[0], st_xy[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([st_xy[0], st_xy[1], 0.0]))
                     e = a.c2p(end_xy[0], end_xy[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([end_xy[0], end_xy[1], 0.0]))
                     if np.linalg.norm(e - s) < 0.04:
                         return m.Dot(s, radius=0.05, color=c)
                     return m.Arrow(s, e, color=c, buff=0)
                 mob = m.always_redraw(_mk_sw_vec)
                 mob._param_tracker = tracker  # type: ignore[attr-defined]
+                mob._sweep_key = sw_key  # type: ignore[attr-defined]
+                mob._sweep_keyframes = kfs  # type: ignore[attr-defined]
                 return mob
             if obj.kind == "vector" and obj.param_name and obj.expr and ";" in obj.expr:
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
@@ -987,8 +1066,11 @@ class V3Scene(StoryScene):
             return nl
 
         if obj.kind == "bar_chart" and obj.values:
-            if not obj.axes_id:
+            cur_ids = getattr(self, "_cur_scene_obj_ids", set())
+            if not obj.axes_id and obj.panel_slot in ("auto", "center"):
                 for k_rem, v in list(self.registry.items()):
+                    if k_rem in cur_ids:
+                        continue
                     if isinstance(v, m.Axes) or hasattr(v, "_wrapped_axes") or getattr(v, "_is_bar_chart", False) or self.obj_kinds.get(k_rem) in ("axes", "data_series", "point", "vector", "function_plot", "parametric_curve"):
                         self.remove(v)
                         self.registry.pop(k_rem, None)
@@ -1036,6 +1118,40 @@ class V3Scene(StoryScene):
             grp._bar_max_h = max_h  # type: ignore[attr-defined]
             if obj.points_list and len(obj.points_list) >= 2:
                 grp._step_bar_states = obj.points_list  # type: ignore[attr-defined]
+            if getattr(obj, "sweep_keyframes", None) and any(getattr(kf, "bar_values", None) for kf in obj.sweep_keyframes):
+                sw_kfs = [kf for kf in obj.sweep_keyframes if getattr(kf, "bar_values", None)]
+                sw_key = f"__sweep_{obj.model_id or obj.id}"
+                init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+                self._model_selected_u.setdefault(sw_key, init_u)
+                self._model_keyframes.setdefault(sw_key, sw_kfs)
+                hi_sw = max([abs(float(v)) for kf in sw_kfs for v in (kf.bar_values or [])] + [hi, 1e-6])
+                ctr_b = grp.get_center().copy()
+                base_y_pos = float(ctr_b[1] - max_h * 0.35)
+                def _mk_sw_bars(t=tracker, frames=sw_kfs, b_ctr=ctr_b, cw=chart_w, bw=w, mh=max_h, by=base_y_pos, mx_v=hi_sw, col_b=color, lbls=obj.bar_labels):
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
+                    vals_k = frames[idx].bar_values or vals
+                    g_b = m.VGroup()
+                    nn = len(vals_k)
+                    w_i = cw / max(1, nn)
+                    for i_b, vv in enumerate(vals_k):
+                        hh = max(0.03, abs(float(vv)) / mx_v * mh)
+                        rb = m.Rectangle(width=w_i * 0.62, height=hh, fill_color=col_b, fill_opacity=0.88, stroke_width=0)
+                        xp = b_ctr[0] - 0.5 * cw + (i_b + 0.5) * w_i
+                        rb.move_to(np.array([xp, by + hh * 0.5, 0.0]))
+                        g_b.add(rb)
+                        if i_b < len(lbls) and lbls[i_b]:
+                            tl = m.Text(str(lbls[i_b]), font_size=24, font=CAPTION_FONT, color=T.text_muted, **_FONT_KWARGS)
+                            fit_mobject(tl, max_width=w_i * 0.9, min_height=L.min_text_h)
+                            tl.move_to(np.array([xp, by - 0.30, 0.0]))
+                            g_b.add(tl)
+                    return g_b
+                dyn_b = m.always_redraw(_mk_sw_bars)
+                dyn_b._param_tracker = tracker  # type: ignore[attr-defined]
+                dyn_b._sweep_key = sw_key  # type: ignore[attr-defined]
+                dyn_b._sweep_keyframes = sw_kfs  # type: ignore[attr-defined]
+                return dyn_b
             return grp
 
         if obj.kind == "angle_arc":
@@ -1178,63 +1294,7 @@ class V3Scene(StoryScene):
             return tbl_grp
 
         if obj.kind in ("data_series", "waveform"):
-            if getattr(obj, "sweep_keyframes", None):
-                kfs = [kf for kf in obj.sweep_keyframes if kf.curve_pts and len(kf.curve_pts) >= 2]
-                if kfs:
-                    sw_key = f"__sweep_{obj.model_id or obj.id}"
-                    tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
-                    ax_ref = self.registry.get(obj.axes_id or "")
-                    ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
-                    ax_b = self.axes_ranges.get(obj.axes_id or "")
-                    def _mk_sw_curve(t=tracker, frames=kfs, a=ax, bounds=ax_b, c=color):
-                        u = max(0.0, min(1.0, float(t.get_value())))
-                        idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
-                        raw_pts = frames[idx].curve_pts
-                        if bounds is not None and isinstance(a, m.Axes):
-                            runs = _clip_polyline_runs(raw_pts, bounds[0], bounds[1])
-                            use_pts = runs[0] if runs else raw_pts
-                            scene_pts = [a.c2p(p[0], p[1]) for p in use_pts]
-                        elif isinstance(a, m.Axes):
-                            scene_pts = [a.c2p(p[0], p[1]) for p in raw_pts]
-                        else:
-                            scene_pts = [L.stage_center + np.array([p[0], p[1], 0.0]) for p in raw_pts]
-                        curve = m.VMobject()
-                        curve.set_points_as_corners(scene_pts)
-                        curve.set_stroke(color=c, width=3.4)
-                        return curve
-                    mob = m.always_redraw(_mk_sw_curve)
-                    mob._param_tracker = tracker  # type: ignore[attr-defined]
-                    return mob
-            pts_raw = obj.points_list
-            if not pts_raw and obj.kind == "waveform" and obj.expr:
-                fn_w = compile_expr(obj.expr, ("x",))
-                xr = obj.x_range or [-3.14, 3.14]
-                xs_w = np.linspace(xr[0], xr[1], 120)
-                pts_raw = [[float(xw), float(fn_w(x=float(xw)))] for xw in xs_w]
-            if pts_raw and len(pts_raw) >= 2:
-                ax_bounds = self.axes_ranges.get(obj.axes_id or "")
-                if ax_bounds is not None:
-                    runs = _clip_polyline_runs(pts_raw, ax_bounds[0], ax_bounds[1])
-                    if not runs:
-                        return m.VGroup()
-                    if len(runs) == 1:
-                        curve = m.VMobject()
-                        curve.set_points_as_corners([self._to_point(p[:2], obj.axes_id) for p in runs[0]])
-                        curve.set_stroke(color=color, width=3.2)
-                        return curve
-                    grp = m.VGroup()
-                    for run in runs:
-                        sub = m.VMobject()
-                        sub.set_points_as_corners([self._to_point(p[:2], obj.axes_id) for p in run])
-                        sub.set_stroke(color=color, width=3.2)
-                        grp.add(sub)
-                    return grp
-                scene_pts = [self._to_point(p[:2], obj.axes_id) for p in pts_raw]
-                curve = m.VMobject()
-                curve.set_points_as_corners(scene_pts)
-                curve.set_stroke(color=color, width=3.2)
-                return curve
-            return m.Dot(self._slot_center(obj), color=color)
+            return self._build_data_series_mob(obj, color)
 
         if obj.kind == "particle_system":
             grp = m.VGroup()
@@ -1268,4 +1328,198 @@ class V3Scene(StoryScene):
             pts = [self._to_point(v[:2], obj.axes_id) for v in (obj.vertices or [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])]
             return m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.35, stroke_width=2.8)
 
+        if obj.kind == "vector_field":
+            from studio.ai.simulation import sample_vector_field_grid as _sample_vf
+
+            ax_ref = self.registry.get(obj.axes_id or "")
+            ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+            xr, yr = self.axes_ranges.get(obj.axes_id or "", (obj.x_range or [-3.0, 3.0], obj.y_range or [-3.0, 3.0]))
+            segs = _sample_vf(
+                (obj.dx_expr or obj.expr or "y").strip(),
+                (obj.dy_expr or "-x - 0.25*y").strip(),
+                xr,
+                yr,
+                var_names=getattr(obj, "var_names", None),
+            )
+            grp = m.VGroup()
+            for p0_d, p1_d in segs:
+                sx_p = ax.c2p(p0_d[0], p0_d[1]) if isinstance(ax, m.Axes) else self._to_point(p0_d, obj.axes_id)
+                ex_p = ax.c2p(p1_d[0], p1_d[1]) if isinstance(ax, m.Axes) else self._to_point(p1_d, obj.axes_id)
+                if np.linalg.norm(ex_p - sx_p) >= 0.04:
+                    grp.add(m.Arrow(sx_p, ex_p, buff=0, color=T.text_muted if not getattr(T, "is_light", False) else color, stroke_width=1.8, tip_length=0.10))
+            return grp
+
+        if obj.kind == "mechanical_body":
+            ax_ref = self.registry.get(obj.axes_id or "")
+            ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+            slot_ctr = self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto"))
+            xr_b, yr_b = self.axes_ranges.get(obj.axes_id or "", (obj.x_range or [-2.6, 2.6], obj.y_range or [-1.6, 1.6]))
+            conn = getattr(obj, "connector_kind", "spring") or "spring"
+            anc_raw = obj.anchor_coords or ([-2.3, 0.0] if conn != "rod" else [0.0, 1.3])
+            pos_raw = obj.coords or [0.0, 0.0]
+            sw_key = f"__sweep_{obj.model_id or obj.id}"
+            kfs = list(obj.sweep_keyframes) if getattr(obj, "sweep_keyframes", None) else []
+            init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+            tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+            if kfs:
+                self._model_selected_u.setdefault(sw_key, init_u)
+                self._model_keyframes.setdefault(sw_key, kfs)
+
+            s_cx, s_cy = float(L.stage_center[0]), float(L.stage_center[1])
+            s_left, s_right = s_cx - 0.5 * L.stage_w + 0.35, s_cx + 0.5 * L.stage_w - 0.35
+            s_bot, s_top = s_cy - 0.5 * L.stage_h + 0.35, s_cy + 0.5 * L.stage_h - 0.35
+
+            def _map_coord(xy: list[float]) -> np.ndarray:
+                if isinstance(ax, m.Axes):
+                    p_raw = ax.c2p(float(xy[0]), float(xy[1]))
+                    return np.array([
+                        max(s_left, min(s_right, float(p_raw[0]))),
+                        max(s_bot, min(s_top, float(p_raw[1]))),
+                        0.0,
+                    ])
+                span_x = max(1e-6, float(xr_b[1]) - float(xr_b[0]))
+                span_y = max(1e-6, float(yr_b[1]) - float(yr_b[0]))
+                w_sc = L.stage_w * (0.42 if obj.panel_slot in ("left", "right") else 0.72)
+                h_sc = L.stage_h * (0.38 if obj.panel_slot in ("top", "bottom") else 0.56)
+                nx = (float(xy[0]) - 0.5 * (float(xr_b[0]) + float(xr_b[1]))) / span_x * w_sc
+                ny = (float(xy[1]) - 0.5 * (float(yr_b[0]) + float(yr_b[1]))) / span_y * h_sc
+                p_raw = slot_ctr + np.array([nx, ny, 0.0])
+                return np.array([
+                    max(s_left, min(s_right, float(p_raw[0]))),
+                    max(s_bot, min(s_top, float(p_raw[1]))),
+                    0.0,
+                ])
+
+            def _spring_pts(p0: np.ndarray, p1: np.ndarray, coils: int = 8, amp: float = 0.16) -> list[np.ndarray]:
+                vec = p1 - p0
+                dist_v = float(np.linalg.norm(vec))
+                if dist_v < 1e-4:
+                    return [p0, p1]
+                u_v = vec / dist_v
+                n_v = np.array([-u_v[1], u_v[0], 0.0])
+                pts = [p0, p0 + 0.10 * vec]
+                for c_i in range(coils):
+                    t_c = 0.12 + 0.76 * (c_i + 0.5) / float(coils)
+                    sgn = 1.0 if (c_i % 2 == 0) else -1.0
+                    pts.append(p0 + t_c * vec + sgn * amp * n_v)
+                pts.extend([p0 + 0.90 * vec, p1])
+                return pts
+
+            p_anchor = _map_coord(anc_raw)
+            lbl_s = (obj.label or "m").strip()
+
+            def _mk_mech(t=tracker, frames=kfs, pa=p_anchor, p_init=pos_raw, ck=conn, c_mob=color):
+                cur_xy = p_init
+                if frames:
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
+                    cur_xy = getattr(frames[idx], "body_pos", None) or frames[idx].point or p_init
+                pb = _map_coord(cur_xy)
+                g_mech = m.VGroup()
+                if ck == "rod":
+                    body = m.Circle(radius=0.22, color=c_mob, fill_color=c_mob, fill_opacity=0.85, stroke_width=2.6).move_to(pb)
+                    half_span = 0.22
+                else:
+                    body = m.RoundedRectangle(corner_radius=0.08, width=0.52, height=0.46, color=c_mob, fill_color=c_mob, fill_opacity=0.88, stroke_width=2.5).move_to(pb)
+                    half_span = 0.26
+                vec_ap = pb - pa
+                dist_ap = float(np.linalg.norm(vec_ap))
+                p_edge = (pb - (vec_ap / dist_ap) * half_span) if dist_ap > half_span + 0.04 else pb
+                if ck in ("spring", "spring_damper"):
+                    sp = m.VMobject()
+                    sp.set_points_as_corners(_spring_pts(pa, p_edge, coils=8, amp=0.14))
+                    sp.set_stroke(color=T.text_muted if not getattr(T, "is_light", False) else T.text_primary, width=2.6)
+                    g_mech.add(sp)
+                if ck in ("damper", "spring_damper"):
+                    off = np.array([0.0, -0.22, 0.0]) if ck == "spring_damper" else np.zeros(3)
+                    mid = 0.5 * (pa + p_edge) + off
+                    g_mech.add(m.Line(pa + off, mid, color=T.accent_tertiary, stroke_width=3.0))
+                    g_mech.add(m.Line(mid, p_edge + off, color=T.accent_secondary, stroke_width=2.4))
+                if ck == "rod":
+                    g_mech.add(m.Line(pa, p_edge, color=T.text_primary, stroke_width=2.8))
+                g_mech.add(m.Dot(pa, radius=0.06, color=T.text_muted))
+                g_mech.add(body)
+                if lbl_s:
+                    bt_fs = px_to_manim_font_size(max(30, int(self._px_scale.body_px)), self.profile.pixel_height)
+                    bt = m.Text(lbl_s[:8], font_size=bt_fs, font=CAPTION_FONT, weight="BOLD", color=T.text_primary, **_FONT_KWARGS)
+                    bt.next_to(body, m.UP, buff=0.28)
+                    g_mech.add(bt)
+                return g_mech
+
+            if kfs:
+                mech_mob = m.always_redraw(_mk_mech)
+                mech_mob._param_tracker = tracker  # type: ignore[attr-defined]
+                mech_mob._sweep_key = sw_key  # type: ignore[attr-defined]
+                mech_mob._sweep_keyframes = kfs  # type: ignore[attr-defined]
+                return mech_mob
+            return _mk_mech()
+
         return m.Dot(L.stage_center, color=color)
+
+    def _build_data_series_mob(self, obj: SceneObject, color: str) -> m.Mobject:
+        """Render polyline points_list or animated sweep_keyframes cleanly onto axes or stage."""
+        L = self.layout
+        if getattr(obj, "sweep_keyframes", None):
+            kfs = [kf for kf in obj.sweep_keyframes if kf.curve_pts and len(kf.curve_pts) >= 2]
+            if kfs:
+                sw_key = f"__sweep_{obj.model_id or obj.id}"
+                init_u = float(getattr(obj, "param_init", 0.0) or 0.0)
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(init_u))
+                self._model_selected_u.setdefault(sw_key, init_u)
+                self._model_keyframes.setdefault(sw_key, kfs)
+                ax_ref = self.registry.get(obj.axes_id or "")
+                ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+                ax_b = self.axes_ranges.get(obj.axes_id or "")
+
+                def _mk_sw_curve(t=tracker, frames=kfs, a=ax, bounds=ax_b, c=color):
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(round(u * max(1, len(frames) - 1))))
+                    raw_pts = frames[idx].curve_pts
+                    if bounds is not None and isinstance(a, m.Axes):
+                        runs = _clip_polyline_runs(raw_pts, bounds[0], bounds[1])
+                        use_pts = runs[0] if runs else raw_pts
+                        scene_pts = [a.c2p(p[0], p[1]) for p in use_pts]
+                    elif isinstance(a, m.Axes):
+                        scene_pts = [a.c2p(p[0], p[1]) for p in raw_pts]
+                    else:
+                        scene_pts = [L.stage_center + np.array([p[0], p[1], 0.0]) for p in raw_pts]
+                    curve = m.VMobject()
+                    curve.set_points_as_corners(scene_pts)
+                    curve.set_stroke(color=c, width=3.4)
+                    return curve
+
+                mob = m.always_redraw(_mk_sw_curve)
+                mob._param_tracker = tracker  # type: ignore[attr-defined]
+                mob._sweep_key = sw_key  # type: ignore[attr-defined]
+                mob._sweep_keyframes = kfs  # type: ignore[attr-defined]
+                return mob
+        pts_raw = obj.points_list
+        if not pts_raw and obj.kind == "waveform" and obj.expr:
+            fn_w = compile_expr(obj.expr, ("x",))
+            xr = obj.x_range or [-3.14, 3.14]
+            xs_w = np.linspace(xr[0], xr[1], 120)
+            pts_raw = [[float(xw), float(fn_w(x=float(xw)))] for xw in xs_w]
+        if pts_raw and len(pts_raw) >= 2:
+            ax_bounds = self.axes_ranges.get(obj.axes_id or "")
+            if ax_bounds is not None:
+                runs = _clip_polyline_runs(pts_raw, ax_bounds[0], ax_bounds[1])
+                if not runs:
+                    return m.VGroup()
+                if len(runs) == 1:
+                    curve = m.VMobject()
+                    curve.set_points_as_corners([self._to_point(p[:2], obj.axes_id) for p in runs[0]])
+                    curve.set_stroke(color=color, width=3.2)
+                    return curve
+                grp = m.VGroup()
+                for run in runs:
+                    sub = m.VMobject()
+                    sub.set_points_as_corners([self._to_point(p[:2], obj.axes_id) for p in run])
+                    sub.set_stroke(color=color, width=3.2)
+                    grp.add(sub)
+                return grp
+            scene_pts = [self._to_point(p[:2], obj.axes_id) for p in pts_raw]
+            curve = m.VMobject()
+            curve.set_points_as_corners(scene_pts)
+            curve.set_stroke(color=color, width=3.2)
+            return curve
+        return m.Dot(self._slot_center(obj), color=color)

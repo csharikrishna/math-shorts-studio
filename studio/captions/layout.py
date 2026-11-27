@@ -29,11 +29,34 @@ _CAPTION_STOPWORDS = _ORPHAN_TAILS | {
     "what", "how", "why", "who", "whom", "whose", "into", "onto", "over", "under", "through", "between",
     "written", "look", "see", "watch", "notice", "let", "lets", "say", "make", "makes", "take", "takes",
     "suppose", "leaving", "intact", "listen", "pulls", "sharply", "right", "instead", "guessing",
+    # Non-concept prose words that should never receive accent highlight boxes even if *starred*
+    "capture", "rest", "repeatedly", "strong", "reveal", "reveals", "refuse", "refuses", "forever",
+    "eventually", "imagine", "simple", "simply", "clearly", "directly", "suddenly", "inside", "outside",
+    "around", "together", "another", "different", "higher", "lower", "larger", "smaller", "moving",
+    "turning", "pulling", "scatter", "scattered", "exact", "exactly", "visually", "understand",
+    "means", "shows", "builds", "creates", "becomes", "starts", "ends", "introduces", "introduce",
+    "explains", "explain", "keeps", "remains", "stays", "eventually", "actually", "really", "simply",
 }
 _SOFT_BREAK_BEFORE = {
     "and", "or", "but", "so", "because", "while", "where", "when", "then", "which", "that", "unless", "whereas",
 }
 _MATH_TOKEN_RE = re.compile(r"([=<>+\-*/^_]|lambda|alpha|beta|det|tr|re|im|\d)")
+_CONCEPT_STEMS = (
+    "eigen", "fourier", "spectr", "centr", "winding", "filter", "parseval", "integ", "deriv",
+    "matrix", "vector", "probab", "bayes", "markov", "station", "converg", "reson", "damp",
+    "oscill", "frequ", "amplit", "phase", "energy", "critic", "overdamp", "underdamp",
+    "equilib", "traject", "potenti", "kinetic", "harmonic", "forc", "velocit", "displace",
+    "inerti", "spring", "stiff", "laplac", "jacob", "linear", "curvat", "gradient",
+)
+
+
+def _is_meaningful_concept_word(tok: str, extra_terms: set[str]) -> bool:
+    base = tok.lower().strip(".,!?;:\"'()[]")
+    if not base or base in _CAPTION_STOPWORDS or len(base) <= 1:
+        return False
+    if base in extra_terms or _MATH_TOKEN_RE.search(tok) or any(ch in tok for ch in ("λ", "π", "ω", "σ", "μ", "Δ", "ζ", "γ", "=", "→", "|")):
+        return True
+    return any(stem in base for stem in _CONCEPT_STEMS)
 
 
 def extract_semantic_emphasis_tokens(
@@ -41,24 +64,19 @@ def extract_semantic_emphasis_tokens(
     *,
     semantic_terms: Iterable[str] | None = None,
 ) -> set[str]:
-    """Identify domain/mathematical concept words in text while excluding everyday stopwords."""
+    """Identify high-signal mathematical/concept tokens from concept refs and script emphasis, excluding prose filler."""
     raw = str(text or "")
     out: set[str] = set()
-    # Explicit *starred* markers take highest priority
+    extra = {str(t).lower().strip(".,!?;:\"'()[]") for t in (semantic_terms or []) if str(t).strip()}
     for m_star in re.finditer(r"\*([^*\n]{1,40})\*", raw):
         for w in m_star.group(1).split():
-            cl = w.lower().strip(".,!?;:\"'()")
-            if cl and cl not in _CAPTION_STOPWORDS:
+            cl = w.lower().strip(".,!?;:\"'()[]")
+            if cl and cl not in _CAPTION_STOPWORDS and (_is_meaningful_concept_word(w, extra) or not extra):
                 out.add(cl)
-    extra = {str(t).lower().strip(".,!?;:\"'()") for t in (semantic_terms or []) if str(t).strip()}
     clean_words = re.sub(r"<bookmark\b[^>]*>|\*", "", raw).split()
     for w in clean_words:
         base = w.lower().strip(".,!?;:\"'()[]")
-        if not base or base in _CAPTION_STOPWORDS or len(base) <= 1:
-            continue
-        if base in extra or _MATH_TOKEN_RE.search(w) or any(ch in w for ch in ("λ", "π", "ω", "σ", "μ", "Δ", "=", "→", "|")):
-            out.add(base)
-        elif any(stem in base for stem in ("eigen", "fourier", "spectr", "centr", "winding", "filter", "parseval", "integ", "deriv", "matrix", "vector", "probab", "bayes", "markov", "station", "converg", "reson", "damp", "oscill", "frequ", "amplit", "phase", "energy")):
+        if _is_meaningful_concept_word(w, extra):
             out.add(base)
     return out
 
@@ -197,7 +215,9 @@ def chunk_caption_cues(
                     prov = "tts_word_boundary"
                 base_tok = tok.lower().strip(".,!?;:\"'()[]")
                 raw_emph = bool(w[3]) if len(w) > 3 else False
-                is_emph = (base_tok not in _CAPTION_STOPWORDS) and (raw_emph or base_tok in sem_tokens)
+                is_emph = (base_tok not in _CAPTION_STOPWORDS) and (
+                    base_tok in sem_tokens or (raw_emph and _is_meaningful_concept_word(tok, sem_tokens))
+                )
                 timed_words.append(
                     CaptionWord(
                         text=tok,
@@ -309,6 +329,11 @@ def build_caption_ir(
         for b in beat_list
     }
     prov_counts: dict[str, int] = {}
+    repairs_all: list[dict] = []
+    raw_ev_count = 0
+    for b in beat_list:
+        raw_ev_count += len(getattr(b, "raw_word_boundaries", []) or [])
+        repairs_all.extend(list(getattr(b, "timing_repairs", []) or []))
     for c in cues:
         for w in c.words:
             prov_counts[w.timing_provenance] = prov_counts.get(w.timing_provenance, 0) + 1
@@ -324,6 +349,8 @@ def build_caption_ir(
         cues=cues,
         preset=preset,
         timing_provenance_counts=prov_counts,
+        raw_timing_evidence_count=raw_ev_count,
+        timing_repairs=repairs_all,
     )
 
 
@@ -344,6 +371,8 @@ def merge_chapter_caption_irs(
     merged_cues: list[CaptionCue] = []
     sp_labels: dict[str, str] = {}
     prov_counts: dict[str, int] = {}
+    repairs_all: list[dict] = []
+    raw_ev_total = 0
     src_hashes: list[str] = []
     max_w = 0.0
     res_band = 0
@@ -365,6 +394,11 @@ def merge_chapter_caption_irs(
         max_w = max(max_w, float(ir_obj.max_width_px))
         res_band = max(res_band, int(ir_obj.reserve_band_px))
         font_px = max(font_px, int(ir_obj.font_px))
+        raw_ev_total += int(getattr(ir_obj, "raw_timing_evidence_count", 0) or 0)
+        for rep in getattr(ir_obj, "timing_repairs", []) or []:
+            rep_c = dict(rep)
+            rep_c["chapter_id"] = ch_id
+            repairs_all.append(rep_c)
         for k, v in (ir_obj.timing_provenance_counts or {}).items():
             prov_counts[k] = prov_counts.get(k, 0) + int(v)
         for c in ir_obj.cues:
@@ -399,6 +433,8 @@ def merge_chapter_caption_irs(
         cues=merged_cues,
         preset=preset,
         timing_provenance_counts=prov_counts,
+        raw_timing_evidence_count=raw_ev_total,
+        timing_repairs=repairs_all,
         source_timeline_hash=_hashlib.sha256("|".join(src_hashes).encode("utf-8")).hexdigest()[:16],
     )
 
@@ -424,11 +460,15 @@ def export_caption_ir_files(
     d = _Path(str(out_dir))
     d.mkdir(parents=True, exist_ok=True)
     cap_p = d / "caption_ir.json"
+    cap_stem_p = d / f"{stem}_caption_ir.json"
     srt_p = d / f"{stem}.srt"
     vtt_p = d / f"{stem}.vtt"
     ass_p = d / f"{stem}.ass"
 
-    cap_p.write_text(ir.model_dump_json(indent=2), encoding="utf-8")
+    cap_txt = ir.model_dump_json(indent=2)
+    cap_p.write_text(cap_txt, encoding="utf-8")
+    if cap_stem_p != cap_p:
+        cap_stem_p.write_text(cap_txt, encoding="utf-8")
     srt_lines: list[str] = []
     vtt_lines: list[str] = ["WEBVTT", ""]
     for idx, c in enumerate(ir.cues, 1):
@@ -438,4 +478,4 @@ def export_caption_ir_files(
     srt_p.write_text("\n".join(srt_lines), encoding="utf-8")
     vtt_p.write_text("\n".join(vtt_lines), encoding="utf-8")
     export_ass(ir, ass_p, look_name=look_name)
-    return {"caption_ir": str(cap_p), "srt": str(srt_p), "vtt": str(vtt_p), "ass": str(ass_p)}
+    return {"caption_ir": str(cap_p), "caption_ir_stem": str(cap_stem_p), "srt": str(srt_p), "vtt": str(vtt_p), "ass": str(ass_p)}

@@ -58,12 +58,31 @@ def build_runtime_js(payload_json: str) -> str:
     return {{ activeBeat, activeIdx }};
   }}
 
-  function sweepIdxFor(el, t) {{
+  function sweepUFor(el, t) {{
     if (!el.sweep_frames_px || !el.sweep_frames_px.length) return -1;
-    const t0 = el.sweep_t0 !== undefined ? el.sweep_t0 : el.show_at;
-    const t1 = el.sweep_t1 !== undefined ? el.sweep_t1 : Math.max(t0 + 0.5, el.hide_at - 0.1);
-    const u = clamp01((t - t0) / Math.max(0.25, t1 - t0));
-    return Math.min(el.sweep_frames_px.length - 1, Math.floor(u * (el.sweep_frames_px.length - 0.001)));
+    const segs = el.sweep_segments || [];
+    if (segs.length) {{
+      let curU = segs[0].u0 !== undefined ? segs[0].u0 : (el.selected_u || 0);
+      for (const s of segs) {{
+        if (t < s.t0) break;
+        if (t >= s.t0 && t <= s.t1) {{
+          const p = clamp01((t - s.t0) / Math.max(0.15, s.t1 - s.t0));
+          return clamp01(s.u0 + (s.u1 - s.u0) * p);
+        }}
+        curU = s.u1;
+      }}
+      return clamp01(curU);
+    }}
+    if (el.sweep_t0 !== undefined && el.sweep_t1 !== undefined) {{
+      return clamp01((t - el.sweep_t0) / Math.max(0.25, el.sweep_t1 - el.sweep_t0));
+    }}
+    return el.selected_u !== undefined ? clamp01(el.selected_u) : 0;
+  }}
+
+  function sweepIdxFor(el, t) {{
+    const u = sweepUFor(el, t);
+    if (u < 0 || !el.sweep_frames_px || !el.sweep_frames_px.length) return -1;
+    return Math.min(el.sweep_frames_px.length - 1, Math.round(u * (el.sweep_frames_px.length - 1)));
   }}
 
   function cameraViewBoxAt(t) {{
@@ -126,7 +145,7 @@ def build_runtime_js(payload_json: str) -> str:
         extra = `:${{Math.max(2, Math.floor(el.polyline.length * p))}}:${{swi}}`;
       }} else if (el.kind === "point" && el.sweep_frames_px && el.sweep_frames_px.length) {{
         extra = `:sw${{sweepIdxFor(el, t)}}`;
-      }} else if ((el.kind === "vector" || el.kind === "annotation") && el.sweep_frames_px && el.sweep_frames_px.length) {{
+      }} else if ((el.kind === "vector" || el.kind === "annotation" || el.kind === "mechanical_body" || el.kind === "bar_chart") && el.sweep_frames_px && el.sweep_frames_px.length) {{
         extra = `:sw${{sweepIdxFor(el, t)}}`;
       }} else if (el.kind === "point" && el.orbit && el.orbit.length > 1) {{
         const oIdx = Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))));
@@ -285,12 +304,18 @@ def build_runtime_js(payload_json: str) -> str:
         svgTarget.appendChild(svgEl("line", attrs));
       }} else if (el.kind === "bar_chart" && el.bars) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
+        const swiB = sweepIdxFor(el, t);
+        const liveVals = (swiB >= 0 && el.sweep_frames_px[swiB] && el.sweep_frames_px[swiB].bar_values && el.sweep_frames_px[swiB].bar_values.length === el.bars.length)
+          ? el.sweep_frames_px[swiB].bar_values
+          : null;
+        const maxLive = liveVals ? Math.max(...liveVals.map(v => Math.abs(v)), el.bars_max_val || 1e-6) : 1;
         const n = el.bars.length;
         const colW = bw / Math.max(1, n);
         const baseY = by + bh * 0.85;
         const maxH = bh * 0.68;
         el.bars.forEach((b, i) => {{
-          const barH = Math.max(2, b.frac * maxH * p);
+          const fracUse = liveVals ? (Math.abs(liveVals[i]) / maxLive) : b.frac;
+          const barH = Math.max(2, fracUse * maxH * (swiB >= 0 ? 1 : p));
           const x = bx + i * colW + colW * 0.18;
           g.appendChild(svgEl("rect", {{ x: x, y: baseY - barH, width: Math.max(6, colW * 0.64), height: barH, fill: el.color, rx: 4 }}));
           if (i % Math.max(1, Math.ceil(n / 8)) === 0) {{
@@ -299,6 +324,52 @@ def build_runtime_js(payload_json: str) -> str:
             g.appendChild(txt);
           }}
         }});
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "vector_field" && el.field_arrows) {{
+        const g = svgEl("g", {{ opacity: p * 0.85, "data-hf-elem": el.id }});
+        for (const a of el.field_arrows) {{
+          g.appendChild(svgEl("line", {{ x1: a[0], y1: a[1], x2: a[2], y2: a[3], stroke: el.color, "stroke-width": 2, "marker-end": "url(#hf-arrow)" }}));
+        }}
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "mechanical_body" && el.mech) {{
+        const swiM = sweepIdxFor(el, t);
+        const bodyPt = (swiM >= 0 && el.sweep_frames_px[swiM] && el.sweep_frames_px[swiM].body_px && el.sweep_frames_px[swiM].body_px.length >= 2)
+          ? el.sweep_frames_px[swiM].body_px
+          : el.mech.body_px;
+        const ancPt = el.mech.anchor_px;
+        const ck = el.mech.connector || "spring";
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
+        const dx = bodyPt[0] - ancPt[0], dy = bodyPt[1] - ancPt[1];
+        const distM = Math.hypot(dx, dy) || 1;
+        if (ck === "spring" || ck === "spring_damper") {{
+          const ux = dx / distM, uy = dy / distM, nx = -uy, ny = ux;
+          const ptsS = [`${{ancPt[0]}},${{ancPt[1]}}`, `${{(ancPt[0] + dx * 0.1).toFixed(1)}},${{(ancPt[1] + dy * 0.1).toFixed(1)}}`];
+          for (let ci = 0; ci < 8; ci++) {{
+            const tc = 0.12 + 0.76 * (ci + 0.5) / 8;
+            const sgn = ci % 2 === 0 ? 1 : -1;
+            ptsS.push(`${{(ancPt[0] + dx * tc + nx * sgn * 14).toFixed(1)}},${{(ancPt[1] + dy * tc + ny * sgn * 14).toFixed(1)}}`);
+          }}
+          ptsS.push(`${{(ancPt[0] + dx * 0.9).toFixed(1)}},${{(ancPt[1] + dy * 0.9).toFixed(1)}}`, `${{bodyPt[0]}},${{bodyPt[1]}}`);
+          g.appendChild(svgEl("polyline", {{ points: ptsS.join(" "), fill: "none", stroke: DATA.look.ink_muted, "stroke-width": 3 }}));
+        }}
+        if (ck === "damper" || ck === "spring_damper") {{
+          const offY = ck === "spring_damper" ? 22 : 0;
+          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1] + offY, x2: bodyPt[0], y2: bodyPt[1] + offY, stroke: DATA.look.accent_secondary, "stroke-width": 3, "stroke-dasharray": "6 4" }}));
+        }}
+        if (ck === "rod") {{
+          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1], x2: bodyPt[0], y2: bodyPt[1], stroke: DATA.look.ink_primary, "stroke-width": 3 }}));
+        }}
+        g.appendChild(svgEl("circle", {{ cx: ancPt[0], cy: ancPt[1], r: 7, fill: DATA.look.ink_muted }}));
+        if (ck === "rod") {{
+          g.appendChild(svgEl("circle", {{ cx: bodyPt[0], cy: bodyPt[1], r: 24, fill: el.color, stroke: DATA.look.ground, "stroke-width": 2.5 }}));
+        }} else {{
+          g.appendChild(svgEl("rect", {{ x: bodyPt[0] - 26, y: bodyPt[1] - 24, width: 52, height: 48, rx: 8, fill: el.color, stroke: DATA.look.ground, "stroke-width": 2.5 }}));
+        }}
+        if (el.label) {{
+          const lb = svgEl("text", {{ x: bodyPt[0], y: bodyPt[1] + 6, fill: DATA.look.ground, "font-size": 18, "font-weight": "700", "text-anchor": "middle" }});
+          lb.textContent = el.label.slice(0, 8);
+          g.appendChild(lb);
+        }}
         svgTarget.appendChild(g);
       }} else if (el.kind === "graph_network" && el.network) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
@@ -377,8 +448,9 @@ def build_runtime_js(payload_json: str) -> str:
         tbl.className = "hf-table";
         tbl.setAttribute("data-hf-elem", el.id);
         tbl.style.opacity = String(p);
-        tbl.style.left = `${{Math.round(bx + 20)}}px`;
-        tbl.style.top = `${{Math.round(by + 30)}}px`;
+        tbl.style.left = `${{Math.round(bx + bw * 0.5)}}px`;
+        tbl.style.top = `${{Math.round(by + bh * 0.48)}}px`;
+        tbl.style.transform = "translate(-50%, -50%)";
         if (el.headers && el.headers.length) {{
           const tr = document.createElement("tr");
           for (const h of el.headers) {{ const th = document.createElement("th"); th.textContent = h; tr.appendChild(th); }}

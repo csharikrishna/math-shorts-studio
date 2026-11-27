@@ -127,6 +127,7 @@ def compile_plan_to_html(
     meta_map_hf: dict[str, list[dict[str, Any]]] = {}
     zoom_events: list[dict[str, Any]] = []
     obj_by_id: dict[str, Any] = {}
+    swept_model_u: dict[str, float] = {}
 
     for s_idx, sc in enumerate(plan.scenes):
         for _o in sc.objects:
@@ -180,7 +181,7 @@ def compile_plan_to_html(
                         continue
                     if is_split_keep and el.get("axes_id") and any(p.get("id") == el.get("axes_id") and p.get("panel_slot") in ("left", "top") for p in elements_payload):
                         continue
-                    if el["kind"] in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series"):
+                    if el["kind"] in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series", "mechanical_body", "vector_field", "equation"):
                         el["hide_at"] = round(t_start, 4)
                         if el["kind"] == "axes":
                             retired_axes.add(el["id"])
@@ -203,6 +204,8 @@ def compile_plan_to_html(
         ann_idx_local = 0
         for obj in sc.objects:
             hide_at = round(t_total + 1.0, 4) if obj.persist else round(t_end, 4)
+            if any(e.op == "remove" and e.target_id == obj.id for e in sc.events):
+                hide_at = round(t_start + min(0.4, mt.exit_s), 4)
             obj_show = event_show_at.get(obj.id, t_start)
             el, ann_idx_local = compile_scene_object_element(
                 obj,
@@ -220,18 +223,40 @@ def compile_plan_to_html(
             )
             elements_payload.append(el)
 
-        # Compile state-changing transform events (move, rotate, scale, zoom) + sweep windows into keyframed pixel transforms
+        # Compile state-changing transform events (move, rotate, scale, zoom) + synchronized sweep state segments
+        scene_swept_models: set[str] = set()
         for ev in sc.events:
-            if ev.op in ("animate_param", "iterate_states", "interpolate_values"):
+            if ev.op in ("animate_param", "set_param", "iterate_states", "interpolate_values"):
                 sw_t0 = float(marks_for_scene[ev.anchor_mark]) if (ev.anchor_mark and ev.anchor_mark in marks_for_scene) else (t_start + 0.15)
-                sw_dur = max(0.8, float(ev.duration_s or max(1.4, (t_end - sw_t0) * 0.85)))
+                sw_dur = max(0.35 if ev.op == "set_param" else 0.8, float(ev.duration_s or (0.55 if ev.op == "set_param" else max(1.4, (t_end - sw_t0) * 0.85))))
                 sw_t1 = round(min(t_end - 0.05, sw_t0 + sw_dur), 4)
+                tgt_obj = obj_by_id.get(ev.target_id)
+                t_mid = str(getattr(tgt_obj, "model_id", "") or ev.target_id)
+                u0_cur = float(swept_model_u.get(t_mid, 0.0))
+                if ev.op == "set_param" and ev.target_param is not None:
+                    # Resolve normalized u corresponding to target_param inside sweep keyframes
+                    kfs = getattr(tgt_obj, "sweep_keyframes", []) or []
+                    if kfs:
+                        best_i = min(range(len(kfs)), key=lambda i: abs(float(kfs[i].param) - float(ev.target_param)))
+                        u1_val = float(kfs[best_i].u if kfs[best_i].u is not None else (best_i / max(1, len(kfs) - 1)))
+                    else:
+                        u1_val = float(ev.target_param)
+                    u0_val = u0_cur
+                elif ev.param_range and len(ev.param_range) == 2:
+                    u0_val, u1_val = float(ev.param_range[0]), float(ev.param_range[1])
+                else:
+                    u0_val, u1_val = (u0_cur if ev.op == "set_param" else 0.0), 1.0
+                scene_swept_models.add(t_mid)
+                swept_model_u[t_mid] = u1_val
+                seg_rec = {"t0": round(sw_t0, 4), "t1": max(round(sw_t0 + 0.25, 4), sw_t1), "u0": round(u0_val, 6), "u1": round(u1_val, 6)}
                 for el in elements_payload:
                     if el["hide_at"] <= t_start:
                         continue
-                    if el.get("sweep_frames_px") and (el["id"] == ev.target_id or getattr(obj_by_id.get(el["id"]), "model_id", None) == getattr(obj_by_id.get(ev.target_id), "model_id", "__none__")):
-                        el["sweep_t0"] = round(sw_t0, 4)
-                        el["sweep_t1"] = max(round(sw_t0 + 0.35, 4), sw_t1)
+                    el_mid = str(el.get("model_id") or el["id"])
+                    if el.get("sweep_frames_px") and (el["id"] == ev.target_id or el_mid == t_mid):
+                        el.setdefault("sweep_segments", []).append(seg_rec)
+                        el["sweep_t0"] = seg_rec["t0"]
+                        el["sweep_t1"] = seg_rec["t1"]
                 continue
             if ev.op not in ("move", "rotate", "scale", "zoom"):
                 continue
@@ -270,6 +295,30 @@ def compile_plan_to_html(
                     continue
                 if el["id"] == ev.target_id:
                     el.setdefault("transforms", []).append(tx_record)
+
+        # Synchronize persisted swept models cleanly back to active_model_params or canonical selected_u on subsequent beats
+        active_params_sc = dict(getattr(sc, "active_model_params", {}) or {})
+        for mid_k, prev_u in list(swept_model_u.items()):
+            if mid_k in scene_swept_models:
+                continue
+            live_with_model = [el for el in elements_payload if el["hide_at"] > t_start and el.get("sweep_frames_px") and (el.get("model_id") == mid_k or el["id"] == mid_k)]
+            if not live_with_model:
+                continue
+            tgt_u: float | None = None
+            if mid_k in active_params_sc:
+                f_tgt = float(active_params_sc[mid_k])
+                kfs_el = live_with_model[0].get("sweep_frames_px") or []
+                if kfs_el:
+                    best = min(kfs_el, key=lambda kf: abs(float(kf.get("param", 0.0)) - f_tgt))
+                    tgt_u = float(best.get("u", live_with_model[0].get("selected_u", 0.0)))
+            elif abs(prev_u - float(live_with_model[0].get("selected_u", 0.0))) > 1e-4:
+                tgt_u = float(live_with_model[0].get("selected_u", 0.0))
+            if tgt_u is not None and abs(tgt_u - prev_u) > 1e-4:
+                t_reset1 = round(min(t_end - 0.15, t_start + 0.55), 4)
+                reset_seg = {"t0": round(t_start, 4), "t1": max(round(t_start + 0.25, 4), t_reset1), "u0": round(prev_u, 6), "u1": round(tgt_u, 6)}
+                for el in live_with_model:
+                    el.setdefault("sweep_segments", []).append(reset_seg)
+                swept_model_u[mid_k] = tgt_u
 
         if active_eq:
             latest_eq_id = active_eq[-1].id

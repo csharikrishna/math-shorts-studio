@@ -120,3 +120,37 @@ Topic generated autonomously **without any topic-specific core code**: `"Damped 
 - **Gemini Schema & Prompt Deduplication (`studio/providers/gemini.py`, `studio/ai/director.py`, `studio/longform.py`):** Pre-cached JSON-mode-only schemas (`_JSON_MODE_ONLY_SCHEMAS` + `_COMPACT_SCHEMA_CACHE`) so `VideoPlanV3` calls skip doomed constrained-decoding roundtrips (`400 too many states`), switched `429` errors immediately to fallback models without sleeping `4 s`, and removed duplicate `system_prompt` / `ch_system` prefixes from user messages.
 - **Hybrid `video_only` Segments & GPU NVENC Concat (`studio/renderers/hyperframes/assembly.py`, `studio/renderers/hyperframes/capture.py`, `studio/renderers/hybrid.py`, `studio/pipeline.py`, `studio/longform.py`):** Added `video_only=True` segment rendering (skipping discarded SFX/BGM/loudnorm Pass 1 + manifest writes), loopback Chrome readiness polling (`0.02s` steps), `-an` + `h264_nvenc` concat, thread-safe `_V3_SCENE_ENV_LOCK` around scene imports, and 2-worker `hybrid` chapter parallelism (`STUDIO_HYB_WORKERS`).
 - **Measured Hybrid Benchmark Gain (`46.90 s` 1080p60 Fourier linked render):** Dropped from **`50.97 s`** (`1.20x` real-time on `42.50 s` video) to **`38.81 s`** (`0.83x` real-time on `46.90 s` video — **`~1.44x` faster per video second**; `loud=passed`, `stream=passed`, `manifest=True`).
+
+---
+
+## 8. V4.0 Simulation-Driven Educational Filmmaking & Held-Out Verification
+
+Measured after V4.0 implementation on local Windows hardware (**NVIDIA GeForce GTX 1650 `4096 MiB` (`h264_nvenc`), Local Kokoro-82M CPU TTS, offline Chromium CDP + vendored KaTeX `0.19.1`, free Gemini API**). All final artifacts are manifest-verified (`identity_verified=True`, `stream_and_assets_complete=True`).
+
+### A. 5-Target Fourier V4.0 Linked-Visualization Re-Benchmark (`s3_centroid` 2.0 Hz Sync & Endpoint-Exclusive DFT Peaks)
+
+| Output Artifact | Backend / Theme / Caption | Duration & Size | Wall-Clock / Peak RSS | QA Outcome & Manifest Certification |
+| --- | --- | --- | --- | --- |
+| `output/V40_fourier_hf_light_widescreen_hd.mp4` | `hyperframes` / `editorial_light` / `editorial` | `41.90 s` (`2,335,268 B`) | `42.002 s` / `1311.66 MB` | **`100.0/100`** (`publication_approved`, `certified=True`) |
+| `output/V40_fourier_hf_dark_widescreen_hd.mp4` | `hyperframes` / `midnight_studio` / `editorial` | `41.90 s` (`2,432,579 B`) | `36.976 s` (`36.969 s` warm) / `1317.09 MB` | **`100.0/100`** (`publication_approved`, `certified=True`) |
+| `output/V40_fourier_mgx_dark_widescreen_hd.mp4` | `manimgx` / `midnight_studio` / `editorial` | `46.60 s` (`2,305,214 B`) | `33.573 s` / `1321.43 MB` | **`100.0/100`** (`publication_approved`, `certified=True`) |
+| `output/V40_fourier_hyb_dark_widescreen_hd.mp4` | `hybrid` / `midnight_studio` / `editorial` | `41.90 s` (`2,237,635 B`) | `76.016 s` / `1315.90 MB` | **`100.0/100`** (`publication_approved`, `certified=True`) |
+| `output/V40_fourier_short_portrait_shorts_hd.mp4` | `manimgx` / `midnight_studio` / `kinetic` (`9:16`) | `46.60 s` (`3,224,210 B`) | `35.530 s` / `1323.95 MB` | **`100.0/100`** (`publication_approved`, `certified=True`) |
+
+### B. Regenerated Harmonic Oscillator Documentary & Derived Portrait Short (Simulation Engine + Scientific Components)
+
+Topic: `"Damped Harmonic Oscillators, Resonance Curves, and Phase Portraits"` (`editorial_light`, `7` chapters, `16` scenes, zero topic-specific code).
+
+| Deliverable | Configuration & Output | Duration & Size | Cold vs. Warm Wall Time (Speedup) | Media, Motion & Honest QA Status |
+| --- | --- | --- | --- | --- |
+| **Derived Portrait Short** | `manimgx` / `editorial_light` / `kinetic` (`SHORT_damped_harmonic_oscillators_resonance_curves_and_shorts_hd.mp4`) | `40.00 s` (`2,325,325 B`) | `21.326 s` | `1080x1920 @ 60 fps`, `edge_clips=0`, `empty_mids=0`; **`100.0/100`** (`publication_approved`, `certified=True`) |
+| **Full Documentary** | `hybrid` / `editorial_light` / `editorial` (`LF_damped_harmonic_oscillators_resonance_curves_and_widescreen_hd.mp4`) | `273.52 s` (`9,853,627 B`, `7` ch, `16` sc) | `369.572 s` cold -> **`27.155 s`** warm (**`13.6x`**) / `4272.87 MB` peak RSS | `-15.1 LUFS`, `-2.2 dBFS`, `drift=0.00 s`, `585` TTS words (`94` cues), `animated_scenes=12/16`, `det_verified=14`, `num_tested=15`, `unsupported=0`, `failed=0`, `edge_clips=0`, `empty_mids=0`; **`72.0/100`** (`review_required` — `3` warnings: `c3__scene_2` low pixel delta + `+14.0%` duration vs `240s` target; improved from V3.9 `54.0/100 rejected`) |
+
+### C. Held-Out Unseen Nonlinear ODE Topic (Lotka-Volterra Predator-Prey) on Frozen V4.0 Core
+
+Topic generated completely autonomously with zero core edits for the topic: `"Lotka-Volterra Predator-Prey Oscillations and Phase Orbits"` (`midnight_studio`, `5` chapters, `14` scenes, `target_duration_s=180.0`, `provider_requests=15`, `tokens=50,150`).
+
+| Deliverable | Configuration & Output | Duration & Size | Cold vs. Warm Wall Time (Speedup) | Media, Motion & Honest QA Status |
+| --- | --- | --- | --- | --- |
+| **Derived Portrait Short** | `manimgx` / `midnight_studio` / `kinetic` (`SHORT_lotka_volterra_predator_prey_oscillations_and_ph_shorts_hd.mp4`) | `37.40 s` (`2,071,459 B`, `3` sc) | `50.203 s` (`4.903 s` QA) / `1924.12 MB` | `1080x1920 @ 60 fps`, `-15.1 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `15` frames (`edge_clips=0`, `empty_mids=0`), `84` TTS words (`15` cues), `det_verified=3`, `num_tested=2`; **`94.0/100`** (`publication_approved`, `certified=True`) |
+| **Full Documentary** | `hybrid` / `midnight_studio` / `editorial` (`LF_lotka_volterra_predator_prey_oscillations_and_ph_widescreen_hd.mp4`) | `185.32 s` vs `180.0 s` (`+2.9%`, `6,571,762 B`, `14` sc) | `269.622 s` cold (`108.27s` TTS, `134.91s` render, `6.30s` asm, `19.77s` QA) -> **`26.155 s`** warm (**`10.3x`**) / `4349.17 MB` | `1920x1080 @ 60 fps`, `-15.1 LUFS`, `-1.9 dBFS`, `drift=0.00 s`, `49` frames (`14/14` scenes, `edge_clips=0`, `empty_mids=0`, `median_stage_w=70.1%`), `411` TTS words (`61` cues), `animated_scenes=10/14`, `det_verified=10`, `num_tested=9`, `unsupported=0`, `failed=0`; **`78.0/100`** (`review_required` — `c3__scene_2` low pixel delta warning) |

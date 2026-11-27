@@ -114,7 +114,9 @@ def compile_scene_object_element(
         "kind": obj.kind,
         "axes_id": obj.axes_id,
         "panel_slot": getattr(obj, "panel_slot", "auto") or "auto",
+        "model_id": obj.model_id or "",
         "model_output": obj.model_output or "",
+        "selected_u": round(float(getattr(obj, "param_init", 0.0) or 0.0), 6),
         "color": col,
         "show_at": t_start,
         "hide_at": hide_at,
@@ -129,18 +131,25 @@ def compile_scene_object_element(
         ],
     }
 
-    if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "readout", "trajectory", "end_point"):
-        xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (default_geom_xr, default_geom_yr, box))
+    if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "restoring_force", "spectrum_peak", "time_point", "mechanical_body", "body_point", "phase_orbit", "energy_bars", "readout", "trajectory", "loss_curve", "end_point"):
+        xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (obj.x_range or default_geom_xr, obj.y_range or default_geom_yr, box))
         sw_px: list[dict[str, Any]] = []
-        for kf in obj.sweep_keyframes:
-            pt_sel = kf.spec_point if (obj.model_output == "spectrum_peak" and kf.spec_point) else kf.point
+        n_kf = max(1, len(obj.sweep_keyframes) - 1)
+        for ki, kf in enumerate(obj.sweep_keyframes):
+            pt_sel = kf.spec_point if (obj.model_output in ("spectrum_peak", "time_point") and kf.spec_point) else kf.point
+            vec_st = getattr(kf, "vector_start", None) or [0.0, 0.0]
+            body_raw = getattr(kf, "body_pos", None) or kf.point
+            u_val = float(kf.u) if getattr(kf, "u", None) is not None else (ki / float(n_kf))
             sw_px.append(
                 {
                     "param": round(float(kf.param), 4),
+                    "u": round(u_val, 6),
                     "point_px": list(_to_px(pt_sel, ax_sw, xr_sw, yr_sw)) if len(pt_sel) >= 2 else [],
-                    "vec_start_px": list(_to_px([0.0, 0.0], ax_sw, xr_sw, yr_sw)),
+                    "body_px": list(_to_px(body_raw, ax_sw, xr_sw, yr_sw)) if len(body_raw) >= 2 else [],
+                    "vec_start_px": list(_to_px(vec_st, ax_sw, xr_sw, yr_sw)),
                     "vec_end_px": list(_to_px(kf.vector_end, ax_sw, xr_sw, yr_sw)) if len(kf.vector_end) >= 2 else [],
-                    "polyline_px": [list(_to_px(q[:2], ax_sw, xr_sw, yr_sw)) for q in kf.curve_pts] if (kf.curve_pts and obj.model_output == "winding_curve") else [],
+                    "polyline_px": [list(_to_px(q[:2], ax_sw, xr_sw, yr_sw)) for q in kf.curve_pts] if (kf.curve_pts and obj.model_output in ("winding_curve", "phase_orbit", "trajectory", "loss_curve")) else [],
+                    "bar_values": [round(float(v), 5) for v in (getattr(kf, "bar_values", None) or [])],
                     "label": kf.label,
                 }
             )
@@ -169,7 +178,9 @@ def compile_scene_object_element(
         el["polyline"] = [_clamp_pt(pt) for pt in raw_pts]
     elif obj.kind == "bar_chart" and obj.values:
         vals = [float(v) for v in obj.values]
-        mx = max((abs(v) for v in vals), default=1.0) or 1.0
+        sw_max = max((abs(float(bv)) for kf in (getattr(obj, "sweep_keyframes", []) or []) for bv in (getattr(kf, "bar_values", []) or [])), default=0.0)
+        mx = max(max((abs(v) for v in vals), default=1.0), sw_max) or 1.0
+        el["bars_max_val"] = round(mx, 5)
         el["bars"] = [
             {"label": obj.bar_labels[i] if i < len(obj.bar_labels) else str(i), "val": v, "frac": round(abs(v) / mx, 4)}
             for i, v in enumerate(vals)
@@ -237,16 +248,55 @@ def compile_scene_object_element(
         el["headers"] = obj.table_headers
         el["rows"] = obj.table_rows
     elif obj.kind == "graph_network":
+        import math as _m
+
         xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (default_geom_xr, default_geom_yr, box))
+        pts_net = list(obj.points_list)
+        edges_net = list(obj.edge_pairs)
+        if not pts_net and obj.node_labels:
+            n_lbls = len(obj.node_labels)
+            if n_lbls <= 4:
+                pts_net = [[float(-1.8 + 3.6 * i / max(1, n_lbls - 1)), 0.0] for i in range(n_lbls)]
+                edges_net = [[str(i), str(i + 1)] for i in range(n_lbls - 1)]
+            else:
+                pts_net = [[round(1.6 * _m.cos(2 * _m.pi * i / n_lbls), 3), round(1.3 * _m.sin(2 * _m.pi * i / n_lbls), 3)] for i in range(n_lbls)]
+                edges_net = [[str(i), str((i + 1) % n_lbls)] for i in range(n_lbls)]
         el["network"] = {
-            "nodes": [_to_px(p[:2], ax_box, xr, yr) for p in obj.points_list],
+            "nodes": [_to_px(p[:2], ax_box, xr, yr) for p in pts_net],
             "labels": obj.node_labels,
-            "edges": obj.edge_pairs,
+            "edges": edges_net,
         }
     elif obj.kind == "particle_system":
         xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (default_geom_xr, default_geom_yr, box))
         el["particles"] = [_to_px(p[:2], ax_box, xr, yr) for p in obj.points_list]
     elif obj.kind == "number_line":
         el["number_line"] = {"xr": (obj.x_range or [-4.0, 4.0])[:2]}
+    elif obj.kind == "vector_field":
+        from studio.ai.simulation import sample_vector_field_grid as _sample_vf
+
+        xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (obj.x_range or [-3.0, 3.0], obj.y_range or [-3.0, 3.0], box))
+        segs = _sample_vf(
+            (obj.dx_expr or obj.expr or "y").strip(),
+            (obj.dy_expr or "-x - 0.25*y").strip(),
+            xr,
+            yr,
+            var_names=getattr(obj, "var_names", None),
+        )
+        arrows_px: list[list[float]] = []
+        for p0_d, p1_d in segs:
+            p0 = _to_px(p0_d, ax_box, xr, yr)
+            p1 = _to_px(p1_d, ax_box, xr, yr)
+            arrows_px.append([p0[0], p0[1], p1[0], p1[1]])
+        el["field_arrows"] = arrows_px
+    elif obj.kind == "mechanical_body":
+        xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (obj.x_range or [-2.6, 2.6], obj.y_range or [-1.6, 1.6], box))
+        conn = getattr(obj, "connector_kind", "spring") or "spring"
+        anc = obj.anchor_coords or ([-2.3, 0.0] if conn != "rod" else [0.0, 1.3])
+        bpos = obj.coords or [0.0, 0.0]
+        el["mech"] = {
+            "connector": conn,
+            "anchor_px": list(_to_px(anc, ax_box, xr, yr)),
+            "body_px": list(_to_px(bpos, ax_box, xr, yr)),
+        }
 
     return el, ann_idx_local

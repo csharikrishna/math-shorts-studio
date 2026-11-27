@@ -31,6 +31,8 @@ ObjectKind = Literal[
     "probability_region",
     "particle_system",
     "waveform",
+    "mechanical_body",
+    "vector_field",
 ]
 
 EventOp = Literal[
@@ -44,6 +46,7 @@ EventOp = Literal[
     "remove",
     "focus",
     "animate_param",
+    "set_param",
     "reveal",
     "morph",
     "duplicate",
@@ -88,10 +91,14 @@ class SweepKeyframe(BaseModel):
 
     param: float
     point: list[float] = Field(default_factory=list)
+    vector_start: list[float] = Field(default_factory=list)
     vector_end: list[float] = Field(default_factory=list)
     spec_point: list[float] = Field(default_factory=list)
+    body_pos: list[float] = Field(default_factory=list)
     curve_pts: list[list[float]] = Field(default_factory=list)
+    bar_values: list[float] = Field(default_factory=list)
     label: str = ""
+    u: Optional[float] = None
 
 
 class SceneObject(BaseModel):
@@ -132,6 +139,14 @@ class SceneObject(BaseModel):
     points_list: list[list[float]] = Field(default_factory=list)
     edge_pairs: list[list[str]] = Field(default_factory=list)
     node_labels: list[str] = Field(default_factory=list)
+    # Parameterized mechanical / field component extensions
+    connector_kind: Literal["none", "spring", "rod", "damper", "spring_damper"] = "none"
+    anchor_coords: Optional[list[float]] = None
+    dx_expr: Optional[str] = None
+    dy_expr: Optional[str] = None
+    var_names: list[str] = Field(default_factory=list)
+    body_mass: Optional[float] = None
+    damping_coeff: Optional[float] = None
     panel_slot: Literal["auto", "left", "right", "top", "bottom", "center"] = "auto"
 
 
@@ -257,6 +272,8 @@ ClaimRuleKind = Literal[
     "spectral_derivation_consistency",
     "signal_filtering_equivalence",
     "parseval_energy_conservation",
+    "simulation_trajectory_bounds",
+    "frequency_response_peak",
 ]
 
 
@@ -335,6 +352,7 @@ class AnimationEvent(BaseModel):
     angle_deg: Optional[float] = None
     param_range: Optional[list[float]] = None
     param_values: list[float] = Field(default_factory=list)
+    target_param: Optional[float] = None
     duration_s: Optional[float] = None
 
 
@@ -366,6 +384,7 @@ class SceneV3(BaseModel):
     claims: list[StructuredClaim] = Field(default_factory=list)
     claim_ledger: list[ClaimLedgerEntry] = Field(default_factory=list)
     demo_audio: Optional[AudioDemoSpec] = None
+    active_model_params: Annotated[dict[str, float], SkipJsonSchema()] = Field(default_factory=dict)
     objects: list[SceneObject] = Field(default_factory=list)
     events: list[AnimationEvent] = Field(default_factory=list)
 

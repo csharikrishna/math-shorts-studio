@@ -58,6 +58,15 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         issues.append("VideoPlanV3 must contain at least one scene.")
         return {"issues": issues, "verified": verified_claims, "failed": failed_claims, "unsupported": unsupported_claims}
 
+    for sc in plan.scenes:
+        for con in sc.constructions:
+            if con.op == "winding_complex_curve" and con.params.expr and ";" in con.params.expr:
+                issues.append(
+                    f"scene {sc.scene_id}: winding_complex_curve requires scalar signal expr(t) without ';'; "
+                    "use dynamical_simulation or ode_phase_trajectory (or standalone parametric_curve) for 2D spirals."
+                )
+    if issues:
+        return {"issues": issues, "verified": verified_claims, "failed": failed_claims, "unsupported": unsupported_claims}
     try:
         plan = materialize_constructions(plan)
     except Exception as exc:
@@ -120,7 +129,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
 
             if obj.kind == "function_plot":
                 if not obj.expr:
-                    issues.append(f"{where} obj {obj.id}: function_plot requires expr.")
+                    if not (obj.model_id and obj.model_output) and not (obj.points_list and len(obj.points_list) >= 2):
+                        issues.append(f"{where} obj {obj.id}: function_plot requires expr.")
                 else:
                     try:
                         compile_expr(obj.expr, ("x",))
@@ -128,7 +138,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                         issues.append(f"{where} obj {obj.id}: {exc}")
             elif obj.kind == "parametric_curve":
                 if not obj.expr or ";" not in obj.expr:
-                    issues.append(f"{where} obj {obj.id}: parametric_curve requires 'X(t); Y(t)'.")
+                    if not (obj.model_id and obj.model_output) and not (obj.points_list and len(obj.points_list) >= 2):
+                        issues.append(f"{where} obj {obj.id}: parametric_curve requires 'X(t); Y(t)'.")
                 else:
                     try:
                         p0, p1 = obj.expr.split(";", 1)
@@ -160,9 +171,14 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 if "triangle" in tag and len(cleaned) != 3:
                     issues.append(f"{where} obj {obj.id}: claimed triangle must have 3 vertices (got {len(cleaned)}).")
                 live_polys[obj.id] = cleaned
-            elif obj.kind in ("data_series", "particle_system", "waveform", "graph_network"):
+            elif obj.kind in ("data_series", "particle_system", "waveform"):
                 if not all_coords_finite(obj.points_list):
                     issues.append(f"{where} obj {obj.id}: points_list contains non-finite coordinates.")
+            elif obj.kind == "graph_network":
+                if not all_coords_finite(obj.points_list):
+                    issues.append(f"{where} obj {obj.id}: points_list contains non-finite coordinates.")
+                elif len(obj.points_list) < 2 and len(obj.node_labels) < 2:
+                    issues.append(f"{where} obj {obj.id}: graph_network requires >= 2 nodes in points_list or node_labels.")
             elif obj.kind == "matrix":
                 if not obj.matrix_rows:
                     issues.append(f"{where} obj {obj.id}: matrix requires non-empty matrix_rows.")
@@ -217,7 +233,9 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             if ev.angle_deg is not None and not math.isfinite(ev.angle_deg):
                 issues.append(f"{where}: event rotate on {ev.target_id!r} has non-finite angle_deg.")
             if ev.op == "animate_param" and (not ev.param_range or len(ev.param_range) != 2):
-                issues.append(f"{where}: animate_param requires param_range=[start, end].")
+                has_linked_rng = ev.target_id in live_objs and bool(live_objs[ev.target_id].model_id)
+                if not has_linked_rng:
+                    issues.append(f"{where}: animate_param requires param_range=[start, end].")
             if ev.anchor_mark:
                 if ev.anchor_mark not in marks:
                     issues.append(f"{where}: anchor_mark {ev.anchor_mark!r} missing from narration.")
@@ -521,13 +539,21 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     issues.append(msg); unsupported_claims.append(msg)
                 else:
                     try:
-                        fx = compile_expr(cl.dx_expr, ("x", "y", "t"))
-                        fy = compile_expr(cl.dy_expr, ("x", "y", "t"))
+                        from studio.ai.simulation import infer_phase_var_names
+
+                        v0, v1 = infer_phase_var_names(cl.dx_expr, cl.dy_expr)
+                        scope_e = tuple(dict.fromkeys([v0, v1, "t"]))
+                        fx = compile_expr(cl.dx_expr, scope_e)
+                        fy = compile_expr(cl.dy_expr, scope_e)
                         xv = float(cl.x_val or 0.0)
                         yv = float(cl.expected_value or 0.0)
-                        dx_v, dy_v = float(fx(x=xv, y=yv, t=0.0)), float(fy(x=xv, y=yv, t=0.0))
+                        kw_e = {v0: xv, v1: yv, "t": 0.0}
+                        dx_v, dy_v = float(fx(**kw_e)), float(fy(**kw_e))
                         if math.hypot(dx_v, dy_v) > max(cl.tolerance, 1e-3):
-                            msg = f"{where} claim ode_equilibrium: |({dx_v:.4f}, {dy_v:.4f})| != 0 at ({xv}, {yv})."
+                            msg = (
+                                f"{where} claim ode_equilibrium: |({dx_v:.4f}, {dy_v:.4f})| != 0 at ({xv}, {yv}) "
+                                f"— both dx_expr and dy_expr must vanish at a fixed point; use simulation_trajectory_bounds for oscillating/non-equilibrium states."
+                            )
                             issues.append(msg); failed_claims.append(msg)
                         else:
                             verified_claims.append(f"{where}: ode_equilibrium({xv}, {yv})")
@@ -647,6 +673,37 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     else:
                         verified_claims.append(f"{where}: parseval_energy_conservation(rel_err={rel_err:.2e})")
 
+            elif cl.kind in ("simulation_trajectory_bounds", "frequency_response_peak"):
+                m_data = computed_models.get(cl.model_id or "") if cl.model_id else None
+                if m_data is None:
+                    inferred_mid = next((live_objs[oid].model_id for oid in cl.object_ids if oid in live_objs and live_objs[oid].model_id in computed_models), None)
+                    m_data = computed_models.get(inferred_mid) if inferred_mid else None
+                if m_data is None:
+                    msg = f"{where} claim {cl.kind}: requires a valid LinkedMathModelSpec model_id."
+                    issues.append(msg); unsupported_claims.append(msg)
+                elif cl.kind == "simulation_trajectory_bounds":
+                    pts_l = list(m_data.get("phase_orbit") or m_data.get("time_series_x") or [])
+                    if len(pts_l) < 4 or not all_coords_finite(pts_l):
+                        msg = f"{where} claim simulation_trajectory_bounds: simulation has empty or nonfinite states."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: simulation_trajectory_bounds(n={len(pts_l)})")
+                elif cl.kind == "frequency_response_peak":
+                    meas = dict(m_data.get("measurements") or {})
+                    has_pk = bool(meas.get("has_nonzero_resonance_peak", False))
+                    zeta_v = float(meas.get("damping_ratio", 0.0))
+                    w_res = float(meas.get("resonance_freq", 0.0))
+                    low_st = f"{cl.statement} {sc.narration}".lower()
+                    claims_nonzero_pk = bool(re.search(r"\bnonzero\s+resonance\s+peak\b|\balways\s+has\s+a\s+resonance\s+peak\b", low_st))
+                    if zeta_v >= (1.0 / math.sqrt(2.0)) - 1e-4 and (w_res > 1e-3 or claims_nonzero_pk):
+                        msg = f"{where} claim frequency_response_peak: zeta={zeta_v:.3f} >= 1/sqrt(2) cannot yield a nonzero resonance peak."
+                        issues.append(msg); failed_claims.append(msg)
+                    elif cl.expected_value is not None and abs(w_res - float(cl.expected_value)) > max(cl.tolerance, 5e-2):
+                        msg = f"{where} claim frequency_response_peak: computed w_res={w_res:.4f} != expected {cl.expected_value}."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: frequency_response_peak(zeta={zeta_v:.2f}, w_res={w_res:.2f}, has_pk={has_pk})")
+
         # Validate ClaimLedgerEntry rows (exact spoken span + assumptions + backing)
         from studio.audio.tts import parse_script as _parse_scr
 
@@ -708,7 +765,12 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             if not (has_local or (not require_claims and has_later)):
                 issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon in this scene.")
         live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if oid in live_objs and st_v in ("declared", "visible")}
-        if require_claims and "axes" in live_stage_kinds and not scene_non_chrome and not any(o.kind in ("matrix", "table", "bar_chart", "graph_network") for o in sc.objects):
+        live_non_chrome = [
+            live_objs[oid]
+            for oid, st_v in state.items()
+            if oid in live_objs and st_v in ("declared", "visible") and live_objs[oid].kind not in non_chrome_kinds
+        ]
+        if require_claims and "axes" in live_stage_kinds and not scene_non_chrome and not live_non_chrome and not any(o.kind in ("matrix", "table", "bar_chart", "graph_network") for o in sc.objects):
             if not any(o.axes_id for o in scene_non_chrome) and not scene_axes_ids:
                 issues.append(f"{where}: empty axes stage (declare curves, vectors, polygons, or trajectories alongside axes).")
 
@@ -769,15 +831,62 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         for cl in sc.claims
         if cl.verification_level == "source_supported"
     )
+    # Track narration-to-demonstration dynamic motion coverage & parameter-at-anchor synchronization
+    _STATE_MOTION_OPS = {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "set_param", "iterate_states", "interpolate_values"}
+    _DYNAMIC_NARR_RE = re.compile(
+        r"\b(?:oscillat\w*|swing\w*|vibrat\w*|evolv\w*|sweep\w*|converg\w*|spiral\w*|decay\w*|dissipat\w*|resonat\w*|trajector\w*|simulat\w*|phase\s+space|move|moves|moving|transform\w*|shift\w*|slide\w*|orbit\w*|step[- ]by[- ]step|iteration)\b"
+    )
+    dynamic_motion_gaps: list[str] = []
+    parameter_sync_issues: list[str] = []
+    animated_scenes_count = 0
+    total_dynamic_scenes = 0
+    _swept_models_seen: set[str] = set()
+    for sc in plan.scenes:
+        sc_ops = {e.op for e in sc.events}
+        has_state_anim = bool(sc_ops & _STATE_MOTION_OPS)
+        if has_state_anim:
+            animated_scenes_count += 1
+        for e in sc.events:
+            if e.op == "animate_param":
+                obj_m = next((o for o in sc.objects if o.id == e.target_id), None)
+                mid_e = str((obj_m.model_id if obj_m else None) or e.target_id)
+                _swept_models_seen.add(mid_e)
+        low_n = sc.narration.lower()
+        is_dynamic_beat = bool(_DYNAMIC_NARR_RE.search(low_n))
+        if is_dynamic_beat:
+            total_dynamic_scenes += 1
+            if not has_state_anim:
+                dynamic_motion_gaps.append(
+                    f"scene {sc.scene_id}: narration describes dynamic evolution/motion without a state-changing animation event."
+                )
+        # Check frequency parameter sync across subsequent beats mentioning explicit frequency values
+        m_hz = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:hz|hertz)\b", low_n)
+        if m_hz and len(m_hz) == 1:
+            spoken_f = float(m_hz[0])
+            sc_active_p = dict(getattr(sc, "active_model_params", {}) or {})
+            for o in sc.objects:
+                if o.model_id and o.model_id in computed_models and o.model_id in _swept_models_seen:
+                    if not any(e.op in ("animate_param", "set_param") for e in sc.events) and o.model_id not in sc_active_p:
+                        m_info = dict(computed_models[o.model_id].get("measurements") or {})
+                        sel_f = float(m_info.get("selected_freq", spoken_f))
+                        sw_frames = list(computed_models[o.model_id].get("sweep_frames") or [])
+                        end_f = float(sw_frames[-1].get("param", sel_f)) if sw_frames else sel_f
+                        if abs(sel_f - spoken_f) > 0.15 or abs(end_f - spoken_f) > 0.15:
+                            parameter_sync_issues.append(
+                                f"scene {sc.scene_id}: narration focuses on {spoken_f} Hz after sweep (ends at {end_f} Hz, selected_freq={sel_f}) while set_param/active_model_params omits {o.model_id!r}."
+                            )
+                            break
+
     coverage = {
         "deterministically_verified": len(verified_claims),
-        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path", "markov_chain_evolution", "discrete_pmf_convolution", "winding_complex_curve", "spectral_transform_from_signal", "filtered_signal_reconstruction")) + len(computed_models),
+        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path", "markov_chain_evolution", "discrete_pmf_convolution", "winding_complex_curve", "spectral_transform_from_signal", "filtered_signal_reconstruction", "general_simulation_engine", "driven_frequency_response")) + len(computed_models),
         "source_supported": source_supported_unbacked,
         "ai_reviewed": explicit_ai_reviewed,
         "unsupported": len(unsupported_claims) + (unclaimed_non_constructive if require_claims else 0),
         "failed": len(failed_claims),
-        "human_review_required": 1 if (failed_claims or unsupported_claims or source_supported_unbacked > 0 or (require_claims and unclaimed_non_constructive > 0)) else 0,
+        "human_review_required": 1 if (failed_claims or unsupported_claims or source_supported_unbacked > 0 or parameter_sync_issues or (require_claims and unclaimed_non_constructive > 0)) else 0,
     }
+    issues.extend(parameter_sync_issues)
     return {
         "issues": issues,
         "verified": verified_claims,
@@ -785,6 +894,10 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         "unsupported": unsupported_claims,
         "unclaimed_math_scenes": unclaimed_math_msgs,
         "narration_gaps": narration_gaps,
+        "dynamic_motion_gaps": dynamic_motion_gaps,
+        "parameter_sync_issues": parameter_sync_issues,
+        "animated_scenes": animated_scenes_count,
+        "total_dynamic_scenes": total_dynamic_scenes,
         "verification_coverage": coverage,
     }
 

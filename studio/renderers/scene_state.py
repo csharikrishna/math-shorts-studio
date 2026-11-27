@@ -95,6 +95,7 @@ class SceneRuntimeState(BaseModel):
     camera_target_id: Optional[str] = None
     active_equation_id: Optional[str] = None
     active_annotation_id: Optional[str] = None
+    model_params: dict[str, float] = Field(default_factory=dict)
     scene_history: list[str] = Field(default_factory=list)
 
 
@@ -130,7 +131,7 @@ def advance_scene_state(state: SceneRuntimeState, scene: SceneV3) -> SceneRuntim
         for oid, ost in list(nxt.objects.items()):
             if not ost.visible or oid in referenced or ost.axes_id in referenced:
                 continue
-            if ost.kind in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series", "waveform", "particle_system"):
+            if ost.kind in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series", "waveform", "particle_system", "mechanical_body", "vector_field"):
                 ost.visible = False
                 nxt.removed_ids.add(oid)
                 if ost.kind == "axes":
@@ -181,7 +182,19 @@ def advance_scene_state(state: SceneRuntimeState, scene: SceneV3) -> SceneRuntim
             panel_slot=obj.panel_slot,
         )
 
+    if getattr(scene, "active_model_params", None):
+        for mk, mv in scene.active_model_params.items():
+            nxt.model_params[str(mk)] = float(mv)
     for ev in scene.events:
+        if ev.op in ("animate_param", "set_param"):
+            obj_m = next((o for o in scene.objects if o.id == ev.target_id), None)
+            m_key = str((obj_m.model_id if obj_m else None) or ev.target_id)
+            if ev.op == "set_param" and ev.target_param is not None:
+                nxt.model_params[m_key] = float(ev.target_param)
+            elif ev.param_range and len(ev.param_range) == 2:
+                nxt.model_params[m_key] = float(ev.param_range[1])
+            elif ev.param_values:
+                nxt.model_params[m_key] = float(ev.param_values[-1])
         if ev.op == "duplicate" and ev.source_id and ev.source_id in nxt.objects:
             src_st = nxt.objects[ev.source_id].model_copy(deep=True)
             src_st.object_id = ev.target_id

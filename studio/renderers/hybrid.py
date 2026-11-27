@@ -171,7 +171,7 @@ class HybridRenderBackend(RenderBackend):
                 seg_ids_in_part = {o.id for sc in seg_scenes for o in sc.objects}
                 has_stage_reset = any(o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network") for o in seg_scenes[0].objects)
                 needed = (
-                    {e.target_id for sc in seg_scenes for e in sc.events}
+                    {e.target_id for sc in seg_scenes for e in sc.events if e.op != "remove"}
                     | {e.source_id for sc in seg_scenes for e in sc.events if e.source_id}
                     | {o.axes_id for sc in seg_scenes for o in sc.objects if o.axes_id}
                 ) - seg_ids_in_part - runtime_state.removed_ids

@@ -274,6 +274,10 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
         "time_signal",
         "winding_curve",
         "spectrum",
+        "continuous_fourier_spectrum",
+        "normalized_spectrum",
+        "dft_single_sided_spectrum",
+        "dft_filtered_spectrum",
         "filtered_spectrum",
         "filtered_signal",
         "curve",
@@ -283,6 +287,12 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
         "phase_orbit",
         "time_series_x",
         "time_series_y",
+        "energy_total",
+        "response_curve",
+        "phase_curve",
+        "mean_curve",
+        "upper_std_curve",
+        "lower_std_curve",
         "target_curve",
         "approx_curve",
         "error_curve",
@@ -290,20 +300,20 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
         pts = model_data.get(out_key) or []
         if pts and not obj.points_list:
             obj.points_list = [list(p) for p in pts]
-    elif out_key in ("centroid_point", "spectrum_peak", "end_point"):
-        pt = model_data.get(out_key)
+    elif out_key in ("centroid_point", "spectrum_peak", "end_point", "body_point", "mechanical_body"):
+        pt = model_data.get("body_point" if out_key == "mechanical_body" else out_key)
         if pt and len(pt) >= 2 and obj.coords is None:
             obj.coords = [float(pt[0]), float(pt[1])]
-    elif out_key == "centroid_vector":
+    elif out_key in ("centroid_vector", "restoring_force"):
         vec = model_data.get("centroid_vector")
         if vec and len(vec) == 2:
             if obj.coords is None:
                 obj.coords = [float(vec[0][0]), float(vec[0][1])]
             if obj.end_coords is None:
                 obj.end_coords = [float(vec[1][0]), float(vec[1][1])]
-    elif out_key in ("spectrum_bars", "posterior_bars"):
-        labels = model_data.get("spectrum_bars_labels") or model_data.get("bar_labels") or []
-        vals = model_data.get("spectrum_bars_values") or model_data.get("bar_values") or []
+    elif out_key in ("spectrum_bars", "posterior_bars", "energy_bars"):
+        labels = model_data.get(f"{out_key}_labels") or model_data.get("spectrum_bars_labels") or model_data.get("bar_labels") or []
+        vals = model_data.get(f"{out_key}_values") or model_data.get("spectrum_bars_values") or model_data.get("bar_values") or []
         if vals and not obj.values:
             obj.values = [float(v) for v in vals]
         if labels and not obj.bar_labels:
@@ -321,8 +331,17 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
             obj.text = str(model_data.get("readout_text") or "")
 
     if not obj.sweep_keyframes and model_data.get("sweep_frames"):
-        if out_key in ("winding_curve", "centroid_point", "centroid_vector", "trajectory", "loss_curve", "end_point", "readout"):
+        if out_key in (
+            "winding_curve", "centroid_point", "centroid_vector", "restoring_force",
+            "spectrum_peak", "phase_orbit", "mechanical_body", "body_point",
+            "energy_bars", "trajectory", "loss_curve", "end_point", "readout",
+        ):
             obj.sweep_keyframes = [sweep_cls.model_validate(kf) for kf in model_data["sweep_frames"]]
+    if "selected_sweep_u" in model_data and out_key in (
+        "winding_curve", "centroid_point", "centroid_vector", "restoring_force",
+        "spectrum_peak", "phase_orbit", "mechanical_body", "energy_bars", "readout",
+    ):
+        obj.param_init = float(model_data["selected_sweep_u"])
 
 
 def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":

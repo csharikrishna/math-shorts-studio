@@ -63,6 +63,8 @@ class SyncedBeat:
     marks: dict = field(default_factory=dict)
     speaker: str = "narrator"
     word_provenance: list[str] = field(default_factory=list)
+    raw_word_boundaries: list = field(default_factory=list)
+    timing_repairs: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -212,12 +214,91 @@ def parse_script(narration: str) -> tuple[str, list[ScriptToken], dict[str, int]
         text = raw.replace("*", "")
         if not text:
             continue
+        if tokens and text in {".", ",", "!", "?", ";", ":", "—"}:
+            prev = tokens[-1]
+            tokens[-1] = ScriptToken(prev.text + text, prev.char_start, prev.char_end + len(text), prev.emphasis)
+            cursor += len(text)
+            continue
         if tokens:
             cursor += 1  # joining space
         tokens.append(ScriptToken(text, cursor, cursor + len(text), emph))
         cursor += len(text)
     clean = " ".join(t.text for t in tokens)
     return clean, tokens, marks
+
+
+_STANDALONE_PUNCT = {".", ",", "!", "?", ";", ":", "—", "..."}
+
+
+def sanitize_word_boundaries(
+    raw_words: list,
+    duration_s: float,
+    *,
+    head_trim: float = 0.0,
+    beat_id: str = "",
+) -> tuple[list[list], list[dict]]:
+    """Trim head offset, fold dangling punctuation, clamp inside [0, dur], and repair monotonic order with full audit."""
+    dur = max(0.05, float(duration_s))
+    out: list[list] = []
+    repairs: list[dict] = []
+    prev_start = 0.0
+    prev_end = 0.0
+    for item in raw_words or []:
+        if not item or len(item) < 3:
+            continue
+        tok = str(item[0])
+        raw_a = float(item[1])
+        raw_b = float(item[2])
+        a = round(max(0.0, min(dur, raw_a - head_trim)), 4)
+        b = round(max(0.0, min(dur, raw_b - head_trim)), 4)
+        if tok.strip() in _STANDALONE_PUNCT and out:
+            prev_tok, pa, pb = out[-1][0], float(out[-1][1]), float(out[-1][2])
+            new_pb = pb
+            reason = "folded_standalone_punctuation"
+            if b >= pa and b >= pb:
+                new_pb = min(dur, b)
+            elif b < pb:
+                reason = "folded_inverted_punctuation_boundary"
+            out[-1] = [f"{prev_tok}{tok.strip()}", pa, round(max(pa, new_pb), 4)]
+            prev_end = float(out[-1][2])
+            repairs.append(
+                {
+                    "beat_id": beat_id,
+                    "token": tok,
+                    "reason": reason,
+                    "raw": [raw_a, raw_b],
+                    "repaired": list(out[-1][1:3]),
+                }
+            )
+            continue
+        reasons: list[str] = []
+        if (raw_a - head_trim) > dur + 1e-4 or (raw_a - head_trim) < -1e-4:
+            reasons.append("clamped_start_to_audio_bounds")
+        if b < a - 1e-4:
+            reasons.append("repaired_inverted_end_lt_start")
+            b = round(min(dur, max(a, a + 0.04)), 4)
+        if a < prev_start - 1e-4:
+            reasons.append("clamped_non_monotonic_start")
+            a = round(min(dur, prev_start), 4)
+            b = round(max(a, b), 4)
+        if a < prev_end - 0.015:
+            reasons.append("resolved_boundary_overlap")
+            a = round(min(dur, prev_end), 4)
+            b = round(max(a, b), 4)
+        if reasons:
+            repairs.append(
+                {
+                    "beat_id": beat_id,
+                    "token": tok,
+                    "reason": "+".join(reasons),
+                    "raw": [raw_a, raw_b],
+                    "repaired": [a, b],
+                }
+            )
+        out.append([tok, a, b])
+        prev_start = a
+        prev_end = b
+    return out, repairs
 
 
 def _vad_active_span(pcm: np.ndarray, sr: int, fallback_dur: float) -> tuple[float, float]:
@@ -285,7 +366,9 @@ def align_words_with_provenance(
     provs: list[str] = []
     for i, tok in enumerate(tokens):
         if times[i] is not None:
-            out.append((times[i][0], times[i][1]))
+            s_val = max(0.0, min(speech_dur, float(times[i][0])))
+            e_val = max(s_val, min(speech_dur, float(times[i][1])))
+            out.append((s_val, e_val))
             provs.append("tts_word_boundary")
             continue
         if known and matched_ratio >= 0.25:
@@ -294,16 +377,24 @@ def align_words_with_provenance(
             if xs[0] > 0:
                 xs = np.insert(xs, 0, 0.0)
                 ys = np.insert(ys, 0, 0.0)
-            start = float(np.interp(tok.char_start, xs, ys))
-            end = float(np.interp(tok.char_end, xs, ys))
+            start = max(0.0, min(speech_dur, float(np.interp(tok.char_start, xs, ys))))
+            end = max(start, min(speech_dur, float(np.interp(tok.char_end, xs, ys))))
             provs.append("interpolated")
         else:
-            start, end = by_chars(tok.char_start), by_chars(tok.char_end)
+            start = max(0.0, min(speech_dur, by_chars(tok.char_start)))
+            end = max(start, min(speech_dur, by_chars(tok.char_end)))
             provs.append(fallback_prov)
         out.append((start, max(start, end)))
-    for i in range(1, len(out)):
-        if out[i][0] < out[i - 1][0]:
-            out[i] = (out[i - 1][0], max(out[i - 1][0], out[i][1]))
+    prev_end_t = 0.0
+    for i in range(len(out)):
+        s_t, e_t = out[i]
+        if i > 0 and s_t < out[i - 1][0]:
+            s_t = out[i - 1][0]
+        if i > 0 and s_t < prev_end_t - 0.015:
+            s_t = min(speech_dur, prev_end_t)
+        e_t = max(s_t, min(speech_dur, e_t))
+        out[i] = (round(s_t, 4), round(e_t, 4))
+        prev_end_t = out[i][1]
     return out, provs
 
 
@@ -431,12 +522,16 @@ def build_voice_timeline(
         wav_path = segments_dir / f"{beat.id}_{key}.wav"
         words_path = segments_dir / f"{beat.id}_{key}.words.json"
 
+        raw_words_path = segments_dir / f"{beat.id}_{key}.raw_words.json"
+
         shared_wav = (shared_dir / f"{key}.wav") if shared_dir is not None else None
         shared_words = (shared_dir / f"{key}.words.json") if shared_dir is not None else None
         if not (wav_path.exists() and words_path.exists()) and shared_wav and shared_words and shared_wav.exists() and shared_words.exists():
             shutil.copy2(shared_wav, wav_path)
             shutil.copy2(shared_words, words_path)
 
+        raw_evidence: list[list] = []
+        repairs: list[dict] = []
         if not (wav_path.exists() and words_path.exists()):
             if engine == "kokoro":
                 raw_words, dur, head_trim = _synth_kokoro_trimmed(spoken, beat_voice, _rate_to_speed(rate), wav_path)
@@ -444,10 +539,9 @@ def build_voice_timeline(
                 async with edge_sem:
                     raw_words = await _synth_edge_tts(spoken, beat_voice, rate, raw_path, pitch=pitch)
                 dur, head_trim = _decode_and_trim_wav(ffmpeg_bin, raw_path, wav_path)
-            words = [
-                [w, round(max(0.0, a - head_trim), 4), round(min(dur, max(0.0, b - head_trim)), 4)]
-                for w, a, b in raw_words
-            ]
+            raw_evidence = [[str(w[0]), float(w[1]), float(w[2])] for w in raw_words if len(w) >= 3]
+            raw_words_path.write_text(json.dumps(raw_evidence), encoding="utf-8")
+            words, repairs = sanitize_word_boundaries(raw_evidence, dur, head_trim=head_trim, beat_id=beat.id)
             words_path.write_text(json.dumps(words), encoding="utf-8")
             if shared_wav is not None and shared_words is not None:
                 try:
@@ -458,8 +552,18 @@ def build_voice_timeline(
         else:
             with wave.open(str(wav_path), "rb") as wf:
                 dur = wf.getnframes() / float(wf.getframerate())
-            words = json.loads(words_path.read_text(encoding="utf-8"))
-        return (beat, wav_path, dur, words)
+            cached_words = json.loads(words_path.read_text(encoding="utf-8"))
+            if raw_words_path.exists():
+                try:
+                    raw_evidence = json.loads(raw_words_path.read_text(encoding="utf-8"))
+                except Exception:
+                    raw_evidence = list(cached_words)
+            else:
+                raw_evidence = list(cached_words)
+            words, repairs = sanitize_word_boundaries(cached_words, dur, head_trim=0.0, beat_id=beat.id)
+            if repairs:
+                words_path.write_text(json.dumps(words), encoding="utf-8")
+        return (beat, wav_path, dur, words, raw_evidence, repairs)
 
     async def _run_all(engine: str, active_voice: str) -> list[tuple[BeatSpec, Path, float, list[list]]]:
         edge_sem = asyncio.Semaphore(int(os.environ.get("STUDIO_EDGE_CONCURRENCY", "4")))
@@ -485,7 +589,7 @@ def build_voice_timeline(
     synced_beats: list[SyncedBeat] = []
     chunks: list[np.ndarray] = [np.zeros(int(lead_in * SAMPLE_RATE), dtype=np.int16)]
 
-    for beat, wav_path, speech_dur, boundaries in synthesized:
+    for beat, wav_path, speech_dur, boundaries, raw_evidence, repairs in synthesized:
         with wave.open(str(wav_path), "rb") as wf:
             pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
         chunks.append(pcm)
@@ -522,10 +626,20 @@ def build_voice_timeline(
             token_times, token_provs = align_words_with_provenance(
                 clean, tokens, boundaries, speech_dur, pcm_mono=pcm, sr=SAMPLE_RATE
             )
-        words = [
-            [tok.text, round(cursor + a, 4), round(cursor + b, 4), tok.emphasis]
-            for tok, (a, b) in zip(tokens, token_times)
-        ]
+        prev_abs_end = cursor
+        words = []
+        for tok, (a, b) in zip(tokens, token_times):
+            abs_a = round(cursor + a, 4)
+            abs_b = round(cursor + b, 4)
+            if abs_a < prev_abs_end - 0.015:
+                repairs.append({"beat_id": beat.id, "token": tok.text, "reason": "aligned_overlap_repair", "raw": [abs_a, abs_b], "repaired": [round(prev_abs_end, 4), round(max(prev_abs_end, abs_b), 4)]})
+                abs_a = round(prev_abs_end, 4)
+                abs_b = round(max(abs_a, abs_b), 4)
+            elif abs_b < abs_a:
+                repairs.append({"beat_id": beat.id, "token": tok.text, "reason": "aligned_inverted_repair", "raw": [abs_a, abs_b], "repaired": [abs_a, abs_a]})
+                abs_b = abs_a
+            words.append([tok.text, abs_a, abs_b, tok.emphasis])
+            prev_abs_end = abs_b
         marks = {
             name: round(cursor + (token_times[i][0] if i < len(token_times) else speech_dur), 4)
             for name, i in mark_idx.items()
@@ -546,6 +660,8 @@ def build_voice_timeline(
                 marks=marks,
                 speaker=getattr(beat, "speaker", "narrator"),
                 word_provenance=token_provs,
+                raw_word_boundaries=raw_evidence,
+                timing_repairs=repairs,
             )
         )
         cursor += total_beat_dur

@@ -18,15 +18,18 @@ from studio.providers.base import FreeOnlyPolicyError, LLMProvider, LLMResponse,
 T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_GEMINI_MODELS = (
-    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
     "gemini-3.8-flash",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
 )
 TRANSIENT_CODES = {429, 500, 502, 503, 504}
 _SCHEMA_CACHE_LOCK = threading.Lock()
 _JSON_MODE_ONLY_SCHEMAS: set[str] = {"VideoPlanV3"}
 _COMPACT_SCHEMA_CACHE: dict[str, str] = {}
+_DAILY_EXHAUSTED_MODELS: set[str] = set()
 
 
 class GeminiProvider(LLMProvider):
@@ -50,31 +53,51 @@ class GeminiProvider(LLMProvider):
         self.retries_per_model = retries_per_model
 
     def _call_with_fallback(self, contents: str, config: types.GenerateContentConfig, model: str | None) -> tuple[object, str, float]:
+        import re as _re
+
         chain = (model,) if model else self.models
         last_err: Exception | None = None
-        for m in chain:
-            for attempt in range(1, self.retries_per_model + 1):
-                t0 = time.perf_counter()
-                try:
-                    resp = self._client.models.generate_content(model=m, contents=contents, config=config)
-                    return resp, m, time.perf_counter() - t0
-                except genai_errors.APIError as exc:
-                    last_err = exc
-                    if getattr(exc, "code", None) == 400 and ("too many states" in str(exc).lower() or "schema" in str(exc).lower()):
-                        raise ProviderError(f"Gemini schema complexity error on {m}: {exc}") from exc
-                    if exc.code == 429:
-                        # Rate-limited / quota-exhausted on this model: switch immediately instead of sleeping
+        for tpm_cycle in range(3):
+            active_chain = [m for m in chain if m not in _DAILY_EXHAUSTED_MODELS] or list(chain)
+            min_retry_s: float | None = None
+            for m in active_chain:
+                for attempt in range(1, self.retries_per_model + 1):
+                    t0 = time.perf_counter()
+                    try:
+                        resp = self._client.models.generate_content(model=m, contents=contents, config=config)
+                        return resp, m, time.perf_counter() - t0
+                    except genai_errors.APIError as exc:
+                        last_err = exc
+                        msg_s = str(exc)
+                        msg_l = msg_s.lower()
+                        if getattr(exc, "code", None) == 400 and ("too many states" in msg_l or "schema" in msg_l):
+                            raise ProviderError(f"Gemini schema complexity error on {m}: {exc}") from exc
+                        if exc.code == 429:
+                            if "perday" in msg_l or "per_day" in msg_l or "free_tier_requests" in msg_l:
+                                _DAILY_EXHAUSTED_MODELS.add(m)
+                                break
+                            rm = _re.search(r"retry in\s+([\d.]+)s", msg_l)
+                            r_sec = float(rm.group(1)) if rm else 12.0
+                            if r_sec <= 10.0 and attempt < self.retries_per_model:
+                                time.sleep(r_sec + 1.0)
+                                continue
+                            if min_retry_s is None or r_sec < min_retry_s:
+                                min_retry_s = r_sec
+                            break
+                        if exc.code in TRANSIENT_CODES and attempt < self.retries_per_model:
+                            time.sleep(1.8 * attempt)
+                            continue
                         break
-                    if exc.code in TRANSIENT_CODES and attempt < self.retries_per_model:
-                        time.sleep(1.5 * attempt)
-                        continue
-                    break
-                except Exception as exc:
-                    last_err = exc
-                    if attempt < self.retries_per_model:
-                        time.sleep(1.5 * attempt)
-                        continue
-                    break
+                    except Exception as exc:
+                        last_err = exc
+                        if attempt < self.retries_per_model:
+                            time.sleep(1.5 * attempt)
+                            continue
+                        break
+            if min_retry_s is not None and min_retry_s <= 65.0 and tpm_cycle < 2:
+                time.sleep(min(62.0, min_retry_s + 1.5))
+                continue
+            break
         raise ProviderError(f"Gemini failed across {chain}: {last_err}")
 
     def generate_text(self, prompt: str, *, system: str = "", model: str | None = None, temperature: float = 0.6) -> LLMResponse:
