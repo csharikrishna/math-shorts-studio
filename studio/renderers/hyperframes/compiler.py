@@ -14,7 +14,7 @@ from studio.layout.solver import PixelBox, compute_adaptive_zones, resolve_compo
 from studio.renderers.hyperframes.captions import build_hyperframes_captions
 from studio.renderers.hyperframes.components import compile_scene_object_element
 from studio.renderers.hyperframes.runtime import build_runtime_js
-from studio.renderers.hyperframes.typography import build_font_css
+from studio.renderers.hyperframes.typography import KATEX_DIR, build_font_css
 
 if TYPE_CHECKING:
     from studio.ai.v3_schema import VideoPlanV3
@@ -27,6 +27,7 @@ def compile_plan_to_html(
     *,
     caption_style: str | None = None,
     caption_ir: Any | None = None,
+    meta_out_path: Any | None = None,
 ) -> tuple[str, float]:
     """Compile VideoPlanV3 into standalone deterministic offline HTML5/SVG + Motion runtime."""
     plan = materialize_constructions(plan)
@@ -123,8 +124,13 @@ def compile_plan_to_html(
 
     axes_specs: dict[str, tuple[list[float], list[float], tuple[float, float, float, float]]] = {}
     elements_payload: list[dict[str, Any]] = []
+    meta_map_hf: dict[str, list[dict[str, Any]]] = {}
+    zoom_events: list[dict[str, Any]] = []
+    obj_by_id: dict[str, Any] = {}
 
     for s_idx, sc in enumerate(plan.scenes):
+        for _o in sc.objects:
+            obj_by_id[_o.id] = _o
         bw_info = beat_windows[s_idx]
         t_start, t_end = float(bw_info["start"]), float(bw_info["end"])
         comp = resolve_composition_layout(str(getattr(sc, "composition", "auto")), [o.kind for o in sc.objects], sz.aspect_label)
@@ -165,9 +171,15 @@ def compile_plan_to_html(
             | {o.axes_id for o in sc.objects if o.axes_id}
         )
         if any(o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network") for o in sc.objects):
+            new_slots = {getattr(o, "panel_slot", "auto") for o in sc.objects if o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network")}
+            is_split_keep = bool(new_slots <= {"right", "bottom"}) and comp in ("side_by_side_comparison", "stacked_comparison", "time_frequency_split", "multi_view_dashboard")
             retired_axes: set[str] = set()
             for el in elements_payload:
                 if el["hide_at"] > t_start and el["id"] not in referenced_ids and el.get("axes_id") not in referenced_ids:
+                    if is_split_keep and el.get("panel_slot") in ("left", "top"):
+                        continue
+                    if is_split_keep and el.get("axes_id") and any(p.get("id") == el.get("axes_id") and p.get("panel_slot") in ("left", "top") for p in elements_payload):
+                        continue
                     if el["kind"] in ("axes", "table", "matrix", "bar_chart", "graph_network", "annotation", "function_plot", "parametric_curve", "data_series"):
                         el["hide_at"] = round(t_start, 4)
                         if el["kind"] == "axes":
@@ -208,8 +220,19 @@ def compile_plan_to_html(
             )
             elements_payload.append(el)
 
-        # Compile state-changing transform events (move, rotate, scale, zoom) into keyframed pixel transforms
+        # Compile state-changing transform events (move, rotate, scale, zoom) + sweep windows into keyframed pixel transforms
         for ev in sc.events:
+            if ev.op in ("animate_param", "iterate_states", "interpolate_values"):
+                sw_t0 = float(marks_for_scene[ev.anchor_mark]) if (ev.anchor_mark and ev.anchor_mark in marks_for_scene) else (t_start + 0.15)
+                sw_dur = max(0.8, float(ev.duration_s or max(1.4, (t_end - sw_t0) * 0.85)))
+                sw_t1 = round(min(t_end - 0.05, sw_t0 + sw_dur), 4)
+                for el in elements_payload:
+                    if el["hide_at"] <= t_start:
+                        continue
+                    if el.get("sweep_frames_px") and (el["id"] == ev.target_id or getattr(obj_by_id.get(el["id"]), "model_id", None) == getattr(obj_by_id.get(ev.target_id), "model_id", "__none__")):
+                        el["sweep_t0"] = round(sw_t0, 4)
+                        el["sweep_t1"] = max(round(sw_t0 + 0.35, 4), sw_t1)
+                continue
             if ev.op not in ("move", "rotate", "scale", "zoom"):
                 continue
             ev_t0 = float(marks_for_scene[ev.anchor_mark]) if (ev.anchor_mark and ev.anchor_mark in marks_for_scene) else (t_start + 0.35)
@@ -219,6 +242,20 @@ def compile_plan_to_html(
             dy_u = float(ev.shift[1]) if ev.shift and len(ev.shift) >= 2 else 0.0
             sx_px = ax_e[2] / max(0.001, (xr_e[1] - xr_e[0]))
             sy_px = ax_e[3] / max(0.001, (yr_e[1] - yr_e[0]))
+            if ev.op == "zoom":
+                tgt_el = next((e for e in elements_payload if e["id"] == ev.target_id and e["hide_at"] > t_start), None)
+                t_box = tgt_el["box"] if tgt_el else [stage_x, stage_y, stage_w, stage_h]
+                zoom_events.append(
+                    {
+                        "t0": round(ev_t0, 4),
+                        "t1": ev_t1,
+                        "hold_end": round(t_end, 4),
+                        "scale": min(1.85, max(1.06, float(ev.scale_factor or 1.28))),
+                        "cx": round(t_box[0] + 0.5 * t_box[2], 1),
+                        "cy": round(t_box[1] + 0.5 * t_box[3], 1),
+                    }
+                )
+                continue
             tx_record = {
                 "t0": round(ev_t0, 4),
                 "t1": ev_t1,
@@ -226,12 +263,12 @@ def compile_plan_to_html(
                 "dx_px": round(dx_u * sx_px, 2),
                 "dy_px": round(-dy_u * sy_px, 2),
                 "angle_deg": round(float(ev.angle_deg or 0.0), 3),
-                "scale": round(float(ev.scale_factor or (1.18 if ev.op == "zoom" else 1.0)), 4),
+                "scale": round(float(ev.scale_factor or 1.0), 4),
             }
             for el in elements_payload:
                 if el["hide_at"] <= t_start:
                     continue
-                if ev.op == "zoom" or el["id"] == ev.target_id:
+                if el["id"] == ev.target_id:
                     el.setdefault("transforms", []).append(tx_record)
 
         if active_eq:
@@ -239,6 +276,19 @@ def compile_plan_to_html(
             for el in elements_payload:
                 if el["kind"] == "equation" and el["id"] != latest_eq_id and el["hide_at"] > t_start:
                     el["hide_at"] = round(t_start, 4)
+
+        meta_map_hf[sc.scene_id] = [
+            {"id": el["id"], "kind": el["kind"], "box": el["box"]}
+            for el in elements_payload
+            if el["hide_at"] > t_start
+        ]
+
+    if meta_out_path is not None:
+        from pathlib import Path as _Path
+
+        mp = _Path(str(meta_out_path))
+        mp.parent.mkdir(parents=True, exist_ok=True)
+        mp.write_text(json.dumps(meta_map_hf, indent=2), encoding="utf-8")
 
     font_rules_css = build_font_css("/fonts/")
     cap_preset_dict = cap_ir.preset.model_dump() if cap_ir.preset else {}
@@ -261,6 +311,7 @@ def compile_plan_to_html(
             "beats": beat_windows,
             "cues": cues_payload,
             "elements": elements_payload,
+            "zoom_events": zoom_events,
         },
         ensure_ascii=False,
     )
@@ -269,6 +320,13 @@ def compile_plan_to_html(
     cap_pad = "10px 22px" if (cap_ir.preset and cap_ir.preset.use_box) else "2px 8px"
     cap_border = f"1px solid {lk.surface_border}" if (cap_ir.preset and cap_ir.preset.use_box) else "none"
     cap_shadow = "none" if lk.is_light else "0 2px 10px rgba(0, 0, 0, 0.48)"
+    has_katex = (KATEX_DIR / "katex.min.js").exists() and (KATEX_DIR / "katex.min.css").exists()
+    katex_head = (
+        '<link rel="stylesheet" href="/vendor/katex/katex.min.css" />\n'
+        '<script src="/vendor/katex/katex.min.js"></script>\n'
+        if has_katex
+        else ""
+    )
 
     safe_title = html.escape(plan.title)
     runtime_js = build_runtime_js(payload_json)
@@ -278,7 +336,7 @@ def compile_plan_to_html(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{safe_title}</title>
-<style>
+{katex_head}<style>
 {font_rules_css}
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 html, body {{
@@ -417,8 +475,10 @@ html, body {{
   max-width: {int(stage_w * 0.92)}px;
 }}
 .cap-line {{ display: block; }}
-.word-active {{ color: {lk.accent_primary if cap_style in ("editorial", "dialogue") else (lk.ink_primary if cap_style in ("minimal", "accessible") else lk.accent_highlight)}; font-weight: 700; }}
+.word-active {{ color: {lk.accent_primary if cap_style in ("editorial", "dialogue") else (lk.ink_primary if cap_style in ("minimal", "accessible") else lk.ink_primary)}; font-weight: 700; }}
+.word-active-emph {{ color: {lk.accent_primary}; font-weight: 800; border-bottom: 2.5px solid {lk.accent_primary}; padding-bottom: 1px; }}
 .word-past {{ color: {lk.ink_primary}; }}
+.word-past-emph {{ color: {lk.accent_primary}; font-weight: 700; }}
 .word-future {{ color: {lk.ink_primary if cap_style in ("editorial", "minimal", "accessible") else lk.ink_muted}; opacity: {0.92 if cap_style in ("editorial", "minimal", "accessible") else 0.85}; }}
 </style>
 </head>

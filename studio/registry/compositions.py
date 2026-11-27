@@ -39,6 +39,11 @@ _COMP_DEFS: list[tuple[str, str, list[str], list[str], str, list[str]]] = [
     ("spotlight_zoom", "Zoomed camera push magnifying local structure while keeping context.", ["focus_target_id", "zoom_factor"], ["16:9", "9:16"], "Local linearity of smooth manifolds, narrow posterior peak.", ["spotlight_zoom"]),
     ("annotated_overlay", "Persistent mathematical state enriched with concise directional labels and projections.", ["persistent_ids", "annotation_ids"], ["16:9", "9:16"], "Labeling eigenvalues and invariant lines over an existing construction.", ["annotated_overlay"]),
     ("timeline_progression", "Chronological progression across iterations combining discrete table/bar updates and phase state.", ["iteration_visual_id"], ["16:9", "9:16"], "Markov convergence A^k * p_0 -> pi* or Euler integration steps.", ["timeline_progression"]),
+    ("time_frequency_split", "Synchronized dual-domain layout linking time/spatial input with frequency or spectral view.", ["time_ids", "freq_ids"], ["16:9", "9:16"], "Time signal alongside Fourier spectrum or damped response curve.", ["time_frequency_split"]),
+    ("model_with_readout", "Dominant geometric plot paired with live numeric/symbolic telemetry readout panel.", ["main_ids", "readout_ids"], ["16:9", "9:16"], "Winding trajectory with live C(w) center-of-mass coordinates.", ["model_with_readout"]),
+    ("before_after_simulation", "Causal before/after transformation view (raw vs filtered or prior vs posterior).", ["before_ids", "after_ids"], ["16:9", "9:16"], "Raw vs low-pass reconstructed waveform preserving exact time axis.", ["before_after_simulation"]),
+    ("multi_view_dashboard", "Coordinated 3-panel analytical view linking state, curve, and derived invariant.", ["panel_groups"], ["16:9", "9:16"], "Linked signal, complex winding plane, and magnitude spectrum.", ["multi_view_dashboard"]),
+    ("progressive_derivation", "Stepwise symbolic/visual build preserving context while introducing one new step.", ["step_ids"], ["16:9", "9:16"], "Progressive derivation of integral transforms or eigenvalue stability.", ["progressive_derivation"]),
 ]
 
 

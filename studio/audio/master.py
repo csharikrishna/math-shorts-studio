@@ -108,6 +108,11 @@ def measure_loudnorm_filter(ffmpeg_bin: str, input_args: list[str], audio_mix: s
     return ln_filter
 
 
+def _has_audio_stream(ffmpeg_bin: str, media_path: Path) -> bool:
+    p = subprocess.run([ffmpeg_bin, "-hide_banner", "-i", str(media_path)], capture_output=True, text=True, timeout=15)
+    return "Audio:" in (p.stderr or "")
+
+
 def master_video(
     raw_video: Path,
     voice_wav: Path,
@@ -126,7 +131,8 @@ def master_video(
 
     encoder_name, default_codec_flags = _pick_encoder()
 
-    audio_mix = build_audio_mix_graph(1, 2, 0, sfx_gain=sfx_gain, voice_gain=voice_gain, bgm_gain=bgm_gain)
+    sfx_idx = 0 if _has_audio_stream(ffmpeg_bin, raw_video) else None
+    audio_mix = build_audio_mix_graph(1, 2, sfx_idx, sfx_gain=sfx_gain, voice_gain=voice_gain, bgm_gain=bgm_gain)
     ln_filter = measure_loudnorm_filter(
         ffmpeg_bin,
         ["-i", str(raw_video), "-i", str(voice_wav), "-i", str(bgm_wav)],

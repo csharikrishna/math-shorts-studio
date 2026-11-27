@@ -41,6 +41,8 @@ class FrameAuditResult:
     empty_midpoint_scenes: list[str] = field(default_factory=list)
     static_motion_scenes: list[str] = field(default_factory=list)
     edge_clip_frames: int = 0
+    scenes_covered: int = 0
+    total_plan_scenes: int = 0
     contact_sheet_path: str = ""
     report_path: str = ""
     samples: list[dict[str, Any]] = field(default_factory=list)
@@ -52,9 +54,9 @@ def plan_scene_aware_timestamps(
     plan: object | None = None,
     timeline: object | None = None,
     backend_switches_s: list[float] | None = None,
-    max_samples: int = 36,
+    max_samples: int | None = None,
 ) -> list[FrameSampleTarget]:
-    """Select timestamps covering opening, every scene start/mid/end, bookmarks, switches, and final frame."""
+    """Select timestamps covering opening, EVERY scene start/mid/end, bookmarks, switches, and final frame."""
     dur = max(0.4, float(duration_s))
     targets: list[FrameSampleTarget] = [
         FrameSampleTarget(t=round(min(0.45, dur * 0.15), 3), kind="opening", scene_id="opening")
@@ -98,27 +100,17 @@ def plan_scene_aware_timestamps(
 
     targets.append(FrameSampleTarget(t=round(max(0.25, dur - 0.30), 3), kind="final", scene_id="final"))
 
-    # Deduplicate near-identical timestamps while prioritizing scene_mid, opening, final, switch, bookmark
     prio = {"scene_mid": 0, "opening": 1, "final": 1, "backend_switch": 1, "bookmark": 2, "scene_start": 3, "scene_end": 4, "sample": 5}
     dedup: list[FrameSampleTarget] = []
     for item in sorted(targets, key=lambda x: (x.t, prio.get(x.kind, 9))):
-        if any(abs(item.t - prev.t) < 0.35 and item.scene_id == prev.scene_id and item.kind == prev.kind for prev in dedup):
+        if any(abs(item.t - prev.t) < 0.30 and item.scene_id == prev.scene_id and item.kind == prev.kind for prev in dedup):
             continue
         dedup.append(item)
 
-    if len(dedup) > max_samples:
-        # Keep opening, final, all scene_mid + switches first, then evenly stride remaining slots
-        essential = [d for d in dedup if d.kind in ("opening", "final", "backend_switch", "scene_mid")]
-        if len(essential) >= max_samples:
-            step = max(1, len(essential) // max_samples)
-            chosen = essential[::step][: max_samples - 1]
-            if essential[-1] not in chosen:
-                chosen.append(essential[-1])
-            return sorted(chosen, key=lambda x: x.t)
-        extras = [d for d in dedup if d not in essential]
-        room = max_samples - len(essential)
-        step = max(1, len(extras) // max(1, room))
-        return sorted(essential + extras[::step][:room], key=lambda x: x.t)
+    # Never drop scenes silently when a plan is supplied; cap only unbounded untagged sample runs
+    if max_samples is not None and not scenes and len(dedup) > max_samples:
+        step = max(1, len(dedup) // max_samples)
+        return sorted(dedup[::step][:max_samples], key=lambda x: x.t)
     return sorted(dedup, key=lambda x: x.t)
 
 
@@ -133,9 +125,11 @@ def inspect_video_scene_aware(
     backend_switches_s: list[float] | None = None,
     contact_sheet_out: Path | None = None,
     report_out: Path | None = None,
-    max_samples: int = 36,
+    max_samples: int | None = None,
 ) -> FrameAuditResult:
-    """Decode scene-aware video frames via FFmpeg and measure bounds, voids, contrast, captions, and motion deltas."""
+    """Decode scene-aware video frames via concurrent FFmpeg seeks and verify bounds, voids, contrast, and motion."""
+    from concurrent.futures import ThreadPoolExecutor
+
     if not video_path.exists() or video_path.stat().st_size == 0:
         return FrameAuditResult(summary="Missing video file", passed=False, findings=["Missing rendered video for frame QA"])
 
@@ -149,6 +143,7 @@ def inspect_video_scene_aware(
     targets = plan_scene_aware_timestamps(
         dur, plan=plan, timeline=timeline, backend_switches_s=backend_switches_s, max_samples=max_samples
     )
+    plan_scene_ids = [str(getattr(sc, "scene_id", "")) for sc in (getattr(plan, "scenes", []) or [])] if plan is not None else []
     zones = compute_adaptive_zones(format_name, has_header_banner=False, has_equation_strip=False)
     lk = resolve_look(look_name)
     is_light = bool(lk.is_light)
@@ -170,16 +165,23 @@ def inspect_video_scene_aware(
     sample_stats: list[dict[str, Any]] = []
 
     try:
-        for i, tgt in enumerate(targets):
-            img_p = tmp_dir / f"f_{i:03d}.png"
+        def _decode_one(item: tuple[int, FrameSampleTarget]) -> tuple[int, FrameSampleTarget, Image.Image, np.ndarray] | None:
+            idx_i, tgt_i = item
+            img_p = tmp_dir / f"f_{idx_i:04d}.png"
             subprocess.run(
-                [ff, "-y", "-ss", f"{tgt.t:.3f}", "-i", str(video_path), "-frames:v", "1", str(img_p)],
+                [ff, "-y", "-ss", f"{tgt_i.t:.3f}", "-i", str(video_path), "-frames:v", "1", str(img_p)],
                 capture_output=True,
                 timeout=20,
             )
             if img_p.exists() and img_p.stat().st_size > 0:
                 pil = Image.open(img_p).convert("RGB")
-                decoded.append((tgt, pil, np.asarray(pil, dtype=np.float32)))
+                return idx_i, tgt_i, pil, np.asarray(pil, dtype=np.float32)
+            return None
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            dec_raw = [r for r in pool.map(_decode_one, list(enumerate(targets))) if r is not None]
+        dec_raw.sort(key=lambda r: r[0])
+        decoded = [(r[1], r[2], r[3]) for r in dec_raw]
 
         if not decoded:
             return FrameAuditResult(summary="Zero frames decoded", passed=False, findings=["FFmpeg decoded zero frames"])
@@ -290,12 +292,17 @@ def inspect_video_scene_aware(
 
         sheet_path_str = ""
         if contact_sheet_out is not None and decoded:
-            cols = 4 if len(decoded) > 12 else 3
-            rows = (len(decoded) + cols - 1) // cols
-            cw, ch = 420, int(round(420 * decoded[0][1].height / max(1, decoded[0][1].width)))
+            # Cap contact sheet display strip cleanly at <= 48 evenly distributed panels while auditing ALL decoded frames
+            sheet_items = decoded
+            if len(decoded) > 48:
+                stride = len(decoded) / 48.0
+                sheet_items = [decoded[int(k * stride)] for k in range(48)]
+            cols = 6 if len(sheet_items) > 24 else (4 if len(sheet_items) > 12 else 3)
+            rows = (len(sheet_items) + cols - 1) // cols
+            cw, ch = 360 if cols >= 6 else 420, int(round((360 if cols >= 6 else 420) * decoded[0][1].height / max(1, decoded[0][1].width)))
             sheet = Image.new("RGB", (cols * cw, rows * ch), color=(240, 240, 236) if is_light else (14, 18, 28))
             draw = ImageDraw.Draw(sheet)
-            for idx_f, (tgt, pil_img, _) in enumerate(decoded):
+            for idx_f, (tgt, pil_img, _) in enumerate(sheet_items):
                 r_i, c_i = divmod(idx_f, cols)
                 thumb = pil_img.resize((cw, ch), Image.Resampling.LANCZOS)
                 sheet.paste(thumb, (c_i * cw, r_i * ch))
@@ -305,6 +312,12 @@ def inspect_video_scene_aware(
             sheet.save(contact_sheet_out)
             sheet_path_str = str(contact_sheet_out)
 
+        scenes_covered_cnt = len({s for s in arr_by_scene.keys() if s in set(plan_scene_ids)}) if plan_scene_ids else len(arr_by_scene)
+        total_sc_cnt = len(plan_scene_ids)
+        if plan_scene_ids and scenes_covered_cnt < total_sc_cnt:
+            missing_s = [sid for sid in plan_scene_ids if sid not in arr_by_scene]
+            findings.append(f"Incomplete scene QA coverage: {scenes_covered_cnt}/{total_sc_cnt} scenes covered; missing {missing_s[:5]}")
+
         rep_path_str = ""
         if report_out is not None:
             report_out.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +326,8 @@ def inspect_video_scene_aware(
                     {
                         "video_path": str(video_path),
                         "duration_s": round(dur, 3),
+                        "scenes_covered": scenes_covered_cnt,
+                        "total_plan_scenes": total_sc_cnt,
                         "samples": sample_stats,
                         "empty_midpoint_scenes": empty_midpoints,
                         "static_motion_scenes": static_motion_scenes,
@@ -327,8 +342,9 @@ def inspect_video_scene_aware(
 
         mean_fg = float(np.mean(fg_ratios)) if fg_ratios else 0.0
         summary = (
-            f"frames={len(decoded)}, median_stage_w={med_span*100:.1f}%, "
-            f"mean_fg={mean_fg*100:.1f}%, max_delta={max_diff:.1f}, edge_clips={edge_clips}, empty_mids={len(empty_midpoints)}"
+            f"frames={len(decoded)}, scenes={scenes_covered_cnt}/{total_sc_cnt or scenes_covered_cnt}, "
+            f"median_stage_w={med_span*100:.1f}%, mean_fg={mean_fg*100:.1f}%, max_delta={max_diff:.1f}, "
+            f"edge_clips={edge_clips}, empty_mids={len(empty_midpoints)}"
         )
         return FrameAuditResult(
             summary=summary,
@@ -343,6 +359,8 @@ def inspect_video_scene_aware(
             empty_midpoint_scenes=empty_midpoints,
             static_motion_scenes=static_motion_scenes,
             edge_clip_frames=edge_clips,
+            scenes_covered=scenes_covered_cnt,
+            total_plan_scenes=total_sc_cnt,
             contact_sheet_path=sheet_path_str,
             report_path=rep_path_str,
             samples=sample_stats,

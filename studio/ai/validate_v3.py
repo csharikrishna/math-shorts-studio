@@ -60,9 +60,20 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
 
     try:
         plan = materialize_constructions(plan)
-    except ValueError as exc:
-        issues.append(f"Construction error: {exc}")
+    except Exception as exc:
+        issues.append(f"Construction/model error: {exc}")
         return {"issues": issues, "verified": verified_claims, "failed": failed_claims, "unsupported": unsupported_claims}
+
+    from studio.ai.linked_models import evaluate_linked_math_model
+    computed_models: dict[str, dict[str, object]] = {}
+    for m_spec in getattr(plan, "math_models", []) or []:
+        if m_spec.model_id in computed_models:
+            issues.append(f"Duplicate LinkedMathModelSpec model_id {m_spec.model_id!r}.")
+            continue
+        try:
+            computed_models[m_spec.model_id] = evaluate_linked_math_model(m_spec)
+        except Exception as exc:
+            issues.append(f"LinkedMathModelSpec {m_spec.model_id!r} evaluation failed: {exc}")
 
     state: dict[str, str] = {}
     live_objs: dict[str, SceneObject] = {}
@@ -104,6 +115,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
 
             if obj.axes_id and state.get(obj.axes_id) not in ("declared", "visible"):
                 issues.append(f"{where} obj {obj.id}: axes_id {obj.axes_id!r} is not live.")
+            if obj.model_id and obj.model_id not in computed_models:
+                issues.append(f"{where} obj {obj.id}: references unknown math_model {obj.model_id!r}.")
 
             if obj.kind == "function_plot":
                 if not obj.expr:
@@ -177,7 +190,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 if t_kind in ("matrix", "table", "equation", "axes", "annotation", "bar_chart"):
                     issues.append(f"{where}: cannot rotate non-geometric object {ev.target_id!r} of kind {t_kind!r}.")
             if ev.op in ("create", "draw", "reveal", "trace", "sequence", "parallel", "group"):
-                state[ev.target_id] = "visible"
+                if ev.target_id in live_objs:
+                    state[ev.target_id] = "visible"
             elif ev.op in ("transform", "morph", "duplicate"):
                 if not ev.source_id or state.get(ev.source_id) not in ("declared", "visible"):
                     issues.append(f"{where}: {ev.op} requires live source_id (got {ev.source_id!r}).")
@@ -570,6 +584,91 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 elif not mk_failed:
                     verified_claims.append(f"{where}: markov_stochastic_invariant({cl.object_ids})")
 
+            elif cl.kind in (
+                "fourier_winding_centroid",
+                "spectral_derivation_consistency",
+                "signal_filtering_equivalence",
+                "parseval_energy_conservation",
+            ):
+                m_data = computed_models.get(cl.model_id or "") if cl.model_id else None
+                if m_data is None:
+                    # Also accept materialized signal_spectral_pipeline via objects sharing one model_id
+                    inferred_mid = next((live_objs[oid].model_id for oid in cl.object_ids if live_objs[oid].model_id in computed_models), None)
+                    m_data = computed_models.get(inferred_mid) if inferred_mid else None
+                if m_data is None:
+                    msg = f"{where} claim {cl.kind}: requires a valid LinkedMathModelSpec model_id (signal_spectral_pipeline)."
+                    issues.append(msg); unsupported_claims.append(msg)
+                elif cl.kind == "fourier_winding_centroid":
+                    fake_1d = [oid for oid in cl.object_ids if live_objs[oid].kind == "function_plot"]
+                    if fake_1d:
+                        msg = f"{where} claim fourier_winding_centroid: rejects 1D Cartesian function_plot {fake_1d}; must bind genuine 2D complex winding curve."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        exp_c = list(m_data.get("centroid_point") or [0.0, 0.0])  # type: ignore[arg-type]
+                        pts_objs = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind in ("point", "vector")]
+                        mismatch = False
+                        for po in pts_objs:
+                            got = po.end_coords if po.kind == "vector" else po.coords
+                            if got and (abs(got[0] - exp_c[0]) > max(cl.tolerance, 2e-2) or abs(got[1] - exp_c[1]) > max(cl.tolerance, 2e-2)):
+                                mismatch = True
+                        if mismatch:
+                            msg = f"{where} claim fourier_winding_centroid: visual centroid differs from trapezoidal integral C(w)={exp_c}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: fourier_winding_centroid(C={exp_c})")
+                elif cl.kind == "spectral_derivation_consistency":
+                    spec_objs = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind == "data_series" and live_objs[oid].points_list]
+                    exp_peak = list(m_data.get("spectrum_peak") or [0.0, 0.0])  # type: ignore[arg-type]
+                    if not spec_objs:
+                        msg = f"{where} claim spectral_derivation_consistency: requires materialized spectrum data_series object."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        peak_got = max(spec_objs[0].points_list, key=lambda p: p[1])
+                        if abs(peak_got[1] - exp_peak[1]) > max(cl.tolerance, 5e-2):
+                            msg = f"{where} claim spectral_derivation_consistency: curve peak {peak_got} != derived {exp_peak}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: spectral_derivation_consistency(peak={exp_peak})")
+                elif cl.kind == "signal_filtering_equivalence":
+                    meas = dict(m_data.get("measurements") or {})  # type: ignore[arg-type]
+                    e_raw = float(meas.get("energy_time_raw", 0.0))
+                    e_filt = float(meas.get("energy_time_filtered", 0.0))
+                    if e_raw <= 0 or abs(e_raw - e_filt) < max(1e-4, 0.01 * e_raw):
+                        msg = f"{where} claim signal_filtering_equivalence: filtered signal did not measurably alter spectral energy (raw={e_raw}, filt={e_filt})."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: signal_filtering_equivalence(e_raw={e_raw:.2f}, e_filt={e_filt:.2f})")
+                elif cl.kind == "parseval_energy_conservation":
+                    meas = dict(m_data.get("measurements") or {})  # type: ignore[arg-type]
+                    rel_err = float(meas.get("parseval_rel_error", 1.0))
+                    if rel_err > max(cl.tolerance, 5e-3):
+                        msg = f"{where} claim parseval_energy_conservation: relative error {rel_err:.6f} exceeds tolerance."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: parseval_energy_conservation(rel_err={rel_err:.2e})")
+
+        # Validate ClaimLedgerEntry rows (exact spoken span + assumptions + backing)
+        from studio.audio.tts import parse_script as _parse_scr
+
+        norm_narr_plain = re.sub(r"\s+", " ", _parse_scr(BOOKMARK_RE.sub("", re.sub(r"\[m:[^\]]+\]", "", sc.narration)))[0]).strip().lower()
+        for entry in getattr(sc, "claim_ledger", []) or []:
+            span_clean = re.sub(r"\s+", " ", _parse_scr(BOOKMARK_RE.sub("", entry.exact_narration_span))[0]).strip().lower()
+            if span_clean and span_clean not in norm_narr_plain:
+                span_words = [w.strip(".,!?;:\"'()") for w in span_clean.split() if len(w.strip(".,!?;:\"'()")) > 2]
+                narr_words = set(w.strip(".,!?;:\"'()") for w in norm_narr_plain.split())
+                overlap_ratio = (sum(1 for w in span_words if w in narr_words) / len(span_words)) if span_words else 0.0
+                if overlap_ratio < 0.85:
+                    issues.append(f"{where} claim_ledger[{entry.claim_id}]: exact_narration_span not found in scene narration.")
+            if entry.model_id and entry.model_id not in computed_models:
+                issues.append(f"{where} claim_ledger[{entry.claim_id}]: references unknown model_id {entry.model_id!r}.")
+            missing_l = [oid for oid in entry.object_ids if oid not in live_objs]
+            if missing_l:
+                issues.append(f"{where} claim_ledger[{entry.claim_id}]: references missing object(s) {missing_l}.")
+            if entry.status == "failed":
+                failed_claims.append(f"{where}: ledger {entry.claim_id}")
+            elif entry.status == "unverified":
+                unsupported_claims.append(f"{where}: ledger {entry.claim_id} unverified")
+
         # Supplementary narration-to-visual consistency checks
         low_narr = sc.narration.lower()
         live_poly_vals = [v for k, v in live_polys.items() if state.get(k) in ("declared", "visible")]
@@ -584,6 +683,14 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         if live_poly_vals and re.search(r"\b(?:rotate|rotates|rotating)\b", low_narr) and not re.search(r"\b(?:never|without|not|no)\s+rotat", low_narr):
             if not any(e.op in ("rotate", "animate_param") for e in sc.events):
                 issues.append(f"{where}: narration mentions rotation, but no rotate/animate_param event is present.")
+        if re.search(r"\b(?:wind|winding|wraps?\s+around)\b", low_narr) and re.search(r"\b(?:center\s+of\s+mass|centroid|frequency|fourier|complex)\b", low_narr):
+            has_winding_model = any(o.model_id in computed_models and o.model_output == "winding_curve" for o in sc.objects)
+            has_winding_op = any(c.op == "winding_complex_curve" for c in sc.constructions)
+            has_fake_trig_plot = any(o.kind == "function_plot" and o.expr and re.search(r"\b(?:cos|sin)\(", o.expr) for o in sc.objects)
+            if has_fake_trig_plot and not (has_winding_model or has_winding_op):
+                issues.append(f"{where}: narration describes complex winding, but stage uses a 1D cos/sin function_plot instead of winding_complex_curve/model_output='winding_curve'.")
+            elif not (has_winding_model or has_winding_op or any(o.kind in ("parametric_curve", "data_series") and o.points_list for o in sc.objects)):
+                issues.append(f"{where}: narration describes winding center-of-mass without a 2D winding curve object.")
 
         # Reject bare empty axes stages (every declared axes must host at least one plotted curve, vector, trajectory, point, or polygon)
         non_chrome_kinds = ("axes", "annotation", "equation", "matrix", "table")
@@ -600,7 +707,7 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             )
             if not (has_local or (not require_claims and has_later)):
                 issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon in this scene.")
-        live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if st_v in ("declared", "visible")}
+        live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if oid in live_objs and st_v in ("declared", "visible")}
         if require_claims and "axes" in live_stage_kinds and not scene_non_chrome and not any(o.kind in ("matrix", "table", "bar_chart", "graph_network") for o in sc.objects):
             if not any(o.axes_id for o in scene_non_chrome) and not scene_axes_ids:
                 issues.append(f"{where}: empty axes stage (declare curves, vectors, polygons, or trajectories alongside axes).")
@@ -651,14 +758,25 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
 
     unclaimed_non_constructive = unclaimed_math_scenes
     explicit_ai_reviewed = sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "ai_reviewed")
+    source_supported_unbacked = sum(
+        1
+        for sc in plan.scenes
+        for entry in (getattr(sc, "claim_ledger", []) or [])
+        if entry.status == "source_supported"
+    ) + sum(
+        1
+        for sc in plan.scenes
+        for cl in sc.claims
+        if cl.verification_level == "source_supported"
+    )
     coverage = {
         "deterministically_verified": len(verified_claims),
-        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path", "markov_chain_evolution", "discrete_pmf_convolution")),
-        "source_supported": sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "source_supported"),
+        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path", "markov_chain_evolution", "discrete_pmf_convolution", "winding_complex_curve", "spectral_transform_from_signal", "filtered_signal_reconstruction")) + len(computed_models),
+        "source_supported": source_supported_unbacked,
         "ai_reviewed": explicit_ai_reviewed,
         "unsupported": len(unsupported_claims) + (unclaimed_non_constructive if require_claims else 0),
         "failed": len(failed_claims),
-        "human_review_required": 1 if (failed_claims or unsupported_claims or (require_claims and unclaimed_non_constructive > 0)) else 0,
+        "human_review_required": 1 if (failed_claims or unsupported_claims or source_supported_unbacked > 0 or (require_claims and unclaimed_non_constructive > 0)) else 0,
     }
     return {
         "issues": issues,

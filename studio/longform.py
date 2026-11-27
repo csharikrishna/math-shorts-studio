@@ -19,7 +19,7 @@ from studio.ai.knowledge import AudienceLevel, ChapterSpec, ContinuityState, Kno
 from studio.ai.v3_schema import VideoPlanV3
 from studio.ai.validate_v3 import validate_v3_plan
 from studio.ai.world_model import materialize_constructions
-from studio.audio.tts import AudioTimeline, find_ffmpeg
+from studio.audio.tts import AudioTimeline, SyncedBeat, find_ffmpeg
 from studio.creative.dialogue import clean_spoken_text, format_dialogue_instructions, resolve_speaker_voices
 from studio.creative.director import CreativeDirector
 from studio.creative.script_ir import (
@@ -361,6 +361,26 @@ def create_longform_plan(
                 ch_beat_lists[s_idx - 1] = s_beats
 
         all_beats = [b for bl in ch_beat_lists if bl for b in bl]
+        # Size duration BEFORE locking ScriptIR so zero post-lock ext_* bypass chapters ever occur
+        est_script_s = sum(len(parse_script(b.spoken_text)[0].split()) for b in all_beats) / KOKORO_EFFECTIVE_WPS + len(lf_plan.chapters) * 1.2
+        extra_idx = 1
+        while est_script_s < target_duration_s * 0.90 and extra_idx <= 4:
+            ext_id = f"ext_{extra_idx}"
+            ext_title = f"Deep Dive {extra_idx}: Case Studies & Edge Regimes in {topic}"
+            ext_s = min(90.0, max(45.0, target_duration_s - est_script_s))
+            ext_ch = ChapterSpec(
+                chapter_id=ext_id,
+                title=ext_title,
+                summary=f"Apply core mechanism to edge cases, trade-offs, and contrasting regimes in {topic}.",
+                node_ids=[],
+                target_duration_s=ext_s,
+            )
+            lf_plan.chapters.append(ext_ch)
+            _, ext_beats = _draft_ch_script(len(lf_plan.chapters), ext_ch)
+            all_beats.extend(ext_beats)
+            est_script_s += sum(len(parse_script(b.spoken_text)[0].split()) for b in ext_beats) / KOKORO_EFFECTIVE_WPS + 1.2
+            extra_idx += 1
+
         doc_script = ScriptIR(
             topic=lf_plan.topic,
             title=lf_plan.topic,
@@ -372,7 +392,8 @@ def create_longform_plan(
             beats=all_beats,
         )
         commit_script_revision(doc_script, stage="initial", notes="Assembled chapter-ordered ScriptIR before visual scene planning", approve=False)
-        rep_global = cdir.review_script(doc_script, use_llm=False)
+        rep_global = cdir.review_script(doc_script, use_llm=True)
+        gen_log.append({"stage": "editorial_review_global", "approved": rep_global.approved, "summary": rep_global.summary})
         if not rep_global.approved:
             doc_script = cdir.repair_script(doc_script, rep_global, target_duration_s=target_duration_s)
             for bi, b in enumerate(doc_script.beats, 1):
@@ -380,7 +401,7 @@ def create_longform_plan(
                     b.chapter_id = b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "ch_1"
                 b.beat_id = f"{b.chapter_id}__{b.scene_id}"
                 b.spoken_text = clean_spoken_text(b.spoken_text)
-        approve_script_ir(doc_script, notes="Global ScriptIR approved prior to scene compilation")
+        approve_script_ir(doc_script, notes="Global ScriptIR approved and permanently locked prior to scene compilation")
         script_cache_file.write_text(doc_script.model_dump_json(indent=2), encoding="utf-8")
 
     (lf_dir / "SCRIPT.md").write_text(export_script_md(doc_script), encoding="utf-8")
@@ -442,7 +463,11 @@ def create_longform_plan(
             "APPROVED BEATS (preserve exact `scene_id`, `speaker`, and `narration` verbatim; add deterministic constructions, visual objects, meaningful motion events, and verified StructuredClaim objects):\n"
             "CLAIM & CONSTRUCTION RULES:\n"
             "- NEVER attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to `axes`, `parametric_curve`, `function_plot`, `point`, or `vector`.\n"
-            "- For curves, waves, winding paths, spectra, and calculus/physics scenes use `function_equivalence`, `point_on_function`, `derivative_equality`, `definite_integral_value`, `coefficient_correctness`, or verified constructions (`fourier_series_partial_sum`, `continuous_fourier_spectrum`, `parametric_trajectory`, `riemann_sum`).\n"
+            "- NEVER emit `stationary_point` without BOTH `expr` and `x_val`; for ODE fixed points use `ode_equilibrium` with `dx_expr` and `dy_expr`.\n"
+            "- ALL expression strings (`expr`, `expected_expr`, `dx_expr`, `dy_expr`) MUST evaluate cleanly using numeric constants and ONLY `x` (or `t` / `x, y` in ODEs); NEVER write symbolic Greek constants like `omega`, `gamma`, `zeta`, `k`, `m`, `A` inside `expr`.\n"
+            "- Whenever visuals plot coupled signals, complex winding z(t)=x(t)e^{-i*w*t}, spectra, filtering, optimization, Bayes posteriors, ODE orbits, or series approximations, declare a shared `math_models` (`LinkedMathModelSpec`) entry and bind objects with `model_id` and `model_output`, plus explicit `x_label`, `y_label`, and `legend_items`.\n"
+            "- Every `claim_ledger[].exact_narration_span` MUST copy an exact plain-English substring from `scene.narration` (without `<bookmark>` tags).\n"
+            "- For curves, waves, winding paths, spectra, and calculus/physics scenes use `fourier_winding_centroid`, `spectral_derivation_consistency`, `signal_filtering_equivalence`, `parseval_energy_conservation`, `function_equivalence`, `point_on_function`, `derivative_equality`, `definite_integral_value`, or `coefficient_correctness`, and populate `claim_ledger`.\n"
             f"{locked_spec_lines}"
         )
         ch_plan = None
@@ -500,127 +525,7 @@ def create_longform_plan(
             ordered_plans[c_idx - 1] = mat
 
     chapter_plans: list[VideoPlanV3] = [cp for cp in ordered_plans if cp is not None]
-    last_ch = lf_plan.chapters[-1] if lf_plan.chapters else None
-    prev_summary = f"{last_ch.title}: {last_ch.summary}" if last_ch else ""
-
-    # Calibrated duration check using true Kokoro effective WPS (~2.08 wps including beat pauses)
-    est_s = sum(len(parse_script(s.narration)[0].split()) for cp in chapter_plans for s in cp.scenes) / KOKORO_EFFECTIVE_WPS + len(chapter_plans) * 1.2
-    extra_idx = 1
-    base_chapter_count = len(lf_plan.chapters)
-    while est_s < target_duration_s * 0.90 and extra_idx <= 4:
-        ext_id = f"ext_{extra_idx}"
-        ext_title = f"Deep Dive {extra_idx}: Case Studies & Edge Regimes in {topic}"
-        ext_target_s = min(90.0, max(45.0, target_duration_s - est_s))
-        ext_min_words = max(75, int(ext_target_s * 1.65))
-        ext_max_words = max(ext_min_words + 30, int(ext_target_s * 2.25))
-        if on_progress:
-            on_progress(f"extending duration ({est_s:.0f}s < 90% of {target_duration_s:.0f}s): {ext_title}")
-        ext_cache_file = logs_dir / f"ch_{req_sig}_{ext_id}_valid.json"
-        mat = None
-        if ext_cache_file.exists():
-            try:
-                cand_ext = VideoPlanV3.model_validate_json(ext_cache_file.read_text(encoding="utf-8"))
-                from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
-
-                c_det = _v3_det(cand_ext, require_claims=True)
-                if not c_det.get("issues") and not c_det.get("unclaimed_math_scenes"):
-                    if all(len(parse_script(s.narration)[0].split()) <= 45 for s in cand_ext.scenes):
-                        mat = cand_ext
-            except Exception:
-                mat = None
-
-        if mat is None:
-            ext_prompt = (
-                f"{ch_system}\n\n"
-                f"Overall Topic: {topic}\nContinuation Chapter: {ext_title}\n"
-                f"Previous Chapter Context: {prev_summary}\n"
-                f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
-                f"Target duration: {ext_target_s:.0f}s ({ext_min_words}-{ext_max_words} spoken words across 6-8 concise scenes; EVERY single scene narration MUST be <= 40 words).\n"
-                "Write a complete VideoPlanV3 deepening intuition through contrasting concrete regimes, deterministic constructions, and verifiable claims."
-            )
-            ch_plan, _ch_resp = director.provider.generate_structured(ext_prompt, VideoPlanV3, system=ch_system, temperature=0.4)
-            ext_issues: list[str] = []
-            for r_idx in range(1, MAX_REPAIRS + 1):
-                from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
-
-                det_e = _v3_det(ch_plan, require_claims=True)
-                ext_issues = list(det_e.get("issues", []))
-                for u_msg in det_e.get("unclaimed_math_scenes", []):
-                    ext_issues.append(str(u_msg))
-                for s_chk in ch_plan.scenes:
-                    wc_s = len(parse_script(s_chk.narration)[0].split())
-                    if wc_s > 45:
-                        ext_issues.append(f"scene {s_chk.scene_id}: narration {wc_s} words exceeds 45-word documentary turn limit; split or tighten.")
-                w_cnt = sum(len(parse_script(s.narration)[0].split()) for s in ch_plan.scenes)
-                if w_cnt < ext_min_words:
-                    ext_issues.append(f"Narration too brief ({w_cnt} words < {ext_min_words}); add another concise scene.")
-                elif w_cnt > ext_max_words:
-                    ext_issues.append(f"Narration too long ({w_cnt} words > {ext_max_words}); tighten phrasing.")
-                if not ext_issues:
-                    break
-                fix_prompt = "Fix EVERY listed VideoPlanV3 issue:\n- " + "\n- ".join(ext_issues) + f"\n\nCurrent JSON:\n{ch_plan.model_dump_json()}"
-                ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.25)
-            # Final re-check after loop
-            from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
-
-            det_final = _v3_det(ch_plan, require_claims=True)
-            ext_ok = (
-                not det_final.get("issues")
-                and not det_final.get("unclaimed_math_scenes")
-                and all(len(parse_script(s.narration)[0].split()) <= 48 for s in ch_plan.scenes)
-            )
-            if ext_ok:
-                mat = materialize_constructions(ch_plan)
-                ext_cache_file.write_text(mat.model_dump_json(indent=2), encoding="utf-8")
-
-        if mat is not None:
-            lf_plan.chapters.append(ChapterSpec(chapter_id=ext_id, title=ext_title, node_ids=[], target_duration_s=ext_target_s))
-            doc_script.locked = False
-            for s_item in mat.scenes:
-                s_item.narration = clean_spoken_text(s_item.narration)
-                nb = NarrationBeatIR(
-                    beat_id=f"{ext_id}__{s_item.scene_id}",
-                    chapter_id=ext_id,
-                    scene_id=s_item.scene_id,
-                    speaker=s_item.speaker if s_item.speaker in ("narrator", "educator", "learner", "host_a", "host_b") else "narrator",  # type: ignore[arg-type]
-                    spoken_text=s_item.narration,
-                    educational_purpose=s_item.purpose,
-                    mathematical_claims=[c.statement or c.kind for c in s_item.claims],
-                    visual_intent=", ".join(f"{o.id}:{o.kind}" for o in s_item.objects[:5]),
-                    estimated_duration_s=round(max(2.5, len(parse_script(s_item.narration)[0].split()) / KOKORO_EFFECTIVE_WPS + 0.35), 2),
-                )
-                sync_beat_anchors(nb)
-                doc_script.beats.append(nb)
-            chapter_plans.append(mat)
-            est_s += sum(len(parse_script(s.narration)[0].split()) for s in mat.scenes) / KOKORO_EFFECTIVE_WPS + 1.2
-            prev_summary = ext_title
-        extra_idx += 1
-
-    if len(chapter_plans) > base_chapter_count:
-        cdir_ext = CreativeDirector(model=model, provider_name=provider_name, free_only=free_only)
-        rep_ext = cdir_ext.review_script(doc_script, use_llm=False)
-        if not rep_ext.approved:
-            doc_script = cdir_ext.repair_script(doc_script, rep_ext, target_duration_s=target_duration_s)
-            for b in doc_script.beats:
-                if not b.chapter_id:
-                    b.chapter_id = b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "c1"
-                b.beat_id = f"{b.chapter_id}__{b.scene_id}"
-                b.spoken_text = clean_spoken_text(b.spoken_text)
-        approve_script_ir(doc_script, notes="Re-approved ScriptIR after duration extension chapters")
-        for cp_ext, ch_spec in zip(chapter_plans, lf_plan.chapters):
-            sub_beats = [b for b in doc_script.beats if b.chapter_id == ch_spec.chapter_id]
-            if sub_beats:
-                sub_ir = ScriptIR(
-                    topic=doc_script.topic,
-                    title=ch_spec.title,
-                    audience=doc_script.audience,
-                    narration_mode=doc_script.narration_mode,
-                    beats=sub_beats,
-                )
-                lock_script_to_plan(cp_ext, sub_ir, stage="approved", restore_locked_spoken_text=True, strict_ids=False)
-    (lf_dir / "SCRIPT.md").write_text(export_script_md(doc_script), encoding="utf-8")
-    _atomic_write_json(lf_dir / "script_ir_approved.json", doc_script.model_dump())
-
+    _atomic_write_json(logs_dir / "longform_plan_final.json", lf_plan.model_dump())
     _atomic_write_json(logs_dir / "generation_log.json", gen_log)
     return lf_plan, chapter_plans
 
@@ -796,7 +701,7 @@ def build_longform_video(
                     )
                     return j_idx, j_ch, j_ckey, j_skey, j_up, hf_res.video_path
 
-                hf_workers = max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HF_WORKERS", str(min(3, max(1, (os.cpu_count() or 4) // 2)))))))
+                hf_workers = 1 if backend == "hybrid" else max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HF_WORKERS", str(min(3, max(1, (os.cpu_count() or 4) // 2)))))))
                 with ThreadPoolExecutor(max_workers=hf_workers) as pool:
                     for j_idx, j_ch, j_ckey, j_skey, j_up, mp4 in pool.map(_render_hf, pending_jobs):
                         jobs.put_cached(j_ckey, mp4)
@@ -850,12 +755,13 @@ def build_longform_video(
 
     chapters_meta: list[dict[str, object]] = []
     yt_lines: list[str] = []
-    merged_srt: list[str] = []
-    merged_vtt: list[str] = ["WEBVTT", ""]
     merged_transcript: list[str] = []
-    srt_idx = 1
     cursor_s = 0.0
     all_shots = []
+    merged_scenes = []
+    merged_tl_beats = []
+    merged_frame_meta: dict[str, list] = {}
+    cap_ir_items: list[tuple[str, float, Path]] = []
 
     for ch, cp_plan, mp4, srt_p, txt_p, c_bdir in zip(
         longform_plan.chapters, chapter_plans, chapter_mp4s, chapter_srts, chapter_transcripts, chapter_builds
@@ -867,6 +773,44 @@ def build_longform_video(
         yt_lines.append(f"{_fmt_yt_ts(cursor_s)} {ch.title}")
         tl_path = c_bdir / "timeline.json"
         ch_tl = AudioTimeline.load(tl_path) if tl_path.exists() else None
+        if ch_tl is not None:
+            for b in ch_tl.beats:
+                q_bid = f"{ch.chapter_id}__{b.id}" if not str(b.id).startswith(f"{ch.chapter_id}__") else b.id
+                merged_tl_beats.append(
+                    SyncedBeat(
+                        id=q_bid,
+                        narration=b.narration,
+                        caption=b.caption,
+                        audio_path=b.audio_path,
+                        start_time=round(float(b.start_time) + cursor_s, 3),
+                        end_time=round(float(b.end_time) + cursor_s, 3),
+                        speech_duration=b.speech_duration,
+                        total_duration=b.total_duration,
+                        words=[[w[0], round(float(w[1]) + cursor_s, 3), round(float(w[2]) + cursor_s, 3), *w[3:]] for w in b.words],
+                        word_provenance=list(getattr(b, "word_provenance", []) or []),
+                        marks={k: round(float(v) + cursor_s, 3) for k, v in b.marks.items()},
+                        speaker=b.speaker,
+                    )
+                )
+        for sc in cp_plan.scenes:
+            sc_q = sc.model_copy(deep=True)
+            sc_q.scene_id = f"{ch.chapter_id}__{sc.scene_id}" if not sc.scene_id.startswith(f"{ch.chapter_id}__") else sc.scene_id
+            merged_scenes.append(sc_q)
+
+        ch_meta_p = c_bdir / "scene_frame_metadata.json"
+        if ch_meta_p.exists():
+            try:
+                raw_cm = json.loads(ch_meta_p.read_text(encoding="utf-8"))
+                for sc_k, objs_v in raw_cm.items():
+                    q_k = f"{ch.chapter_id}__{sc_k}" if not str(sc_k).startswith(f"{ch.chapter_id}__") else str(sc_k)
+                    merged_frame_meta[q_k] = objs_v
+            except Exception:
+                pass
+
+        ch_cap_p = c_bdir / "caption_ir.json"
+        if ch_cap_p.exists():
+            cap_ir_items.append((ch.chapter_id, cursor_s, ch_cap_p))
+
         ch_sb = storyboard_from_v3_plan(cp_plan, format_name=format_name, look_name=resolved_look, audio_timeline=ch_tl)
         for sh in ch_sb.shots:
             sh.shot_id = f"{ch.chapter_id}_{sh.shot_id}"
@@ -876,17 +820,6 @@ def build_longform_video(
 
         if not srt_p.exists() or not txt_p.exists():
             raise RuntimeError(f"Missing required chapter subtitle/transcript for {ch.chapter_id}: {srt_p}, {txt_p}")
-
-        blocks = srt_p.read_text(encoding="utf-8").strip().split("\n\n")
-        for blk in blocks:
-            lines = blk.splitlines()
-            if len(lines) >= 3 and "-->" in lines[1]:
-                a_ts, b_ts = [x.strip() for x in lines[1].split("-->")]
-                sa, sb = _shift_srt_ts(a_ts, cursor_s), _shift_srt_ts(b_ts, cursor_s)
-                body = "\n".join(lines[2:])
-                merged_srt.extend([str(srt_idx), f"{sa} --> {sb}", body, ""])
-                merged_vtt.extend([f"{sa.replace(',', '.')} --> {sb.replace(',', '.')}", body, ""])
-                srt_idx += 1
 
         merged_transcript.append(f"## {ch.title}\n\n{txt_p.read_text(encoding='utf-8').strip()}")
         cursor_s += dur
@@ -914,9 +847,34 @@ def build_longform_video(
 
     _atomic_write_json(chapters_json, chapters_meta)
     chapters_txt.write_text("\n".join(yt_lines), encoding="utf-8")
-    srt_out.write_text("\n".join(merged_srt), encoding="utf-8")
-    vtt_out.write_text("\n".join(merged_vtt), encoding="utf-8")
     txt_out.write_text("\n\n".join(merged_transcript), encoding="utf-8")
+
+    # Compile and export complete documentary global CaptionIR, AudioTimeline, and SceneFrameMetadata
+    from studio.captions import export_caption_ir_files, merge_chapter_caption_irs
+    from studio.config import FORMATS as _FORMATS
+
+    prof_lf = _FORMATS.get(format_name, _FORMATS["widescreen_hd"])
+    global_cap_ir = merge_chapter_caption_irs(
+        cap_ir_items,
+        style=resolved_cap,
+        width_px=prof_lf.pixel_width,
+        height_px=prof_lf.pixel_height,
+    )
+    global_cap_exports = export_caption_ir_files(global_cap_ir, lf_dir, slug, look_name=resolved_look)
+    global_cap_ir_p = Path(global_cap_exports["caption_ir"])
+
+    global_tl = AudioTimeline(
+        beats=merged_tl_beats,
+        voice=voice,
+        rate=rate,
+        master_voice_wav="",
+        total_duration=round(cursor_s, 3),
+    )
+    global_tl_p = lf_dir / "timeline.json"
+    global_tl.save(global_tl_p)
+
+    global_meta_p = lf_dir / "scene_frame_metadata.json"
+    _atomic_write_json(global_meta_p, merged_frame_meta)
 
     # Export unified documentary STORYBOARD.md and REVIEW.md
     from studio.ai.v3_schema import VideoPlanV3 as _VP3
@@ -925,7 +883,7 @@ def build_longform_video(
     merged_plan = _VP3(
         topic=longform_plan.topic,
         title=longform_plan.topic,
-        scenes=[sc for cp in chapter_plans for sc in cp.scenes],
+        scenes=merged_scenes,
     )
     full_sb = Storyboard(
         topic=longform_plan.topic,
@@ -946,7 +904,6 @@ def build_longform_video(
 
     approved_script_p = lf_dir / "script_ir_approved.json"
     if not approved_script_p.exists():
-        # Check chapter build/script outputs or longform dir
         cand_p = PROJECT_ROOT / "build" / f"longform_{slug}" / "script_ir_approved.json"
         if cand_p.exists():
             approved_script_p = cand_p
@@ -956,7 +913,6 @@ def build_longform_video(
             doc_script = ScriptIR.model_validate_json(approved_script_p.read_text(encoding="utf-8"))
         except Exception:
             doc_script = None
-    first_cap_ir = (chapter_builds[0] / "caption_ir.json") if chapter_builds and (chapter_builds[0] / "caption_ir.json").exists() else None
     loud = verify_audio_loudness(final_mp4)
     streams = verify_media_streams(final_mp4)
     base_target = sum(float(c.target_duration_s or 0.0) for c in longform_plan.chapters if not str(c.chapter_id).startswith("ext_"))
@@ -973,21 +929,54 @@ def build_longform_video(
         look_name=resolved_look,
         chapter_plans=list(chapter_plans),
         target_duration_s=target_sum,
-        caption_ir_path=first_cap_ir,
+        timeline=global_tl,
+        caption_ir=global_cap_ir,
+        caption_ir_path=global_cap_ir_p,
         srt_path=srt_out,
+        renderer_meta_path=global_meta_p,
     )
-    export_review_md(rev_report, lf_dir / "REVIEW.md")  # type: ignore[arg-type]
+    review_md_p = lf_dir / "REVIEW.md"
+    export_review_md(rev_report, review_md_p)  # type: ignore[arg-type]
+
+    from studio.provenance import build_and_write_manifest
+
+    gen_log_p = lf_dir / "logs" / "generation_log.json"
+    prov_log = json.loads(gen_log_p.read_text(encoding="utf-8")) if gen_log_p.exists() else []
+    manifest, manifest_p = build_and_write_manifest(
+        slug=slug,
+        topic=longform_plan.topic,
+        title=longform_plan.topic,
+        mp4_path=final_mp4,
+        plan=merged_plan,
+        backend=backend,
+        format_name=format_name,
+        look_name=resolved_look,
+        caption_style=resolved_cap,
+        build_dir=lf_dir,
+        script_ir=doc_script,
+        audio_timeline=global_tl,
+        timeline_path=global_tl_p,
+        caption_ir_path=global_cap_ir_p,
+        review_report=rev_report,
+        review_path=review_md_p,
+        renderer_config={"ui": ui, "look": look, "tts_engine": tts_engine, "voice": voice, "rate": rate},
+        provider_provenance=prov_log if isinstance(prov_log, list) else [],
+    )
 
     return {
         "output_mp4": str(final_mp4),
+        "manifest_path": str(manifest_p),
+        "production_id": manifest.production_id,
+        "mp4_sha256": manifest.final_mp4_sha256,
         "total_duration_s": round(cursor_s, 3),
         "chapters": chapters_meta,
         "chapters_txt": str(chapters_txt),
+        "caption_ir": str(global_cap_ir_p),
         "srt": str(srt_out),
         "vtt": str(vtt_out),
         "transcript": str(txt_out),
         "storyboard_md": str(lf_dir / "STORYBOARD.md"),
-        "review_md": str(lf_dir / "REVIEW.md"),
+        "review_md": str(review_md_p),
         "design_md": str(lf_dir / "DESIGN.md"),
         "contact_sheet": str(getattr(rev_report, "contact_sheet_path", "")),
         "production_state": str(getattr(rev_report, "production_state", "review_required")),
@@ -1091,6 +1080,7 @@ def derive_recomposed_short(
         audience=src.audience,
         strategy=src.strategy,
         target_duration_s=short_target_s,
+        math_models=list(src.math_models),
         scenes=kept_scenes,
     )
     short_dir = PROJECT_ROOT / "build" / f"short_from_{slug}"
@@ -1137,6 +1127,7 @@ def derive_recomposed_short(
             caption_style=resolved_cap,
             look=look,
             strict_layout=False,
+            output_stem=f"SHORT_{slug}",
         )
         if rendered.resolve() != target_mp4.resolve():
             target_mp4.write_bytes(rendered.read_bytes())
@@ -1144,15 +1135,20 @@ def derive_recomposed_short(
 
     loud = verify_audio_loudness(mp4)
     streams = verify_media_streams(mp4)
-    v3_short_bdir = PROJECT_ROOT / "build" / f"V3_{short_json.stem}_{format_name}"
+    v3_short_bdir = PROJECT_ROOT / "build" / f"SHORT_{slug}_{format_name}"
+    if not v3_short_bdir.exists():
+        v3_short_bdir = PROJECT_ROOT / "build" / f"V3_{short_json.stem}_{format_name}"
     short_cap_ir = next(
         (p for p in (v3_short_bdir / "caption_ir.json", short_dir / "caption_ir.json") if p.exists()),
         short_dir / "caption_ir.json",
     )
     short_srt = next(
-        (p for p in (v3_short_bdir / f"V3_{short_json.stem}.srt", mp4.with_suffix(".srt")) if p.exists()),
+        (p for p in (v3_short_bdir / f"SHORT_{slug}.srt", v3_short_bdir / f"V3_{short_json.stem}.srt", mp4.with_suffix(".srt")) if p.exists()),
         mp4.with_suffix(".srt"),
     )
+    short_tl_p = v3_short_bdir / "timeline.json"
+    short_tl = AudioTimeline.load(short_tl_p) if short_tl_p.exists() else None
+    short_meta_p = v3_short_bdir / "scene_frame_metadata.json"
     rev = audit_educational_quality(
         topic=short_plan.topic,
         title=short_plan.title,
@@ -1163,16 +1159,43 @@ def derive_recomposed_short(
         contact_sheet_out=short_dir / f"QA_CONTACT_SHEET_{resolved_look}.png",
         look_name=resolved_look,
         target_duration_s=short_target_s,
+        timeline=short_tl,
         caption_ir_path=short_cap_ir if short_cap_ir.exists() else None,
         srt_path=short_srt if short_srt.exists() else None,
+        renderer_meta_path=short_meta_p if short_meta_p.exists() else None,
     )
-    export_review_md(rev, short_dir / "REVIEW.md")  # type: ignore[arg-type]
+    short_rev_p = short_dir / "REVIEW.md"
+    export_review_md(rev, short_rev_p)  # type: ignore[arg-type]
+
+    from studio.provenance import build_and_write_manifest
+
+    manifest, manifest_p = build_and_write_manifest(
+        slug=f"{slug}_short",
+        topic=short_plan.topic,
+        title=short_plan.title,
+        mp4_path=mp4,
+        plan=short_plan,
+        backend=backend,
+        format_name=format_name,
+        look_name=resolved_look,
+        caption_style=resolved_cap,
+        build_dir=short_dir,
+        audio_timeline=short_tl,
+        timeline_path=short_tl_p if short_tl_p.exists() else None,
+        caption_ir_path=short_cap_ir if short_cap_ir.exists() else None,
+        review_report=rev,
+        review_path=short_rev_p,
+        renderer_config={"ui": ui, "look": look, "tts_engine": tts_engine, "voice": voice, "rate": rate},
+    )
     return {
         "output_mp4": str(mp4),
+        "manifest_path": str(manifest_p),
+        "production_id": manifest.production_id,
+        "mp4_sha256": manifest.final_mp4_sha256,
         "source_chapter": longform_plan.chapters[chapter_index].chapter_id,
         "duration_s": _probe_duration(mp4),
         "storyboard_md": str(short_dir / "STORYBOARD.md"),
-        "review_md": str(short_dir / "REVIEW.md"),
+        "review_md": str(short_rev_p),
         "production_state": str(getattr(rev, "production_state", "review_required")),
         "qa_review_approved": bool(getattr(rev, "approved", False)),
         "qa_review_score": float(getattr(rev, "overall_score", 0.0)),

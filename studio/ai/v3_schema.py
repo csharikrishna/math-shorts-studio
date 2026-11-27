@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from typing import Annotated, Any, Literal, Optional
+from pydantic import BaseModel, Field, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
+from studio.ai.linked_models import LinkedMathModelSpec
 from studio.ai.schema import ColorRole, SfxCue
 
 ObjectKind = Literal[
@@ -73,7 +75,23 @@ CompositionKind = Literal[
     "spotlight_zoom",
     "annotated_overlay",
     "timeline_progression",
+    "time_frequency_split",
+    "model_with_readout",
+    "before_after_simulation",
+    "multi_view_dashboard",
+    "progressive_derivation",
 ]
+
+
+class SweepKeyframe(BaseModel):
+    """Synchronized keyframe for animated parameter sweeps and linked traces."""
+
+    param: float
+    point: list[float] = Field(default_factory=list)
+    vector_end: list[float] = Field(default_factory=list)
+    spec_point: list[float] = Field(default_factory=list)
+    curve_pts: list[list[float]] = Field(default_factory=list)
+    label: str = ""
 
 
 class SceneObject(BaseModel):
@@ -81,6 +99,9 @@ class SceneObject(BaseModel):
     kind: ObjectKind
     persist: bool = True
     color_role: ColorRole = "primary"
+    # Shared linked computational model binding (optional)
+    model_id: Optional[str] = None
+    model_output: Optional[str] = None
     # Math / geometry fields (kind-dependent)
     expr: Optional[str] = None
     t_range: Optional[list[float]] = None
@@ -100,6 +121,10 @@ class SceneObject(BaseModel):
     param_name: Optional[str] = None
     param_init: float = 0.0
     label: str = ""
+    x_label: str = ""
+    y_label: str = ""
+    legend_items: list[list[str]] = Field(default_factory=list)
+    sweep_keyframes: Annotated[list[SweepKeyframe], SkipJsonSchema()] = Field(default_factory=list)
     card: bool = False
     matrix_rows: list[list[str]] = Field(default_factory=list)
     table_headers: list[str] = Field(default_factory=list)
@@ -130,6 +155,9 @@ ConstructionKind = Literal[
     "fourier_general_synthesis",
     "newton_root_path",
     "markov_chain_evolution",
+    "winding_complex_curve",
+    "spectral_transform_from_signal",
+    "filtered_signal_reconstruction",
 ]
 
 
@@ -179,6 +207,14 @@ class ConstructionParams(BaseModel):
     period: Optional[float] = None
     transition_matrix: Optional[list[list[float]]] = None
     initial_state: Optional[list[float]] = None
+    # Linked signal & spectral parameters
+    selected_freq: Optional[float] = None
+    cutoff_freq: Optional[float] = None
+    high_cutoff_freq: Optional[float] = None
+    filter_kind: Optional[Literal["lowpass", "bandpass", "highpass"]] = None
+    freq_range: Optional[list[float]] = None
+    t_range: Optional[list[float]] = None
+    angular_units: Optional[Literal["hz", "rad"]] = None
 
 
 class ConstructionOp(BaseModel):
@@ -217,13 +253,48 @@ ClaimRuleKind = Literal[
     "eigenvalue_stability_regime",
     "ode_equilibrium",
     "markov_stochastic_invariant",
+    "fourier_winding_centroid",
+    "spectral_derivation_consistency",
+    "signal_filtering_equivalence",
+    "parseval_energy_conservation",
 ]
+
+
+class ClaimLedgerEntry(BaseModel):
+    """Claim ledger tracking exact spoken text, formal claim, assumptions, and verification status."""
+
+    claim_id: str
+    exact_narration_span: str
+    proposition: str
+    assumptions: str = ""
+    model_id: Optional[str] = None
+    object_ids: list[str] = Field(default_factory=list)
+    status: Literal[
+        "deterministically_verified",
+        "numerically_tested",
+        "source_supported",
+        "ai_reviewed",
+        "unverified",
+        "failed",
+    ] = "deterministically_verified"
+    evidence: str = ""
+
+
+class AudioDemoSpec(BaseModel):
+    """Optional synthesized educational sound demonstration tied to a LinkedMathModelSpec."""
+
+    model_id: str
+    variant: Literal["raw", "filtered", "raw_vs_filtered"] = "raw_vs_filtered"
+    base_pitch_hz: float = 220.0
+    duration_s: float = 2.4
+    anchor_mark: Optional[str] = None
 
 
 class StructuredClaim(BaseModel):
     """Explicit mathematical constraint verified against live objects and symbolic/numeric truth."""
 
     kind: ClaimRuleKind
+    model_id: Optional[str] = None
     object_ids: list[str] = Field(default_factory=list)
     container_id: Optional[str] = None
     statement: str = ""
@@ -275,17 +346,36 @@ class SceneV3(BaseModel):
     composition: CompositionKind = "auto"
     color_role: ColorRole = "primary"
     sfx_cue: SfxCue = "pop_marimba"
+
+    @field_validator("sfx_cue", mode="before")
+    @classmethod
+    def _coerce_sfx_cue(cls, v: Any) -> str:
+        s = str(v or "pop_marimba").strip().lower()
+        if s in ("pop_marimba", "whoosh_soft", "tick_soft", "chime_reveal", "chord_epiphany"):
+            return s
+        if "chime" in s or "success" in s:
+            return "chime_reveal"
+        if "whoosh" in s or "sweep" in s or "transform" in s:
+            return "whoosh_soft"
+        if "tick" in s:
+            return "tick_soft"
+        if "chord" in s or "epiphany" in s:
+            return "chord_epiphany"
+        return "pop_marimba"
     constructions: list[ConstructionOp] = Field(default_factory=list)
     claims: list[StructuredClaim] = Field(default_factory=list)
+    claim_ledger: list[ClaimLedgerEntry] = Field(default_factory=list)
+    demo_audio: Optional[AudioDemoSpec] = None
     objects: list[SceneObject] = Field(default_factory=list)
     events: list[AnimationEvent] = Field(default_factory=list)
 
 
 class VideoPlanV3(BaseModel):
     schema_version: str = "3.0"
-    topic: str
-    title: str
+    topic: str = "Mathematical Visualization"
+    title: str = ""
     audience: str = "general"
     strategy: str = ""
     target_duration_s: float = 55.0
+    math_models: list[LinkedMathModelSpec] = Field(default_factory=list)
     scenes: list[SceneV3]

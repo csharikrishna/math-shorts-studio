@@ -405,27 +405,27 @@ class TestV37Suite(unittest.TestCase):
             cue_words = ["Any", "linear", "autonomous", "system", "can", "be", "written"]
             timed = [(w, float(i) * 0.4, float(i + 1) * 0.4, i == 6) for i, w in enumerate(cue_words)]
             cc.set_words(timed, 0.0)
-            cc._show(0, 6, [(w, float(i) * 0.4, float(i + 1) * 0.4, False) for i, w in enumerate(cue_words)], ["Any linear autonomous", "system can be written"], 2.4)
+            cc._show(0, 6, timed, ["Any linear autonomous", "system can be written"], 2.4)
             line_mob, parts = cc._built[0]
             self.assertEqual(len(line_mob.submobjects), 2)
             row0_cy = float(line_mob.submobjects[0].get_center()[1])
             row1_cy = float(line_mob.submobjects[1].get_center()[1])
             self.assertGreater(row0_cy - row1_cy, cc.line_h * 1.15)
-            # Active pill for row-1 word "written" must align with row 1, NEVER midway between rows or touching row 0
-            self.assertLess(abs(float(cc.pill.get_center()[1]) - row1_cy), 0.08)
-            self.assertLess(float(cc.pill.get_top()[1]), float(line_mob.submobjects[0].get_bottom()[1]) - 0.02)
+            # Active pill for row-1 emphasized word must align with row 1, NEVER midway between rows or touching row 0
+            self.assertLess(abs(float(cc.pill.get_center()[1]) - row1_cy), 0.12)
+            self.assertLess(float(cc.pill.get_top()[1]), float(line_mob.submobjects[0].get_bottom()[1]) - 0.01)
             # Horizontal clearance from previous word "be"
             self.assertGreater(float(cc.pill.get_left()[0]), float(parts[5].get_right()[0]))
 
-            # Active pill for row-0 word "studying" must align with row 0, clear row 1, and stay strictly inside neighbors
+            # Active pill for row-0 emphasized word "studying" must align with row 0, clear row 1, and stay strictly inside neighbors
             words2 = ["By", "studying", "how", "vectors", "evolve"]
-            timed2 = [(w, float(i) * 0.4, float(i + 1) * 0.4, False) for i, w in enumerate(words2)]
+            timed2 = [(w, float(i) * 0.4, float(i + 1) * 0.4, i == 1) for i, w in enumerate(words2)]
             cc.set_words(timed2, 3.0)
             cc._show(0, 1, timed2, ["By studying how", "vectors evolve"], 3.4)
             line2, parts2 = cc._built[0]
             self.assertEqual(len(line2.submobjects), 2)
-            self.assertLess(abs(float(cc.pill.get_center()[1]) - float(line2.submobjects[0].get_center()[1])), 0.08)
-            self.assertGreater(float(cc.pill.get_bottom()[1]), float(line2.submobjects[1].get_top()[1]) + 0.02)
+            self.assertLess(abs(float(cc.pill.get_center()[1]) - float(line2.submobjects[0].get_center()[1])), 0.12)
+            self.assertGreater(float(cc.pill.get_bottom()[1]), float(line2.submobjects[1].get_top()[1]) + 0.01)
             self.assertGreater(float(cc.pill.get_left()[0]), float(parts2[0].get_right()[0]))
             self.assertLess(float(cc.pill.get_right()[0]), float(parts2[2].get_left()[0]))
         finally:

@@ -52,3 +52,14 @@ Verified via `studio.design.fonts.verify_pinned_fonts()` against `assets/fonts/F
 | `SourceSans3-Variable.ttf` (+ `SourceSans3-OFL.txt`) | `Source Sans 3` (Body / Captions) | SIL OFL-1.1 | `646,340` | `042fe2cc0b933e328410d7acbd0aa6a1873dca5aef81875f4bc214b08825c7b9` |
 | `STIXTwoText-Variable.ttf` (+ `STIXTwo-OFL.txt`) | `STIX Two Text` (Editorial Serif) | SIL OFL-1.1 | `418,956` | `7962b8b7811e6a896c9a91a0bccbb5241047770eb24d4997c5cb5fe21d5c0df2` |
 | `STIX2Math.otf` (+ `STIXTwo-OFL.txt`) | `STIX Two Math` (Mathematical Symbols) | SIL OFL-1.1 | `808,220` | `56cc42241cccc86d6d570134aa918fe8ac714f4b340d9916282fcc53c592d546` |
+
+## 5. Pinned Offline Mathematical Typesetting Assets (`assets/vendor/katex/`)
+
+Verified via `studio.renderers.hyperframes.typography.verify_vendored_katex()` against `assets/vendor/katex/KATEX_MANIFEST.json`:
+
+| Asset | Version / Role | License | SHA-256 / Count |
+| --- | --- | --- | --- |
+| `katex.min.js` | KaTeX `0.19.1` offline typesetting runtime | MIT | `fa140498b8cfc8302cbe5e7cb1bdbc1f952bc38b3fa258ede09e73edbf9a74bc` |
+| `katex.min.css` | KaTeX `0.19.1` CSS stylesheet | MIT | `00e0b094171b07f5842207f5469b4feac2b2f7bce1aeec943c08da4d697f4dcf` |
+| `fonts/*.woff2` | Offline KaTeX math/serif font glyphs | MIT / OFL | `20` bundled `.woff2` files (zero remote CDN calls) |
+| `LICENSE` | Bundled MIT license text | MIT | Recorded in `KATEX_MANIFEST.json` |

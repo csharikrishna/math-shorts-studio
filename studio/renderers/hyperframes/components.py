@@ -113,12 +113,38 @@ def compile_scene_object_element(
         "id": obj.id,
         "kind": obj.kind,
         "axes_id": obj.axes_id,
+        "panel_slot": getattr(obj, "panel_slot", "auto") or "auto",
+        "model_output": obj.model_output or "",
         "color": col,
         "show_at": t_start,
         "hide_at": hide_at,
         "box": [round(v, 1) for v in box],
         "label": obj.label,
+        "x_label": getattr(obj, "x_label", "") or "",
+        "y_label": getattr(obj, "y_label", "") or "",
+        "legend_items": [
+            {"label": item[0], "color": _role_color(design, item[1] if len(item) > 1 else "primary")}
+            for item in (getattr(obj, "legend_items", []) or [])
+            if item
+        ],
     }
+
+    if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "readout", "trajectory", "end_point"):
+        xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (default_geom_xr, default_geom_yr, box))
+        sw_px: list[dict[str, Any]] = []
+        for kf in obj.sweep_keyframes:
+            pt_sel = kf.spec_point if (obj.model_output == "spectrum_peak" and kf.spec_point) else kf.point
+            sw_px.append(
+                {
+                    "param": round(float(kf.param), 4),
+                    "point_px": list(_to_px(pt_sel, ax_sw, xr_sw, yr_sw)) if len(pt_sel) >= 2 else [],
+                    "vec_start_px": list(_to_px([0.0, 0.0], ax_sw, xr_sw, yr_sw)),
+                    "vec_end_px": list(_to_px(kf.vector_end, ax_sw, xr_sw, yr_sw)) if len(kf.vector_end) >= 2 else [],
+                    "polyline_px": [list(_to_px(q[:2], ax_sw, xr_sw, yr_sw)) for q in kf.curve_pts] if (kf.curve_pts and obj.model_output == "winding_curve") else [],
+                    "label": kf.label,
+                }
+            )
+        el["sweep_frames_px"] = sw_px
 
     if obj.kind == "axes":
         xr = (obj.x_range or [-4.0, 4.0])[:2]
@@ -136,7 +162,11 @@ def compile_scene_object_element(
             raw_pts = [p[:2] for p in obj.points_list]
         else:
             raw_pts = _sample_function_points(obj.expr or "sin(x)", xr, yr)
-        el["polyline"] = [_to_px(pt, ax_box, xr, yr) for pt in raw_pts]
+        def _clamp_pt(q: list[float]) -> tuple[float, float]:
+            cx_q = max(float(xr[0]), min(float(xr[1]), float(q[0])))
+            cy_q = max(float(yr[0]), min(float(yr[1]), float(q[1])))
+            return _to_px([cx_q, cy_q], ax_box, xr, yr)
+        el["polyline"] = [_clamp_pt(pt) for pt in raw_pts]
     elif obj.kind == "bar_chart" and obj.values:
         vals = [float(v) for v in obj.values]
         mx = max((abs(v) for v in vals), default=1.0) or 1.0
@@ -169,6 +199,7 @@ def compile_scene_object_element(
         el["segment"] = {"x1": p0[0], "y1": p0[1], "x2": p1[0], "y2": p1[1], "arrow": obj.kind == "vector"}
     elif obj.kind == "equation":
         el["eq_text"] = _pretty_math_label(obj.tex or obj.label or "x")
+        el["tex"] = obj.tex or obj.label or "x"
         el["card"] = bool(obj.card)
     elif obj.kind == "annotation":
         xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (default_geom_xr, default_geom_yr, box))

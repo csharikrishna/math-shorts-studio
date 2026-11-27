@@ -20,7 +20,7 @@ from studio.renderers.base import BackendRenderResult, RenderBackend
 from studio.renderers.hyperframes.browser import _current_process_rss_mb, _start_loopback_server
 from studio.renderers.hyperframes.capture import capture_frames_to_ffmpeg
 from studio.renderers.hyperframes.compiler import compile_plan_to_html
-from studio.renderers.hyperframes.typography import stage_fonts_to_site
+from studio.renderers.hyperframes.typography import stage_fonts_to_site, stage_katex_to_site
 
 if TYPE_CHECKING:
     from studio.ai.v3_schema import VideoPlanV3
@@ -92,19 +92,28 @@ class HyperFramesBackend(RenderBackend):
 
         design = default_design_spec(format_name=format_name, look_name=resolved_look)
         html_doc, _total_dur = compile_plan_to_html(
-            plan, design, audio_timeline=audio_timeline, caption_style=resolved_cap, caption_ir=shared_cap_ir
+            plan,
+            design,
+            audio_timeline=audio_timeline,
+            caption_style=resolved_cap,
+            caption_ir=shared_cap_ir,
+            meta_out_path=bdir / "scene_frame_metadata.json",
         )
         site_dir = bdir / "site"
         site_dir.mkdir(parents=True, exist_ok=True)
         stage_fonts_to_site(site_dir)
+        stage_katex_to_site(site_dir)
         (site_dir / "index.html").write_text(html_doc, encoding="utf-8")
 
         fps = prof.fps
         ffmpeg_bin = find_ffmpeg()
+        from studio.audio.demo_signals import apply_plan_audio_demos
+
+        voice_wav_use = apply_plan_audio_demos(plan, audio_timeline, bdir)
         audio_mix = build_audio_mix_graph(1, 2, sfx_idx=None)
         ln_filter = measure_loudnorm_filter(
             ffmpeg_bin,
-            ["-i", str(audio_timeline.master_voice_wav), "-i", str(bgm_wav)],
+            ["-i", str(voice_wav_use), "-i", str(bgm_wav)],
             audio_mix,
         )
         enc_name, codec_flags = _pick_encoder()
@@ -117,7 +126,7 @@ class HyperFramesBackend(RenderBackend):
             "-vcodec", "mjpeg",
             "-framerate", str(fps),
             "-i", "-",
-            "-i", str(audio_timeline.master_voice_wav),
+            "-i", str(voice_wav_use),
             "-i", str(bgm_wav),
             "-filter_complex", filter_complex,
             "-map", "[master_v]",
@@ -149,8 +158,25 @@ class HyperFramesBackend(RenderBackend):
 
         dt = time.perf_counter() - t0
         from studio.longform import _probe_duration
+        from studio.provenance import build_and_write_manifest
 
         dur = _probe_duration(out_mp4)
+        build_and_write_manifest(
+            slug=slug,
+            topic=plan.topic,
+            title=plan.title,
+            mp4_path=out_mp4,
+            plan=plan,
+            backend=self.name,
+            format_name=format_name,
+            look_name=resolved_look,
+            caption_style=resolved_cap,
+            build_dir=bdir,
+            audio_timeline=audio_timeline,
+            timeline_path=(bdir / "timeline.json") if (bdir / "timeline.json").exists() else None,
+            caption_ir_path=cap_ir_file if cap_ir_file.exists() else None,
+            renderer_config={"tts_engine": tts_engine, "voice": voice, "rate": rate},
+        )
         return BackendRenderResult(
             backend=self.name,
             video_path=out_mp4,

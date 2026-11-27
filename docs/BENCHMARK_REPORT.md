@@ -87,3 +87,30 @@ Measured after V3.8 implementation on local Windows hardware (**NVIDIA GeForce G
 
 ### Strict Publication-Gate Verification on V3.7 Markov Chains Baseline
 - Re-auditing the retained V3.7 `Markov Chains` plan (`c1..c6`) under V3.8 `audit_educational_quality()` honestly downgraded its stale V3.7 approval (`90.0/100, approved=True`) to **`review_required` (`13.0/100, approved=False`)** because `unsupported=10` and `human_review_required=5`.
+
+---
+
+## 7. V3.9 Cross-Renderer Linked Benchmark Suite & Held-Out Unseen Topic Evaluation
+
+Measured after V3.9 implementation on local Windows hardware (**NVIDIA GeForce GTX 1650, `h264_nvenc`, Local Kokoro-82M CPU TTS, offline Chromium CDP + vendored KaTeX `0.19.1`, free Gemini `gemini-3.5-flash-lite`**).
+
+### A. 5-Target Fourier Linked-Visualization Benchmark (`SignalSpectralPipeline`)
+
+All 5 targets share the identical approved `ScriptIR`, `LinkedMathModelSpec(kind="signal_spectral_pipeline", expr="0.85*cos(2*pi*2*t) + 0.55*cos(2*pi*5*t)")`, trapezoidal complex winding integral $z(t)=x(t)e^{-i\omega t}$, consistent derived magnitude spectrum & low-pass `rfft`/`irfft` filtering, and locally synthesized sound demonstration (`studio/audio/demo_signals.py`):
+
+| Benchmark Target | Backend / Theme / Caption | Duration & Size | Render Time / Peak RSS | Media, Loudness & QA Status | Manifest Verified |
+| --- | --- | --- | --- | --- | --- |
+| `v39_bench_light_manimgx_widescreen_hd.mp4` | `manimgx` / `light` / `editorial` | `46.90 s` (`3,261,178 B`) | `39.16 s` / `282.4 MB` | `60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.7 dBFS`, `drift=0.00s`; **`publication_approved` (`94.0/100`)** | `True` |
+| `v39_bench_dark_manimgx_widescreen_hd.mp4` | `manimgx` / `midnight_studio` / `editorial` | `46.90 s` (`3,141,724 B`) | `36.40 s` / `1025.96 MB` | `60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.7 dBFS`, `drift=0.00s`, `layout: no problems in 14 samples`; **`publication_approved` (`94.0/100`)** | `True` |
+| `v39_bench_hf_katex_widescreen_hd.mp4` | `hyperframes` / `editorial_light` / `editorial` | `42.70 s` (`3,045,974 B`) | `40.78 s` / `1030.02 MB` | `60.00 fps`, `48000 Hz`, `-15.6 LUFS`, `-2.9 dBFS`, `drift=0.00s`, offline KaTeX `0.19.1`; **`publication_approved` (`94.0/100`)** | `True` |
+| `v39_bench_hybrid_widescreen_hd.mp4` | `hybrid` / `midnight_studio` / `editorial` | `42.50 s` (`2,546,052 B`) | `50.97 s` / `1032.01 MB` | `60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.8 dBFS`, `drift=0.00s`; **`publication_approved` (`94.0/100`)** | `True` |
+| `v39_bench_portrait_shorts_hd.mp4` | `manimgx` / `light` / `kinetic` (`9:16`) | `46.90 s` (`4,043,909 B`) | `41.48 s` / `1032.01 MB` | `1080x1920 @ 60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.7 dBFS`, `drift=0.00s`; **`publication_approved` (`94.0/100`)** | `True` |
+
+### B. Frozen-Code Held-Out Unseen Topic Documentary & Portrait Short
+
+Topic generated autonomously **without any topic-specific core code**: `"Damped Harmonic Oscillators, Resonance Curves, and Phase Portraits"`.
+
+- **Long-Form Documentary (`hybrid`, `editorial_light`, `editorial`):** `output/LF_damped_harmonic_oscillators_resonance_curves_and_widescreen_hd.mp4` (`10,165,835 B`, `225.62 s` vs `240.0 s` target, `7` chapters, `28` scenes, `10` object kinds, `6` compositions, `0` layout errors across ManimGX chapters, `124` decoded QA frames across `28/28` scenes, `median_stage_w=68.8%`, `edge_clips=0`, `empty_mids=0`, `1920x1080 @ 60.00 fps`, `-15.2 LUFS`, `-2.2 dBFS`, `drift=0.00 s`, merged `CaptionIR`: `79` cues / `517` words, `deterministically_verified=23`, `numerically_tested=19`, `unsupported=0`, `manifest_ok=True`).
+  - **Honest QA Result (`REVIEW.md`):** **`54.0/100` (`production_state="rejected"`, `approved=False`)** — honest QA caught a trailing punctuation token timing inversion in `c2__cue_0003` (`('.', 31.633, 31.253)`) and empty `motion_ops` warning on Gemini-compiled chapters instead of rubber-stamping `100/100`.
+- **Derived Native `9:16` Portrait Short (`manimgx`, `light`, `kinetic`):** `output/SHORT_damped_harmonic_oscillators_resonance_curves_and_shorts_hd.mp4` (`2,738,573 B`, `44.00 s`, `1080x1920 @ 60.00 fps`, `-15.1 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `17` QA frames covering `4/4` scenes, `median_stage_w=72.2%`, `cues=21`, `tts_word_boundary=102`, `manifest_ok=True`).
+  - **Honest QA Result (`REVIEW.md`):** **`78.0/100` (`production_state="review_required"`, `approved=False`)** — flagged `motion_ops=[]` and `-12.2%` pacing deviation cleanly.

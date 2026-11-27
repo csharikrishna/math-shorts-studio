@@ -701,8 +701,8 @@ class CaptionCard:
                 if self.style == "neon":
                     part.set_stroke(color=self.theme.background, width=self.OUTLINE_WIDTH, opacity=0.90, background=True)
                 if j == wi:
-                    if self.minimal or self.style == "neon":
-                        part.set_fill(color=self.theme.accent_primary if emph else self.accent)
+                    if self.minimal or self.style == "neon" or not emph:
+                        part.set_fill(color=self.theme.accent_primary if emph else (sp_col if self.preset.show_speaker_badge else self.accent))
                     else:
                         part.set_color(self.theme.background)
                 elif j < wi:
@@ -719,7 +719,8 @@ class CaptionCard:
             self._shown = (ci, wi)
             return
 
-        if self.minimal or self.style == "neon" or not parts or wi >= len(parts) or len(parts[wi].submobjects) == 0:
+        # Only apply pill background highlight when active word is a semantic concept token (never on filler words)
+        if not emph or self.minimal or self.style == "neon" or not parts or wi >= len(parts) or len(parts[wi].submobjects) == 0:
             self._show_minimal(ci, wi, line, parts, emph, t)
             return
 
@@ -745,25 +746,20 @@ class CaptionCard:
         pad_x = max(0.024, min(self.line_h * 0.085, min_gap * 0.36))
         pill_w = max(0.08, float(parts[wi].width) + 2.0 * pad_x)
 
-        row_cy = float(row_mob.get_center()[1])
-        base_h = max(float(parts[wi].height) + 0.08, float(row_mob.height) * 1.14, self.line_h * 1.06)
-        pill_h = max(min(base_h, max_pill_h), float(parts[wi].height) + 0.04)
-        half_h = 0.5 * pill_h
-        cy_lo = float(parts[wi].get_top()[1]) + 0.018 - half_h
-        cy_hi = float(parts[wi].get_bottom()[1]) - 0.018 + half_h
-        if cy_lo <= cy_hi:
-            pill_cy = min(max(row_cy, cy_lo), cy_hi)
-        else:
-            pill_cy = float(parts[wi].get_center()[1])
+        w_cy = float(parts[wi].get_center()[1])
+        base_h = max(float(parts[wi].height) + 0.14, float(row_mob.height) * 1.18, self.line_h * 1.08)
+        pill_h = min(max_pill_h, max(base_h, float(parts[wi].height) + 0.08))
+        # Keep pill centered on the glyph group itself (clamped gently) so descenders never clip bottom edge
+        pill_cy = 0.7 * w_cy + 0.3 * float(row_mob.get_center()[1])
 
         pill_col = self.theme.accent_primary if emph else self.accent
-        pad_y = max(0.02, 0.5 * (pill_h - float(parts[wi].height)))
+        pad_y = max(0.04, 0.5 * (pill_h - float(parts[wi].height)))
         pill = m.BackgroundRectangle(
             parts[wi],
             buff=(pad_x, pad_y),
             corner_radius=min(self.line_h * 0.16, pill_h * 0.32),
             color=pill_col,
-            fill_opacity=0.95,
+            fill_opacity=0.92,
             stroke_width=0.0,
         ).move_to(np.array([float(parts[wi].get_center()[0]), pill_cy, 0.0]))
         self.group.submobjects = [self.bg, self._speaker_badge, pill, line]

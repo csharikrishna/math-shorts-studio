@@ -581,6 +581,9 @@ class V3Scene(StoryScene):
             if tracker is not None and ev.param_values:
                 tracker.set_value(float(ev.param_values[0]))
                 return m.Succession(*(tracker.animate.set_value(float(v)) for v in ev.param_values[1:]))
+            if tracker is not None:
+                tracker.set_value(0.0)
+                return tracker.animate.set_value(1.0)
             step_states = getattr(mob, "_step_bar_states", None)
             if step_states and isinstance(mob, m.VGroup):
                 bars_only = [sub for sub in mob if isinstance(sub, m.Rectangle)]
@@ -641,7 +644,13 @@ class V3Scene(StoryScene):
         return self._get_geom_frame()[0]
 
     def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
-        ax = self.registry.get(axes_id or "")
+        def _resolve_axes(aid: str | None) -> m.Axes | None:
+            cand = self.registry.get(aid or "")
+            if isinstance(cand, m.Axes):
+                return cand
+            return getattr(cand, "_wrapped_axes", None)
+
+        ax = _resolve_axes(axes_id)
         if isinstance(ax, m.Axes):
             return ax.c2p(coords[0], coords[1])
         s, center = self._get_geom_frame()
@@ -666,12 +675,14 @@ class V3Scene(StoryScene):
             )
             cx, cy, x_len, y_len = px_box_to_manim(pbox, zones, L.frame_w, L.frame_h)
             axis_col = T.text_muted if not getattr(T, "is_light", False) else T.text_primary
-            eq_clearance = 0.88 if zones.equation_box.h > 0 else 0.94
-            y_shift = -0.10 if zones.equation_box.h > 0 else 0.0
+            has_chrome = bool(getattr(obj, "x_label", "") or getattr(obj, "y_label", "") or getattr(obj, "legend_items", None))
+            eq_clearance = 0.72 if has_chrome else (0.86 if zones.equation_box.h > 0 else 0.92)
+            x_fit_scale = 0.88 if has_chrome else 0.94
+            y_shift = -0.06 if zones.equation_box.h > 0 else 0.0
             ax = m.Axes(
                 x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
                 y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
-                x_length=x_len * 0.94,
+                x_length=x_len * x_fit_scale,
                 y_length=y_len * eq_clearance,
                 axis_config={"color": axis_col, "stroke_width": 2.1, "include_tip": True},
                 tips=True,
@@ -679,6 +690,41 @@ class V3Scene(StoryScene):
             self.axes_ranges[obj.id] = (xr, yr)
             self._obj_boxes[obj.id] = pbox
             self._scene_obstacles.append(pbox)
+            # Attach optional x/y axis labels & curve legend cleanly OUTSIDE the plot interior AND fit inside pbox
+            extras: list[m.Mobject] = [ax]
+            lbl_fs = px_to_manim_font_size(max(20, self._px_scale.body_px - 3), self.profile.pixel_height)
+            min_leg_h = max(L.min_text_h, 0.22)
+            if getattr(obj, "x_label", ""):
+                xl_mob = m.Text(str(obj.x_label), font_size=lbl_fs, font=CAPTION_FONT, color=axis_col, **_FONT_KWARGS)
+                fit_mobject(xl_mob, max_width=x_len * 0.44, max_height=0.32, min_height=min_leg_h)
+                xl_mob.next_to(ax, m.DOWN, buff=0.08).align_to(ax, m.RIGHT)
+                extras.append(xl_mob)
+            if getattr(obj, "y_label", ""):
+                yl_mob = m.Text(str(obj.y_label), font_size=lbl_fs, font=CAPTION_FONT, color=axis_col, **_FONT_KWARGS)
+                fit_mobject(yl_mob, max_width=x_len * 0.38, max_height=0.32, min_height=min_leg_h)
+                yl_mob.next_to(ax, m.UP, buff=0.08).align_to(ax, m.LEFT)
+                extras.append(yl_mob)
+            if getattr(obj, "legend_items", None):
+                leg_rows = m.VGroup()
+                for li in obj.legend_items[:3]:
+                    if not li:
+                        continue
+                    l_role = li[1] if len(li) > 1 else "primary"
+                    l_col = getattr(T, ROLE_TO_THEME.get(l_role, "accent_primary"))
+                    swatch = m.Dot(radius=0.06, color=l_col)
+                    l_txt = m.Text(str(li[0]), font_size=max(18, lbl_fs - 2), font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                    fit_mobject(l_txt, max_width=x_len * 0.46, max_height=0.28, min_height=min_leg_h)
+                    row_g = m.VGroup(swatch, l_txt).arrange(m.RIGHT, buff=0.07)
+                    leg_rows.add(row_g)
+                if len(leg_rows) > 0:
+                    leg_rows.arrange(m.DOWN, aligned_edge=m.RIGHT, buff=0.05)
+                    leg_rows.next_to(ax, m.UP, buff=0.08).align_to(ax, m.RIGHT)
+                    extras.append(leg_rows)
+            if len(extras) > 1:
+                ax_grp = m.VGroup(*extras)
+                ax_grp.move_to(np.array([cx, cy + y_shift, 0.0]))
+                ax_grp._wrapped_axes = ax  # type: ignore[attr-defined]
+                return ax_grp
             return ax
 
         if obj.kind == "function_plot":
@@ -735,8 +781,8 @@ class V3Scene(StoryScene):
             _, _, eq_band_w, eq_band_h = px_box_to_manim(eb, zones, L.frame_w, L.frame_h)
             cx_eq, cy_eq, _, _ = px_box_to_manim(eb, zones, L.frame_w, L.frame_h)
             eq_center = np.array([cx_eq, cy_eq, 0.0])
-            max_w_ratio = 0.88
-            max_h_ratio = 0.90
+            max_w_ratio = 0.78 if obj.card else 0.80
+            max_h_ratio = 0.86
             if eq_tot >= 2:
                 if not is_port:
                     slot_w = eq_band_w / eq_tot
@@ -827,6 +873,23 @@ class V3Scene(StoryScene):
             return txt
 
         if obj.kind == "point":
+            if getattr(obj, "sweep_keyframes", None):
+                sw_key = f"__sweep_{obj.model_id or obj.id}"
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
+                kfs = list(obj.sweep_keyframes)
+                ax_ref = self.registry.get(obj.axes_id or "")
+                ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+                is_spec_pk = obj.model_output == "spectrum_peak"
+                def _mk_sw_dot(t=tracker, frames=kfs, a=ax, c=color, spec_mode=is_spec_pk):
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
+                    kf = frames[idx]
+                    xy = kf.spec_point if (spec_mode and kf.spec_point) else (kf.point or [0.0, 0.0])
+                    pos = a.c2p(xy[0], xy[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([xy[0], xy[1], 0.0]))
+                    return m.Dot(pos, radius=0.11, color=c)
+                mob = m.always_redraw(_mk_sw_dot)
+                mob._param_tracker = tracker  # type: ignore[attr-defined]
+                return mob
             if obj.param_name and obj.expr and ";" in obj.expr:
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
                 p0, p1 = obj.expr.split(";", 1)
@@ -843,6 +906,26 @@ class V3Scene(StoryScene):
             return m.Dot(self._to_point(obj.coords or [0.0, 0.0], obj.axes_id), radius=0.09, color=color)
 
         if obj.kind in ("line", "vector"):
+            if obj.kind == "vector" and getattr(obj, "sweep_keyframes", None):
+                sw_key = f"__sweep_{obj.model_id or obj.id}"
+                tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
+                kfs = list(obj.sweep_keyframes)
+                ax_ref = self.registry.get(obj.axes_id or "")
+                ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+                c0 = obj.coords or [0.0, 0.0]
+                def _mk_sw_vec(t=tracker, frames=kfs, a=ax, c=color, orig=c0):
+                    u = max(0.0, min(1.0, float(t.get_value())))
+                    idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
+                    kf = frames[idx]
+                    end_xy = kf.vector_end or kf.point or [0.01, 0.0]
+                    s = a.c2p(orig[0], orig[1]) if isinstance(a, m.Axes) else L.stage_center
+                    e = a.c2p(end_xy[0], end_xy[1]) if isinstance(a, m.Axes) else (L.stage_center + np.array([end_xy[0], end_xy[1], 0.0]))
+                    if np.linalg.norm(e - s) < 0.04:
+                        return m.Dot(s, radius=0.05, color=c)
+                    return m.Arrow(s, e, color=c, buff=0)
+                mob = m.always_redraw(_mk_sw_vec)
+                mob._param_tracker = tracker  # type: ignore[attr-defined]
+                return mob
             if obj.kind == "vector" and obj.param_name and obj.expr and ";" in obj.expr:
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
                 p0, p1 = obj.expr.split(";", 1)
@@ -905,9 +988,10 @@ class V3Scene(StoryScene):
 
         if obj.kind == "bar_chart" and obj.values:
             if not obj.axes_id:
-                for v in self.registry.values():
-                    if isinstance(v, m.Axes) or getattr(v, "_is_bar_chart", False):
+                for k_rem, v in list(self.registry.items()):
+                    if isinstance(v, m.Axes) or hasattr(v, "_wrapped_axes") or getattr(v, "_is_bar_chart", False) or self.obj_kinds.get(k_rem) in ("axes", "data_series", "point", "vector", "function_plot", "parametric_curve"):
                         self.remove(v)
+                        self.registry.pop(k_rem, None)
             vals = obj.values
             if obj.log_scale:
                 logs = [float(np.log10(max(v, 1e-12))) for v in vals]
@@ -1094,6 +1178,33 @@ class V3Scene(StoryScene):
             return tbl_grp
 
         if obj.kind in ("data_series", "waveform"):
+            if getattr(obj, "sweep_keyframes", None):
+                kfs = [kf for kf in obj.sweep_keyframes if kf.curve_pts and len(kf.curve_pts) >= 2]
+                if kfs:
+                    sw_key = f"__sweep_{obj.model_id or obj.id}"
+                    tracker = self.params.setdefault(sw_key, m.ValueTracker(0.0))
+                    ax_ref = self.registry.get(obj.axes_id or "")
+                    ax = getattr(ax_ref, "_wrapped_axes", ax_ref)
+                    ax_b = self.axes_ranges.get(obj.axes_id or "")
+                    def _mk_sw_curve(t=tracker, frames=kfs, a=ax, bounds=ax_b, c=color):
+                        u = max(0.0, min(1.0, float(t.get_value())))
+                        idx = min(len(frames) - 1, int(u * (len(frames) - 0.001)))
+                        raw_pts = frames[idx].curve_pts
+                        if bounds is not None and isinstance(a, m.Axes):
+                            runs = _clip_polyline_runs(raw_pts, bounds[0], bounds[1])
+                            use_pts = runs[0] if runs else raw_pts
+                            scene_pts = [a.c2p(p[0], p[1]) for p in use_pts]
+                        elif isinstance(a, m.Axes):
+                            scene_pts = [a.c2p(p[0], p[1]) for p in raw_pts]
+                        else:
+                            scene_pts = [L.stage_center + np.array([p[0], p[1], 0.0]) for p in raw_pts]
+                        curve = m.VMobject()
+                        curve.set_points_as_corners(scene_pts)
+                        curve.set_stroke(color=c, width=3.4)
+                        return curve
+                    mob = m.always_redraw(_mk_sw_curve)
+                    mob._param_tracker = tracker  # type: ignore[attr-defined]
+                    return mob
             pts_raw = obj.points_list
             if not pts_raw and obj.kind == "waveform" and obj.expr:
                 fn_w = compile_expr(obj.expr, ("x",))

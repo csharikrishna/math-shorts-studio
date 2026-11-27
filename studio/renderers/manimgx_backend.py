@@ -63,11 +63,22 @@ class ManimGXBackend(RenderBackend):
             rate=rate,
             pitch=pitch,
             strict_layout=False,
+            output_stem=slug,
         )
         if out_path is not None and out_path.resolve() != final_mp4.resolve():
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(final_mp4.read_bytes())
+            if final_mp4.with_suffix(".manifest.json").exists():
+                out_path.with_suffix(".manifest.json").write_text(
+                    final_mp4.with_suffix(".manifest.json").read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
             final_mp4 = out_path
+        src_bdir = PROJECT_ROOT / "build" / f"{slug}_{format_name}"
+        if src_bdir.exists() and build_dir is not None and src_bdir.resolve() != bdir.resolve():
+            for fname in ("scene_frame_metadata.json", "caption_ir.json", "timeline.json"):
+                if (src_bdir / fname).exists():
+                    (bdir / fname).write_text((src_bdir / fname).read_text(encoding="utf-8"), encoding="utf-8")
 
         dt = time.perf_counter() - t0
         prof = FORMATS.get(format_name, FORMATS["widescreen_hd"])

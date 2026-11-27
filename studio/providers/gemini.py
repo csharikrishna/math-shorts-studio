@@ -56,6 +56,8 @@ class GeminiProvider(LLMProvider):
                     return resp, m, time.perf_counter() - t0
                 except genai_errors.APIError as exc:
                     last_err = exc
+                    if getattr(exc, "code", None) == 400 and ("too many states" in str(exc).lower() or "schema" in str(exc).lower()):
+                        raise ProviderError(f"Gemini schema complexity error on {m}: {exc}") from exc
                     if exc.code in TRANSIENT_CODES and attempt < self.retries_per_model:
                         time.sleep(4.0 * attempt)
                         continue
@@ -114,9 +116,52 @@ class GeminiProvider(LLMProvider):
                 response_schema=schema,
                 temperature=temperature,
             )
-        resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
-        raw = getattr(resp, "text", "") or ""
-        parsed = schema.model_validate_json(raw)
+        try:
+            resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
+            raw = getattr(resp, "text", "") or ""
+            parsed = schema.model_validate_json(raw)
+        except ProviderError as exc:
+            err_l = str(exc).lower()
+            if "too many states" not in err_l and "invalid_argument" not in err_l and "schema" not in err_l:
+                raise
+            # Schema exceeded Gemini grammar state cap on constrained decoding; fall back cleanly to JSON-mode + Pydantic validation
+            def _compact_schema(node: object) -> object:
+                if isinstance(node, dict):
+                    node.pop("additionalProperties", None)
+                    node.pop("description", None)
+                    node.pop("title", None)
+                    for val in node.values():
+                        _compact_schema(val)
+                elif isinstance(node, list):
+                    for item in node:
+                        _compact_schema(item)
+                return node
+
+            compact_fields = _json.dumps(_compact_schema(schema.model_json_schema()), separators=(",", ":"))
+            json_prompt = (
+                f"{prompt}\n\n"
+                f"Return STRICT valid JSON conforming to `{schema.__name__}` matching schema:\n{compact_fields}"
+            )
+            json_cfg = types.GenerateContentConfig(
+                system_instruction=system or None,
+                response_mime_type="application/json",
+                temperature=temperature,
+            )
+            resp, used_model, dt = self._call_with_fallback(json_prompt, json_cfg, model)
+            raw = getattr(resp, "text", "") or ""
+            for _rep in range(3):
+                try:
+                    parsed = schema.model_validate_json(raw)
+                    break
+                except Exception as val_exc:
+                    if _rep == 2:
+                        raise
+                    repair_prompt = (
+                        f"Fix ONLY the JSON validation error below and output complete valid JSON matching `{schema.__name__}`:\n"
+                        f"ERROR: {val_exc}\n\nBAD_JSON:\n{raw}"
+                    )
+                    resp, used_model, dt = self._call_with_fallback(repair_prompt, json_cfg, used_model)
+                    raw = getattr(resp, "text", "") or ""
         um = getattr(resp, "usage_metadata", None)
         pt = int(getattr(um, "prompt_token_count", 0) or 0)
         ct = int(getattr(um, "candidates_token_count", 0) or 0)

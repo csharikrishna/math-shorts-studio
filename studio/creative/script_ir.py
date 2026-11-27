@@ -227,6 +227,11 @@ def validate_script_ir(script: ScriptIR) -> list[str]:
         if len(used_speakers) < 2:
             issues.append(f"dialogue mode {script.narration_mode!r} requires at least 2 distinct speakers.")
 
+    if len(script.beats) >= 3:
+        first_txt = f"{script.central_question or ''} {script.beats[0].spoken_text} {script.beats[0].educational_purpose}".lower()
+        if not script.central_question.strip() and "?" not in script.beats[0].spoken_text and not any(k in first_txt for k in ("why", "how", "what", "question", "puzzle")):
+            issues.append("ScriptIR must establish a clear central question in script.central_question or opening beat.")
+
     # Verify immutable revision integrity when locked
     if script.locked and script.approved_revision is not None:
         app_rev = next((r for r in script.revisions if r.revision == script.approved_revision and r.approved), None)

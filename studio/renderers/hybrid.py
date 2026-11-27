@@ -169,13 +169,14 @@ class HybridRenderBackend(RenderBackend):
             seg_scenes = [s.model_copy(deep=True) for s in part.scenes]
             if seg_scenes:
                 seg_ids_in_part = {o.id for sc in seg_scenes for o in sc.objects}
+                has_stage_reset = any(o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network") for o in seg_scenes[0].objects)
                 needed = (
                     {e.target_id for sc in seg_scenes for e in sc.events}
                     | {e.source_id for sc in seg_scenes for e in sc.events if e.source_id}
                     | {o.axes_id for sc in seg_scenes for o in sc.objects if o.axes_id}
                 ) - seg_ids_in_part - runtime_state.removed_ids
                 carry_objs = [
-                    co for co in materialize_carry_objects(runtime_state, needed, include_visible_persistent=True)
+                    co for co in materialize_carry_objects(runtime_state, needed, include_visible_persistent=not has_stage_reset)
                     if co.id not in seg_ids_in_part
                 ]
                 if carry_objs:
@@ -194,6 +195,7 @@ class HybridRenderBackend(RenderBackend):
                 title=plan.title,
                 audience=plan.audience,
                 strategy=plan.strategy,
+                math_models=plan.math_models,
                 scenes=seg_scenes,
             )
             # Re-base segment timeline cleanly to start at t=0.0 matching exact spoken beat lengths
@@ -296,6 +298,17 @@ class HybridRenderBackend(RenderBackend):
                 seg_mp4 = raw_seg
             seg_raw_mp4s.append(seg_mp4)
 
+        merged_meta_hyb: dict[str, list] = {}
+        for s_idx_m in range(len(parts)):
+            m_p = bdir / f"seg_{s_idx_m:02d}" / "scene_frame_metadata.json"
+            if m_p.exists():
+                try:
+                    merged_meta_hyb.update(json.loads(m_p.read_text(encoding="utf-8")))
+                except Exception:
+                    pass
+        if merged_meta_hyb:
+            (bdir / "scene_frame_metadata.json").write_text(json.dumps(merged_meta_hyb, indent=2), encoding="utf-8")
+
         joined_video = bdir / "hybrid_video_only.mp4"
         # Use FFmpeg filter_complex concat with per-segment fps/PTS/yuv420p normalization
         # so heterogeneous container timebases (e.g. ManimGX 30 tbn vs HyperFrames 15360 tbn) never drift.
@@ -342,9 +355,12 @@ class HybridRenderBackend(RenderBackend):
             check=True,
             capture_output=True,
         )
+        from studio.audio.demo_signals import apply_plan_audio_demos
+
+        hyb_voice_wav = apply_plan_audio_demos(plan, audio_timeline, bdir)
         master_video(
             raw_video=joined_video,
-            voice_wav=Path(audio_timeline.master_voice_wav),
+            voice_wav=hyb_voice_wav,
             bgm_wav=bgm_wav,
             output_mp4=out_mp4,
             look="none",
@@ -352,8 +368,30 @@ class HybridRenderBackend(RenderBackend):
 
         dt = time.perf_counter() - t0
         from studio.longform import _probe_duration
+        from studio.provenance import build_and_write_manifest
 
         dur = _probe_duration(out_mp4)
+        cap_hyb = bdir / "caption_ir.json"
+        if not cap_hyb.exists():
+            MasterTimeline(audio=audio_timeline).export_subtitles(
+                bdir, slug, caption_style=resolved_cap, format_name=format_name, look_name=resolved_look
+            )
+        build_and_write_manifest(
+            slug=slug,
+            topic=plan.topic,
+            title=plan.title,
+            mp4_path=out_mp4,
+            plan=plan,
+            backend=self.name,
+            format_name=format_name,
+            look_name=resolved_look,
+            caption_style=resolved_cap,
+            build_dir=bdir,
+            audio_timeline=audio_timeline,
+            timeline_path=(bdir / "timeline.json") if (bdir / "timeline.json").exists() else None,
+            caption_ir_path=cap_hyb if cap_hyb.exists() else None,
+            renderer_config={"tts_engine": tts_engine, "voice": voice, "rate": rate},
+        )
         mix_desc = " -> ".join(f"{p.backend}({len(p.scenes)})" for p in parts)
         return BackendRenderResult(
             backend=self.name,

@@ -43,6 +43,7 @@ def build_runtime_js(payload_json: str) -> str:
   }}
 
   let prevSig = "";
+  const svgStage = document.getElementById("svg-stage");
 
   function activeBeatAt(t) {{
     let activeBeat = DATA.beats[DATA.beats.length - 1] || null;
@@ -55,6 +56,34 @@ def build_runtime_js(payload_json: str) -> str:
       }}
     }}
     return {{ activeBeat, activeIdx }};
+  }}
+
+  function sweepIdxFor(el, t) {{
+    if (!el.sweep_frames_px || !el.sweep_frames_px.length) return -1;
+    const t0 = el.sweep_t0 !== undefined ? el.sweep_t0 : el.show_at;
+    const t1 = el.sweep_t1 !== undefined ? el.sweep_t1 : Math.max(t0 + 0.5, el.hide_at - 0.1);
+    const u = clamp01((t - t0) / Math.max(0.25, t1 - t0));
+    return Math.min(el.sweep_frames_px.length - 1, Math.floor(u * (el.sweep_frames_px.length - 0.001)));
+  }}
+
+  function cameraViewBoxAt(t) {{
+    const zEvs = DATA.zoom_events || [];
+    let vx = 0, vy = 0, vw = DATA.width, vh = DATA.height;
+    for (const z of zEvs) {{
+      if (t >= z.t0 && t <= z.hold_end) {{
+        const p = clamp01(easeInOutCubic((t - z.t0) / Math.max(0.25, z.t1 - z.t0)));
+        const sc = 1 + (z.scale - 1) * p;
+        const nw = DATA.width / sc;
+        const nh = DATA.height / sc;
+        const cx = DATA.width * 0.5 + (z.cx - DATA.width * 0.5) * p;
+        const cy = DATA.height * 0.5 + (z.cy - DATA.height * 0.5) * p;
+        vx = Math.max(0, Math.min(DATA.width - nw, cx - nw * 0.5));
+        vy = Math.max(0, Math.min(DATA.height - nh, cy - nh * 0.5));
+        vw = nw;
+        vh = nh;
+      }}
+    }}
+    return `${{vx.toFixed(1)}} ${{vy.toFixed(1)}} ${{vw.toFixed(1)}} ${{vh.toFixed(1)}}`;
   }}
 
   function activeCueAt(t) {{
@@ -93,7 +122,12 @@ def build_runtime_js(payload_json: str) -> str:
       const qP = Math.round(p * 2000);
       let extra = "";
       if (el.polyline && el.polyline.length > 1) {{
-        extra = `:${{Math.max(2, Math.floor(el.polyline.length * p))}}`;
+        const swi = sweepIdxFor(el, t);
+        extra = `:${{Math.max(2, Math.floor(el.polyline.length * p))}}:${{swi}}`;
+      }} else if (el.kind === "point" && el.sweep_frames_px && el.sweep_frames_px.length) {{
+        extra = `:sw${{sweepIdxFor(el, t)}}`;
+      }} else if ((el.kind === "vector" || el.kind === "annotation") && el.sweep_frames_px && el.sweep_frames_px.length) {{
+        extra = `:sw${{sweepIdxFor(el, t)}}`;
       }} else if (el.kind === "point" && el.orbit && el.orbit.length > 1) {{
         const oIdx = Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))));
         const sQ = Math.round(springEval(t - el.show_at, enterDur, 0.72, 180) * 500);
@@ -103,6 +137,7 @@ def build_runtime_js(payload_json: str) -> str:
       }}
       parts.push(`${{el.id}}@${{qP}}${{extra}}`);
     }}
+    parts.push(cameraViewBoxAt(t));
     return parts.join("|");
   }}
 
@@ -110,6 +145,7 @@ def build_runtime_js(payload_json: str) -> str:
     __vtimeMs = t * 1000.0;
     layers.innerHTML = "";
     overlay.innerHTML = "";
+    if (svgStage) svgStage.setAttribute("viewBox", cameraViewBoxAt(t));
 
     const {{ activeBeat }} = activeBeatAt(t);
     const activeCue = activeCueAt(t);
@@ -136,8 +172,8 @@ def build_runtime_js(payload_json: str) -> str:
             const span = document.createElement("span");
             span.textContent = tok + (k + 1 < lineToks.length ? " " : "");
             if (wObj) {{
-              if (t >= wObj.s && t <= wObj.e) span.className = "word-active";
-              else if (t > wObj.e) span.className = "word-past";
+              if (t >= wObj.s && t <= wObj.e) span.className = wObj.emph ? "word-active-emph" : "word-active";
+              else if (t > wObj.e) span.className = wObj.emph ? "word-past-emph" : "word-past";
               else span.className = "word-future";
             }} else {{
               span.className = "word-past";
@@ -183,12 +219,38 @@ def build_runtime_js(payload_json: str) -> str:
       if (el.kind === "axes" && el.axes) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         g.appendChild(svgEl("rect", {{ x: bx, y: by, width: bw, height: bh, fill: DATA.look.surface, "fill-opacity": 0.22, stroke: DATA.look.grid_line, "stroke-width": 1, rx: 10 }}));
-        g.appendChild(svgEl("line", {{ x1: bx, y1: el.axes.oy, x2: bx + bw, y2: el.axes.oy, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
-        g.appendChild(svgEl("line", {{ x1: el.axes.ox, y1: by + bh, x2: el.axes.ox, y2: by, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
+        const oxClamped = Math.max(bx, Math.min(bx + bw, el.axes.ox));
+        const oyClamped = Math.max(by, Math.min(by + bh, el.axes.oy));
+        g.appendChild(svgEl("line", {{ x1: bx, y1: oyClamped, x2: bx + bw, y2: oyClamped, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
+        g.appendChild(svgEl("line", {{ x1: oxClamped, y1: by + bh, x2: oxClamped, y2: by, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
+        if (el.x_label) {{
+          const xl = svgEl("text", {{ x: bx + bw - 10, y: by + bh - 8, fill: DATA.look.ink_muted, "font-size": Math.max(16, DATA.typo.body_px - 6), "text-anchor": "end", "font-weight": "600" }});
+          xl.textContent = el.x_label;
+          g.appendChild(xl);
+        }}
+        if (el.y_label) {{
+          const yl = svgEl("text", {{ x: bx + 12, y: by + 22, fill: DATA.look.ink_muted, "font-size": Math.max(16, DATA.typo.body_px - 6), "text-anchor": "start", "font-weight": "600" }});
+          yl.textContent = el.y_label;
+          g.appendChild(yl);
+        }}
+        if (el.legend_items && el.legend_items.length) {{
+          el.legend_items.forEach((li, lIdx) => {{
+            const lx = bx + bw - 14;
+            const ly = by + 22 + lIdx * 24;
+            g.appendChild(svgEl("circle", {{ cx: lx - 8, cy: ly - 5, r: 5, fill: li.color }}));
+            const lt = svgEl("text", {{ x: lx - 18, y: ly, fill: DATA.look.ink_primary, "font-size": Math.max(15, DATA.typo.body_px - 7), "text-anchor": "end", "font-weight": "600" }});
+            lt.textContent = li.label;
+            g.appendChild(lt);
+          }});
+        }}
         svgTarget.appendChild(g);
       }} else if ((el.kind === "function_plot" || el.kind === "parametric_curve" || el.kind === "waveform" || el.kind === "data_series") && el.polyline && el.polyline.length > 1) {{
-        const nVis = Math.max(2, Math.floor(el.polyline.length * p));
-        const ptsStr = el.polyline.slice(0, nVis).map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
+        const swi = sweepIdxFor(el, t);
+        const activeLine = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].polyline_px && el.sweep_frames_px[swi].polyline_px.length > 1)
+          ? el.sweep_frames_px[swi].polyline_px
+          : el.polyline;
+        const nVis = swi >= 0 ? activeLine.length : Math.max(2, Math.floor(activeLine.length * p));
+        const ptsStr = activeLine.slice(0, nVis).map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
         svgTarget.appendChild(svgEl("polyline", {{
           points: ptsStr, fill: "none", stroke: el.color, "stroke-width": 4, "stroke-linecap": "round", "stroke-linejoin": "round",
           "data-hf-elem": el.id
@@ -203,14 +265,22 @@ def build_runtime_js(payload_json: str) -> str:
           cx: el.circle.cx, cy: el.circle.cy, r: el.circle.r * p, fill: "none", stroke: el.color, "stroke-width": 3.2, opacity: p, "data-hf-elem": el.id
         }}));
       }} else if (el.kind === "point" && el.point) {{
-        const pt = el.orbit && el.orbit.length > 1
-          ? el.orbit[Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))))]
-          : el.point;
-        svgTarget.appendChild(svgEl("circle", {{ cx: pt[0], cy: pt[1], r: 8 * springEval(t - el.show_at, enterDur, 0.72, 180), fill: el.color, "data-hf-elem": el.id }}));
+        const swi = sweepIdxFor(el, t);
+        const pt = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].point_px && el.sweep_frames_px[swi].point_px.length >= 2)
+          ? el.sweep_frames_px[swi].point_px
+          : (el.orbit && el.orbit.length > 1
+            ? el.orbit[Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))))]
+            : el.point);
+        svgTarget.appendChild(svgEl("circle", {{ cx: pt[0], cy: pt[1], r: 9 * springEval(t - el.show_at, enterDur, 0.72, 180), fill: el.color, stroke: DATA.look.ground, "stroke-width": 2, "data-hf-elem": el.id }}));
       }} else if ((el.kind === "vector" || el.kind === "line") && el.segment) {{
-        const x2 = el.segment.x1 + (el.segment.x2 - el.segment.x1) * p;
-        const y2 = el.segment.y1 + (el.segment.y2 - el.segment.y1) * p;
-        const attrs = {{ x1: el.segment.x1, y1: el.segment.y1, x2: x2, y2: y2, stroke: el.color, "stroke-width": 3.5, "data-hf-elem": el.id }};
+        const swi = sweepIdxFor(el, t);
+        const segX1 = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].vec_start_px && el.sweep_frames_px[swi].vec_start_px.length >= 2) ? el.sweep_frames_px[swi].vec_start_px[0] : el.segment.x1;
+        const segY1 = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].vec_start_px && el.sweep_frames_px[swi].vec_start_px.length >= 2) ? el.sweep_frames_px[swi].vec_start_px[1] : el.segment.y1;
+        const tgtX2 = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].vec_end_px && el.sweep_frames_px[swi].vec_end_px.length >= 2) ? el.sweep_frames_px[swi].vec_end_px[0] : el.segment.x2;
+        const tgtY2 = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].vec_end_px && el.sweep_frames_px[swi].vec_end_px.length >= 2) ? el.sweep_frames_px[swi].vec_end_px[1] : el.segment.y2;
+        const x2 = swi >= 0 ? tgtX2 : (segX1 + (tgtX2 - segX1) * p);
+        const y2 = swi >= 0 ? tgtY2 : (segY1 + (tgtY2 - segY1) * p);
+        const attrs = {{ x1: segX1, y1: segY1, x2: x2, y2: y2, stroke: el.color, "stroke-width": 4.0, "data-hf-elem": el.id }};
         if (el.segment.arrow) attrs["marker-end"] = "url(#hf-arrow)";
         svgTarget.appendChild(svgEl("line", attrs));
       }} else if (el.kind === "bar_chart" && el.bars) {{
@@ -274,7 +344,15 @@ def build_runtime_js(payload_json: str) -> str:
         inner.className = el.card ? "hf-eq-inner" : "hf-eq-bare";
         if (el.card) inner.style.borderColor = el.color;
         else inner.style.color = el.color;
-        inner.textContent = el.eq_text || el.label;
+        if (window.katex && el.tex) {{
+          try {{
+            window.katex.render(String(el.tex), inner, {{ throwOnError: false, displayMode: false }});
+          }} catch (_e) {{
+            inner.textContent = el.eq_text || el.label;
+          }}
+        }} else {{
+          inner.textContent = el.eq_text || el.label;
+        }}
         card.appendChild(inner);
         overlay.appendChild(card);
       }} else if (el.kind === "matrix" && el.matrix) {{
@@ -313,8 +391,12 @@ def build_runtime_js(payload_json: str) -> str:
         }}
         overlay.appendChild(tbl);
       }} else if (el.kind === "annotation" && el.text_pos) {{
+        const swi = sweepIdxFor(el, t);
+        const annLabel = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].label)
+          ? el.sweep_frames_px[swi].label
+          : (el.text || el.label);
         const txt = svgEl("text", {{ x: el.text_pos[0], y: el.text_pos[1], fill: el.color, "font-size": DATA.typo.body_px, "font-weight": "700", "text-anchor": "middle", opacity: p, "data-hf-elem": el.id }});
-        txt.textContent = el.text || el.label;
+        txt.textContent = annLabel;
         svgTarget.appendChild(txt);
       }}
     }}

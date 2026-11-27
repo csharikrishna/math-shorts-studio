@@ -104,6 +104,8 @@ def compute_adaptive_zones(
 
     if has_header_banner:
         top_band = h * (0.21 if is_vert else 0.16)
+    elif has_equation_strip:
+        top_band = max(h * prof.top_safe_ratio, h * (0.11 if is_vert else 0.082))
     else:
         top_band = h * prof.top_safe_ratio
 
@@ -156,12 +158,12 @@ def resolve_composition_layout(
 ) -> str:
     """Resolve content-aware layout archetype respecting aspect ratio and object mix."""
     comp = (composition or "auto").strip()
-    if comp in ("diagram_with_text", "annotated_chart", "annotated_overlay", "math_simulation"):
+    if comp in ("diagram_with_text", "annotated_chart", "annotated_overlay", "math_simulation", "model_with_readout", "progressive_derivation"):
         comp = "diagram_with_text"
     elif comp in ("geometric_proof", "matrix_transform", "chapter_intro", "concept_summary"):
         comp = "centered_focus"
-    elif comp in ("data_visualization",):
-        comp = "side_by_side_comparison"
+    elif comp in ("data_visualization", "time_frequency_split", "before_after_simulation", "multi_view_dashboard"):
+        comp = "stacked_comparison" if aspect_label == "9:16" else "side_by_side_comparison"
     comp = adapt_composition_for_aspect(comp, aspect_label)
     if comp != "auto":
         return comp

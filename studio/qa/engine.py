@@ -258,10 +258,10 @@ def verify_caption_synchronization(
     caption_ir_path: Path | None = None,
     srt_path: Path | None = None,
     caption_zone_ok: bool | None = None,
+    expected_duration_s: float | None = None,
+    expected_beat_count: int | None = None,
 ) -> QACheck:
-    """Independently verify CaptionIR timing monotonicity, alignment provenance, and subtitle sidecar."""
-    import json as _json
-
+    """Independently verify CaptionIR cue/word non-overlap, global coverage, readability, and SRT parity."""
     ir_obj = caption_ir
     if ir_obj is None and caption_ir_path is not None and caption_ir_path.exists():
         from studio.captions import CaptionIR
@@ -286,24 +286,68 @@ def verify_caption_synchronization(
     if not cues:
         return QACheck("caption_synchronization", "failed", "CaptionIR contains zero cues.")
 
-    prev_s = -1.0
+    prev_end = -1.0
+    seen_sigs: set[tuple[float, float, str]] = set()
+    max_lines_allowed = int(getattr(getattr(ir_obj, "preset", None), "max_lines", 2) or 2)
+    covered_beats: set[str] = set()
     for c in cues:
-        if float(c.end_s) <= float(c.start_s):
-            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} has non-positive duration.")
-        if float(c.start_s) < prev_s - 0.05:
-            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} overlaps preceding cue.")
-        prev_s = float(c.start_s)
-        prev_w = -1.0
+        cs, ce = float(c.start_s), float(c.end_s)
+        if ce <= cs:
+            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} has non-positive duration ({cs:.2f}->{ce:.2f}).")
+        if cs < prev_end - 0.02:
+            return QACheck(
+                "caption_synchronization",
+                "failed",
+                f"Cue {c.cue_id} ({cs:.3f}s) overlaps previous cue ending at {prev_end:.3f}s.",
+            )
+        prev_end = ce
+        sig = (round(cs, 2), round(ce, 2), str(c.text).strip())
+        if sig in seen_sigs:
+            return QACheck("caption_synchronization", "failed", f"Duplicate caption cue at {cs:.2f}s: {c.text!r}")
+        seen_sigs.add(sig)
+        if not str(getattr(c, "speaker", "")).strip():
+            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} missing speaker identity.")
+        if len(getattr(c, "lines", [])) > max(3, max_lines_allowed):
+            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} has {len(c.lines)} lines > readable limit.")
+        covered_beats.add(str(c.beat_id))
+        prev_w_end = -1.0
         for w in getattr(c, "words", []):
-            if float(w.start_s) < prev_w - 0.02:
-                return QACheck("caption_synchronization", "failed", f"Non-monotonic word timing in {c.cue_id}.")
-            prev_w = float(w.start_s)
+            ws, we = float(w.start_s), float(w.end_s)
+            if we < ws - 1e-4 or ws < prev_w_end - 0.02:
+                return QACheck("caption_synchronization", "failed", f"Non-monotonic or overlapping word timing in {c.cue_id}.")
+            prev_w_end = we
+
+    # Global duration coverage check: catches chapter-1-only CaptionIR passed for a multi-minute video!
+    last_end = float(cues[-1].end_s)
+    if expected_duration_s is not None and expected_duration_s > 4.0:
+        if last_end < expected_duration_s * 0.65:
+            return QACheck(
+                "caption_synchronization",
+                "failed",
+                f"Incomplete CaptionIR coverage: cues end at {last_end:.1f}s vs expected video duration {expected_duration_s:.1f}s.",
+            )
+    if expected_beat_count is not None and expected_beat_count >= 2 and len(covered_beats) < max(1, int(expected_beat_count * 0.65)):
+        return QACheck(
+            "caption_synchronization",
+            "failed",
+            f"Incomplete beat caption coverage: {len(covered_beats)}/{expected_beat_count} beats covered.",
+        )
+
+    # SRT parity verification
+    if srt_path is not None and srt_path.exists():
+        srt_blocks = [blk for blk in srt_path.read_text(encoding="utf-8").strip().split("\n\n") if "-->" in blk]
+        if abs(len(srt_blocks) - len(cues)) > max(2, int(0.15 * len(cues))):
+            return QACheck(
+                "caption_synchronization",
+                "failed",
+                f"Exported SRT cue count ({len(srt_blocks)}) diverges from CaptionIR ({len(cues)}).",
+            )
 
     if caption_zone_ok is False:
         return QACheck("caption_synchronization", "failed", "Rendered frames show no visible captions inside caption zone.")
 
     prov = dict(getattr(ir_obj, "timing_provenance_counts", {}) or {})
-    return QACheck("caption_synchronization", "passed", f"cues={len(cues)}, provenance={prov or 'recorded'}")
+    return QACheck("caption_synchronization", "passed", f"cues={len(cues)}, beats={len(covered_beats)}, end={last_end:.1f}s, provenance={prov or 'recorded'}")
 
 
 def verify_decoded_frames(
@@ -311,7 +355,7 @@ def verify_decoded_frames(
     *,
     look_name: str = "midnight_studio",
     format_name: str = "widescreen_hd",
-    sample_count: int = 12,
+    sample_count: int | None = None,
     contact_sheet_out: Path | None = None,
     plan: object | None = None,
     timeline: object | None = None,
@@ -332,7 +376,7 @@ def verify_decoded_frames(
         renderer_meta_path=renderer_meta_path,
         contact_sheet_out=contact_sheet_out,
         report_out=report_out,
-        max_samples=max(sample_count, 24 if plan is not None else 12),
+        max_samples=sample_count,
     )
     return (
         QACheck("decoded_frames", "passed" if res.passed else "failed", res.summary),
@@ -344,6 +388,8 @@ def verify_decoded_frames(
             "warnings": res.warnings,
             "static_motion_scenes": res.static_motion_scenes,
             "empty_midpoint_scenes": res.empty_midpoint_scenes,
+            "scenes_covered": res.scenes_covered,
+            "total_plan_scenes": res.total_plan_scenes,
             "report_path": res.report_path,
         },
     )
@@ -578,11 +624,35 @@ def audit_educational_quality(
         else:
             cats["duration_pacing_accuracy"] = "passed"
 
+    # Also inspect frame-QA scene coverage against plan scene count when video was evaluated
+    if video_path is not None and video_path.exists() and scenes:
+        sc_cov = int(_df_meta.get("scenes_covered", len(scenes)))
+        sc_tot = int(_df_meta.get("total_plan_scenes", len(scenes)))
+        if sc_cov < sc_tot:
+            cats["visual_layout_legibility"] = "failed"
+            notes.append(
+                VisualReviewNote(
+                    shot_id="frames",
+                    severity="blocker",
+                    category="layout",
+                    finding=f"Incomplete scene frame QA coverage: {sc_cov}/{sc_tot} scenes inspected.",
+                )
+            )
+
+    actual_vid_dur: float | None = target_duration_s
+    for m_str in metrics:
+        dm = re.search(r"v_dur=(\d+(?:\.\d+)?)s", m_str)
+        if dm:
+            actual_vid_dur = float(dm.group(1))
+            break
+
     cap_chk = verify_caption_synchronization(
         caption_ir=caption_ir,
         caption_ir_path=caption_ir_path,
         srt_path=srt_path,
         caption_zone_ok=caption_zone_ok,
+        expected_duration_s=actual_vid_dur,
+        expected_beat_count=len(scenes) if scenes else None,
     )
     metrics.append(f"caption_sync: {cap_chk.detail}")
     if not script_ok or cap_chk.status == "failed":

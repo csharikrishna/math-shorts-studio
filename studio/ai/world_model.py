@@ -265,8 +265,69 @@ def verify_partition(pieces: Sequence[Sequence[Sequence[float]]], outer: Sequenc
     return issues
 
 
+def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], sweep_cls: type) -> None:
+    """Populate geometry, curves, vectors, tables, labels & keyframes directly from evaluated LinkedMathModelSpec."""
+    out_key = (obj.model_output or "").strip()
+    if not out_key:
+        return
+    if out_key in (
+        "time_signal",
+        "winding_curve",
+        "spectrum",
+        "filtered_spectrum",
+        "filtered_signal",
+        "curve",
+        "derivative_curve",
+        "trajectory",
+        "loss_curve",
+        "phase_orbit",
+        "time_series_x",
+        "time_series_y",
+        "target_curve",
+        "approx_curve",
+        "error_curve",
+    ):
+        pts = model_data.get(out_key) or []
+        if pts and not obj.points_list:
+            obj.points_list = [list(p) for p in pts]
+    elif out_key in ("centroid_point", "spectrum_peak", "end_point"):
+        pt = model_data.get(out_key)
+        if pt and len(pt) >= 2 and obj.coords is None:
+            obj.coords = [float(pt[0]), float(pt[1])]
+    elif out_key == "centroid_vector":
+        vec = model_data.get("centroid_vector")
+        if vec and len(vec) == 2:
+            if obj.coords is None:
+                obj.coords = [float(vec[0][0]), float(vec[0][1])]
+            if obj.end_coords is None:
+                obj.end_coords = [float(vec[1][0]), float(vec[1][1])]
+    elif out_key in ("spectrum_bars", "posterior_bars"):
+        labels = model_data.get("spectrum_bars_labels") or model_data.get("bar_labels") or []
+        vals = model_data.get("spectrum_bars_values") or model_data.get("bar_values") or []
+        if vals and not obj.values:
+            obj.values = [float(v) for v in vals]
+        if labels and not obj.bar_labels:
+            obj.bar_labels = [str(x) for x in labels]
+    elif out_key == "posterior_table":
+        if not obj.table_headers:
+            obj.table_headers = list(model_data.get("table_headers") or [])
+        if not obj.table_rows:
+            obj.table_rows = [list(r) for r in (model_data.get("table_rows") or [])]
+    elif out_key == "eigen_matrix":
+        if not obj.matrix_rows:
+            obj.matrix_rows = [list(r) for r in (model_data.get("matrix_rows") or [])]
+    elif out_key == "readout":
+        if not obj.text:
+            obj.text = str(model_data.get("readout_text") or "")
+
+    if not obj.sweep_keyframes and model_data.get("sweep_frames"):
+        if out_key in ("winding_curve", "centroid_point", "centroid_vector", "trajectory", "loss_curve", "end_point", "readout"):
+            obj.sweep_keyframes = [sweep_cls.model_validate(kf) for kf in model_data["sweep_frames"]]
+
+
 def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
     """Deterministically materialize typed ConstructionOps into SceneObject definitions."""
+    from studio.ai.linked_models import LinkedMathModelSpec, evaluate_linked_math_model, evaluate_signal_spectral_pipeline
     from studio.ai.math_truth import (
         bayes_posterior,
         definite_integral,
@@ -280,14 +341,20 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
         rk4_ode_trajectory,
         transform_points_2x2,
     )
-    from studio.ai.v3_schema import SceneObject
+    from studio.ai.v3_schema import SceneObject, SweepKeyframe
 
     out = plan.model_copy(deep=True)
+    computed_models: dict[str, dict[str, Any]] = {}
+    for m_spec in getattr(out, "math_models", []) or []:
+        computed_models[m_spec.model_id] = evaluate_linked_math_model(m_spec)
+
     registry: dict[str, list[list[float]]] = {}
     obj_axes_map: dict[str, str | None] = {}
 
     for sc in out.scenes:
         for obj in sc.objects:
+            if obj.model_id and obj.model_id in computed_models and obj.model_output:
+                _bind_object_from_model(obj, computed_models[obj.model_id], SweepKeyframe)
             obj_axes_map[obj.id] = obj.axes_id
             if obj.kind == "polygon" and obj.vertices:
                 registry[obj.id] = clean_polygon_vertices(obj.vertices)
@@ -546,4 +613,47 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                         )
                     )
                     existing_ids.add(oid)
+            elif c.op in ("winding_complex_curve", "spectral_transform_from_signal", "filtered_signal_reconstruction"):
+                spec = LinkedMathModelSpec(
+                    model_id=c.source_id or f"_op_{c.op}",
+                    kind="signal_spectral_pipeline",
+                    expr=p.expr or "0.85*cos(2*pi*2*t) + 0.55*cos(2*pi*5*t)",
+                    t_range=p.t_range or [0.0, 2.0],
+                    freq_range=p.freq_range or [0.0, 7.0],
+                    selected_freq=p.selected_freq,
+                    cutoff_freq=p.cutoff_freq,
+                    high_cutoff_freq=p.high_cutoff_freq,
+                    filter_kind=p.filter_kind or "lowpass",
+                    angular_units=p.angular_units or "hz",
+                )
+                pipe = computed_models.get(c.source_id or "") or evaluate_signal_spectral_pipeline(spec)
+                if c.op == "winding_complex_curve":
+                    curve_id = c.output_ids[0] if len(c.output_ids) >= 1 else "winding_curve"
+                    pt_id = c.output_ids[1] if len(c.output_ids) >= 2 else "winding_centroid"
+                    vec_id = c.output_ids[2] if len(c.output_ids) >= 3 else "winding_vector"
+                    kfs = [SweepKeyframe.model_validate(kf) for kf in pipe.get("sweep_frames", [])]
+                    if curve_id not in existing_ids:
+                        sc.objects.append(SceneObject(id=curve_id, kind="data_series", persist=c.persist, color_role=c.color_role, points_list=pipe["winding_curve"], axes_id=p.axes_id, sweep_keyframes=kfs, label=c.label or "z(t)=x(t)e^{-iwt}"))
+                        existing_ids.add(curve_id)
+                    if pt_id not in existing_ids:
+                        sc.objects.append(SceneObject(id=pt_id, kind="point", persist=c.persist, color_role="highlight", coords=pipe["centroid_point"], axes_id=p.axes_id, sweep_keyframes=kfs, label="C(w)"))
+                        existing_ids.add(pt_id)
+                    if len(c.output_ids) >= 3 and vec_id not in existing_ids:
+                        vec = pipe["centroid_vector"]
+                        sc.objects.append(SceneObject(id=vec_id, kind="vector", persist=c.persist, color_role="highlight", coords=vec[0], end_coords=vec[1], axes_id=p.axes_id, sweep_keyframes=kfs, label="C_vec"))
+                        existing_ids.add(vec_id)
+                elif c.op == "spectral_transform_from_signal":
+                    spec_id = c.output_ids[0] if c.output_ids else "derived_spectrum"
+                    if spec_id not in existing_ids:
+                        sc.objects.append(SceneObject(id=spec_id, kind="data_series", persist=c.persist, color_role=c.color_role, points_list=pipe["spectrum"], axes_id=p.axes_id, label=c.label or "|F(w)|"))
+                        existing_ids.add(spec_id)
+                elif c.op == "filtered_signal_reconstruction":
+                    filt_id = c.output_ids[0] if len(c.output_ids) >= 1 else "filtered_signal"
+                    if filt_id not in existing_ids:
+                        sc.objects.append(SceneObject(id=filt_id, kind="data_series", persist=c.persist, color_role=c.color_role, points_list=pipe["filtered_signal"], axes_id=p.axes_id, label=c.label or "x_filtered(t)"))
+                        existing_ids.add(filt_id)
+                    if len(c.output_ids) >= 2 and c.output_ids[1] not in existing_ids:
+                        fspec_id = c.output_ids[1]
+                        sc.objects.append(SceneObject(id=fspec_id, kind="data_series", persist=c.persist, color_role="secondary", points_list=pipe["filtered_spectrum"], axes_id=p.axes_id, label="F_filtered(w)"))
+                        existing_ids.add(fspec_id)
     return out

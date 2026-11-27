@@ -75,6 +75,7 @@ def run_pipeline(
     caption_style: str | None = None,
     lut_path: Path | None = None,
     output_stem: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> Path:
     if format_name not in FORMATS:
         raise ValueError(f"Unknown format '{format_name}'. Options: {list(FORMATS)}")
@@ -85,7 +86,19 @@ def run_pipeline(
     profile = FORMATS[format_name]
     resolved_cap_style = caption_style or ("kinetic" if (profile.is_vertical and ui in ("card", "neon")) else ("editorial" if not profile.is_vertical else "minimal"))
     script_path = script_path.resolve()
-    resolved_name, scene_cls = _load_scene_class(script_path, scene_name)
+    prev_env_vals: dict[str, str | None] = {}
+    if extra_env:
+        for ek, ev in extra_env.items():
+            prev_env_vals[ek] = os.environ.get(ek)
+            os.environ[ek] = ev
+    try:
+        resolved_name, scene_cls = _load_scene_class(script_path, scene_name)
+    finally:
+        for ek, old_v in prev_env_vals.items():
+            if old_v is None:
+                os.environ.pop(ek, None)
+            else:
+                os.environ[ek] = old_v
     stem = output_stem or resolved_name
 
     build_dir = PROJECT_ROOT / "build" / f"{stem}_{format_name}"
@@ -137,6 +150,8 @@ def run_pipeline(
     env["STUDIO_CAPTION_STYLE"] = resolved_cap_style
     env["STUDIO_BUILD_DIR"] = str(build_dir)
     env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    if extra_env:
+        env.update(extra_env)
 
     cmd = [
         sys.executable, "-m", "manimgx", "render", str(script_path), resolved_name,
@@ -158,11 +173,23 @@ def run_pipeline(
     if strict_layout and not layout_ok:
         raise RuntimeError(f"Strict layout QA failed: {proc.stdout}")
 
+    voice_wav_path = Path(timeline.master_voice_wav)
+    v3_env = (extra_env or {}).get("STUDIO_V3_PLAN") or os.environ.get("STUDIO_V3_PLAN")
+    if v3_env and Path(v3_env).exists():
+        try:
+            from studio.ai.v3_schema import VideoPlanV3
+            from studio.audio.demo_signals import apply_plan_audio_demos
+
+            p3_obj = VideoPlanV3.model_validate_json(Path(v3_env).read_text(encoding="utf-8"))
+            voice_wav_path = apply_plan_audio_demos(p3_obj, timeline, build_dir)
+        except Exception as exc:
+            print(f"      (audio demo synthesis skipped: {exc})")
+
     final_mp4 = out_dir / f"{stem}_{format_name}.mp4"
     print(f"[5/5] Mastering (sidechain ducking, look={look}{', LUT' if lut_path else ''}) -> {final_mp4.name}...")
     master_video(
         raw_video=raw_mp4,
-        voice_wav=Path(timeline.master_voice_wav),
+        voice_wav=voice_wav_path,
         bgm_wav=bgm_wav,
         output_mp4=final_mp4,
         look=look,
@@ -203,8 +230,35 @@ def run_plan(plan_path: Path, **kwargs) -> Path:
             issues = validate_v3_plan(plan3)
             if issues:
                 raise ValueError("Invalid VideoPlanV3:\n- " + "\n- ".join(issues))
-            os.environ["STUDIO_V3_PLAN"] = str(plan_path)
-            return run_pipeline(V3_SCENE_SCRIPT, scene_name="V3Scene", output_stem=f"V3_{plan_path.stem}", **kwargs)
+            stem = kwargs.pop("output_stem", f"V3_{plan_path.stem}")
+            mp4 = run_pipeline(
+                V3_SCENE_SCRIPT,
+                scene_name="V3Scene",
+                output_stem=stem,
+                extra_env={"STUDIO_V3_PLAN": str(plan_path)},
+                **kwargs,
+            )
+            fmt_p = str(kwargs.get("format_name", "shorts_hd"))
+            thm_p = str(kwargs.get("theme_name", "midnight_studio"))
+            cap_p = str(kwargs.get("caption_style") or ("kinetic" if "shorts" in fmt_p else "editorial"))
+            bdir_p = PROJECT_ROOT / "build" / f"{stem}_{fmt_p}"
+            from studio.provenance import build_and_write_manifest
+
+            build_and_write_manifest(
+                slug=plan_path.stem,
+                topic=plan3.topic,
+                title=plan3.title,
+                mp4_path=mp4,
+                plan=plan3,
+                backend="manimgx",
+                format_name=fmt_p,
+                look_name=thm_p,
+                caption_style=cap_p,
+                build_dir=bdir_p if bdir_p.exists() else None,
+                timeline_path=(bdir_p / "timeline.json") if (bdir_p / "timeline.json").exists() else None,
+                caption_ir_path=(bdir_p / "caption_ir.json") if (bdir_p / "caption_ir.json").exists() else None,
+            )
+            return mp4
 
         if raw.get("schema_version") in ("2.0", "2.1") or "scenes" in raw:
             from studio.ai.multi_schema import VideoPlan

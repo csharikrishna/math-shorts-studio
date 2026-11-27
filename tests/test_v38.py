@@ -140,8 +140,11 @@ class TestV38Suite(unittest.TestCase):
 
         reg_copy = reg.clone() if hasattr(reg, "clone") else get_default_registry()
         reg_copy.register(uncertified)
-        self.assertTrue(any("broken_widget" in e for e in verify_registry_contracts(reg_copy)))
-        self.assertNotIn("broken_widget", reg_copy.capabilities_prompt_summary())
+        try:
+            self.assertTrue(any("broken_widget" in e for e in verify_registry_contracts(reg_copy)))
+            self.assertNotIn("broken_widget", reg_copy.capabilities_prompt_summary())
+        finally:
+            reg_copy._items.pop(("visual_object", "broken_widget"), None)
 
     def test_scene_runtime_state_persistence_and_hyperframes_transforms(self) -> None:
         plan = VideoPlanV3(

@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from studio.ai import math_truth, world_model
+from studio.ai.linked_models import LinkedMathModelSpec, evaluate_signal_spectral_pipeline
 from studio.registry.base import ComponentRegistry, ComponentSpec
 
 
@@ -413,6 +414,29 @@ MATH_OPERATION_SPECS: list[ComponentSpec] = [
         compute_fn=math_truth.solve_equation_roots,
         validate_fn=_val_solve,
         test_fn=_test_solve,
+    ),
+    ComponentSpec(
+        name="linked_signal_spectral_pipeline",
+        category="math_operation",
+        description="Compute coupled time signal, complex winding curve z(t)=x(t)e^{-iwt}, trapezoidal centroid C(w), derived spectrum, and FFT filtered signal with Parseval energy conservation.",
+        input_model="LinkedMathModelSpec",
+        output_model="LinkedSpectralOutput",
+        input_schema_model=LinkedMathModelSpec,
+        output_schema_model=LinkedMathModelSpec,  # verified programmatically below
+        inputs_schema=["expr: str", "t_range", "freq_range", "selected_freq: float", "cutoff_freq: float", "filter_kind"],
+        outputs=["time_signal", "winding_curve", "centroid_point", "spectrum", "filtered_signal", "sweep_frames", "measurements"],
+        render_implementations={
+            "manimgx": "world_model.materialize_constructions+data_series",
+            "hyperframes": "world_model.materialize_constructions+svg_math",
+        },
+        supported_ops=["create", "draw", "animate_param", "trace", "transform"],
+        layout_requirements={"requires_axes": True},
+        resource_constraints={"max_samples": 600},
+        math_grounding="Exact trapezoidal integral z(t)=x(t)e^{-iwt}, consistent DFT/irfft filtering, and Parseval identity",
+        example_use_case="Fourier winding & frequency decomposition, bandpass audio filtering, harmonic resonance analysis.",
+        compute_fn=lambda **kw: evaluate_signal_spectral_pipeline(LinkedMathModelSpec.model_validate({"model_id": kw.get("model_id", "sig"), "kind": "signal_spectral_pipeline", **kw})),
+        validate_fn=lambda d: ([] if d.get("expr") else ["expr required for signal_spectral_pipeline"]),
+        test_fn=lambda: abs(float(evaluate_signal_spectral_pipeline(LinkedMathModelSpec(model_id="t", kind="signal_spectral_pipeline", expr="cos(2*pi*2*t)", selected_freq=2.0))["measurements"]["parseval_rel_error"])) < 1e-3,
     ),
 ]
 

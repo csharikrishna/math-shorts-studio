@@ -2,11 +2,57 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
 
+from studio.ai.env import PROJECT_ROOT
 from studio.design.fonts import FONT_DIR, font_face_css
+
+KATEX_DIR = PROJECT_ROOT / "assets" / "vendor" / "katex"
+
+
+def verify_vendored_katex() -> list[str]:
+    """Verify vendored offline KaTeX bundle matches KATEX_MANIFEST.json SHA-256 digests."""
+    manifest_p = KATEX_DIR / "KATEX_MANIFEST.json"
+    if not manifest_p.exists():
+        return [f"Missing {manifest_p}"]
+    data = json.loads(manifest_p.read_text(encoding="utf-8"))
+    errs: list[str] = []
+    for rel, expected in (data.get("files") or {}).items():
+        fp = KATEX_DIR / rel
+        if not fp.exists():
+            errs.append(f"Missing vendored KaTeX file: {rel}")
+            continue
+        got = hashlib.sha256(fp.read_bytes()).hexdigest()
+        if got != expected:
+            errs.append(f"SHA mismatch on {rel}: {got[:12]} != {expected[:12]}")
+    return errs
+
+
+def stage_katex_to_site(site_dir: Path) -> bool:
+    """Copy vendored offline KaTeX JS/CSS/woff2 assets into site_dir/vendor/katex."""
+    if not (KATEX_DIR / "katex.min.js").exists():
+        return False
+    dst = site_dir / "vendor" / "katex"
+    dst.mkdir(parents=True, exist_ok=True)
+    for fname in ("katex.min.js", "katex.min.css", "LICENSE"):
+        src_f = KATEX_DIR / fname
+        if src_f.exists():
+            tgt_f = dst / fname
+            if not tgt_f.exists() or tgt_f.stat().st_size != src_f.stat().st_size:
+                shutil.copy2(src_f, tgt_f)
+    src_fonts = KATEX_DIR / "fonts"
+    if src_fonts.exists():
+        dst_fonts = dst / "fonts"
+        dst_fonts.mkdir(parents=True, exist_ok=True)
+        for wf in src_fonts.glob("*.woff2"):
+            tgt_f = dst_fonts / wf.name
+            if not tgt_f.exists() or tgt_f.stat().st_size != wf.stat().st_size:
+                shutil.copy2(wf, tgt_f)
+    return True
 
 
 def stage_fonts_to_site(site_dir: Path) -> None:

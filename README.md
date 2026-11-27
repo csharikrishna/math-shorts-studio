@@ -1,6 +1,6 @@
 # Math Shorts Studio
 
-An autonomous educational mathematics video engine (**V3.8**): **ConceptAnalysis -> CreativeBrief -> authoritative locked `ScriptIR` -> deterministic computational math & geometry -> ManimGX GPU / HyperFrames Chromium CDP / Hybrid rendering -> single-source `CaptionIR` (`editorial`/`kinetic`/`minimal`/`dialogue`/`accessible`/`off`) -> EBU R128 mastering -> scene-aware QA publication gates**, in `9:16` Shorts or `16:9` documentaries.
+An autonomous educational mathematics video engine (**V3.9**): **ConceptAnalysis -> CreativeBrief -> authoritative locked `ScriptIR` -> linked `LinkedMathModelSpec` & deterministic math/geometry -> ManimGX GPU / HyperFrames Chromium CDP + offline KaTeX `0.19.1` / Hybrid rendering -> global semantic `CaptionIR` (`editorial`/`kinetic`/`minimal`/`dialogue`/`accessible`/`off`) + optional synthesized audio signal demos -> EBU R128 mastering -> immutable `ProductionManifest` & scene-aware QA**, in `9:16` Shorts or `16:9` documentaries.
 
 ## Quick start
 

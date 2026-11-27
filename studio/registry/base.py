@@ -63,13 +63,33 @@ class ComponentSpec(BaseModel):
                 issues.append(f"{self.name}: validate_fn raised ({exc})")
         return issues
 
+    def validate_outputs(self, output: Any) -> list[str]:
+        """Validate execution result against typed Pydantic output_schema_model."""
+        issues: list[str] = []
+        if self.output_schema_model is not None:
+            try:
+                if isinstance(output, dict):
+                    self.output_schema_model.model_validate(output)
+                elif isinstance(output, BaseModel):
+                    self.output_schema_model.model_validate(output.model_dump())
+                else:
+                    issues.append(f"{self.name}: unexpected non-structured output type {type(output).__name__}")
+            except Exception as exc:  # noqa: BLE001
+                issues.append(f"{self.name}: typed output validation failed ({exc})")
+        return issues
+
     def execute(self, **kwargs: Any) -> Any:
         if self.compute_fn is None:
             raise NotImplementedError(f"ComponentSpec {self.name!r} has no bound compute_fn")
         errs = self.validate_inputs(kwargs)
         if errs:
             raise ValueError("; ".join(errs))
-        return self.compute_fn(**kwargs)
+        result = self.compute_fn(**kwargs)
+        if self.output_schema_model is not None and isinstance(result, dict):
+            out_errs = self.validate_outputs(result)
+            if out_errs:
+                raise ValueError("; ".join(out_errs))
+        return result
 
     def certification_errors(self) -> list[str]:
         """Check whether this component meets every executable contract requirement."""

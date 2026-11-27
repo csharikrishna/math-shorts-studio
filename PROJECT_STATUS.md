@@ -1,4 +1,25 @@
-# Math Shorts Studio — Project Status (V3.8 Professional Production & Reliability)
+# Math Shorts Studio — Project Status (V3.9 Mathematical Cinematography & Linked Visualization)
+
+## V3.9 Implemented & Verified
+- **Immutable Production Manifests & Provenance (`studio/provenance.py`, `studio/longform.py`, `studio/pipeline.py`, `studio/renderers/`)**
+  - Every generated video produces a sibling `.manifest.json` (`ProductionManifest`) cryptographically binding `production_id`, `git_commit_sha`, script revision/SHA-256, `video_plan_sha256`, `math_model_sha256`, backend/theme/caption configuration, font SHA versions, `audio_timeline_sha256`, `caption_ir_sha256`, final MP4 SHA-256, probed streams, QA status, timestamp, and provider provenance (`verify_manifest_matches_mp4()` detects tampered/overwritten MP4s).
+  - Resolved V3.8 `SHORT_` vs `V3_` output overwrite collision cleanly (`output_stem=f"SHORT_{slug}"`).
+- **Shared Linked Mathematical Data Model & Genuine Complex Winding (`studio/ai/linked_models.py`, `studio/ai/v3_schema.py`, `studio/ai/world_model.py`, `studio/ai/validate_v3.py`, `studio/registry/math_ops.py`)**
+  - Added `LinkedMathModelSpec` (`signal_spectral_pipeline`, `optimization_trajectory`, `bayesian_probabilistic`, `dynamical_eigen`, `series_approximation`) driving coupled views from one mathematical source of truth: $z(t)=x(t)e^{-i\omega t}$, trapezoidal complex centroid $C(\omega)$, derived magnitude spectrum, `rfft`/`irfft` spectral filtering & Parseval energy conservation, synchronized parameter `SweepKeyframe`s, and `ClaimLedgerEntry`.
+  - Added 4 linked claims (`fourier_winding_centroid`, `spectral_derivation_consistency`, `signal_filtering_equivalence`, `parseval_energy_conservation`), rejects 1D `cos(x)` function plots masquerading as Fourier winding curves, enforces `ClaimLedgerEntry` spans/assumptions, and never credits self-declared `source_supported` tags without independent verification.
+- **Mathematical Cinematography, Offline Vendored KaTeX `0.19.1` & Semantic Captions (`assets/vendor/katex/`, `studio/renderers/hyperframes/`, `scenes/v3_scene.py`, `studio/captions/layout.py`, `studio/layout/`)**
+  - Vendored pinned offline KaTeX `0.19.1` (`assets/vendor/katex/KATEX_MANIFEST.json`, `verify_vendored_katex() == []`), rendering equations in HyperFrames offline without CDN access, alongside synchronized `sweep_frames_px` curve/centroid/vector playback, axis labels/legends, and camera `viewBox` zoom reframing.
+  - Synchronized ManimGX `ValueTracker` sweeps across coupled curves/points/vectors, external axes labels/curve legends, and `extract_semantic_emphasis_tokens()` so ordinary stopwords (`"Every"`, `"a"`, `"by"`, `"written"`) never get background pill boxes while conceptual tokens highlight cleanly.
+- **Global Merged `CaptionIR`, Complete Scene-Aware QA & Synthesized Audio Signal Demos (`studio/captions/layout.py`, `studio/qa/`, `studio/audio/demo_signals.py`, `studio/longform.py`)**
+  - Fixed `verify_caption_synchronization()` overlap check (`cs < prev_end - 0.02`), merged all chapter `CaptionIR` files via `merge_chapter_caption_irs()` with rebased offsets, removed the silent `24`-frame QA truncation, exported `scene_frame_metadata.json` across ManimGX/HyperFrames/Hybrid, added local synthesized audio waveform demos (`studio/audio/demo_signals.py`), eliminated post-lock `ext_*` bypasses in `studio/longform.py`, added JSON-mode schema fallback in `studio/providers/gemini.py`, and fixed thread-safe `extra_env` in `studio/pipeline.py`.
+- **Verification (`tests/test_v39.py`, Benchmarks & Held-Out Topic Evaluation — `docs/BENCHMARK_REPORT.md`)**
+  - **5-Target Fourier Linked Benchmarks:** `light` ManimGX, `midnight_studio` ManimGX (`layout: no problems in 14 samples`), `HyperFrames + KaTeX` (`editorial_light`), `Hybrid`, and `9:16` Portrait Short — all **`publication_approved` (`94.0/100`)**, `-15.2` to `-15.6 LUFS`, `60.00 fps`, `drift=0.00 s`, `manifest_ok=True`.
+  - **Held-Out Unseen Topic (`"Damped Harmonic Oscillators, Resonance Curves, and Phase Portraits"`, `hybrid` + derived `shorts_hd`):** Generated 7 chapters / 28 scenes (`225.62 s`, `-15.2 LUFS`, `drift=0.00 s`, `124` frames across `28/28` scenes, `79` global captions) and `44.00 s` short autonomously (`manifest_ok=True`); honest QA flagged `c2__cue_0003` Kokoro trailing-period timestamp inversion (`54.0/100` `rejected` on documentary; `78.0/100` `review_required` on short).
+  - **Test Suite:** **81 tests passing** (`tests/test_v39.py` + `test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
+
+---
+
+# Prior Baseline: Math Shorts Studio — Project Status (V3.8 Professional Production & Reliability)
 
 ## V3.8 Implemented & Verified
 - **Authoritative Script-First Generation & Revision Governance (`studio/longform.py`, `studio/creative/script_ir.py`, `studio/creative/dialogue.py`, `studio/creative/director.py`, `studio/providers/gemini.py`)**
