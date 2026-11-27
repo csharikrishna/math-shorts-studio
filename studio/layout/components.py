@@ -408,9 +408,10 @@ class CaptionCard:
         return line, parts
 
     PHRASE_END = (".", ",", "!", "?", ";", ":", "—")
+    SOFT_BREAK_WORDS = {"and", "or", "but", "so", "because", "while", "where", "when", "then", "which", "that", "plus", "equals"}
 
     def set_words(self, words: list[tuple], beat_start: float) -> None:
-        """Pack timed words into width-fitting chunks of at most MAX_WORDS, breaking at phrase punctuation.
+        """Pack timed words into grammatical phrase chunks (shared with SRT/VTT semantic segmentation).
 
         Each word is (text, start, end[, emphasis]).
         """
@@ -423,17 +424,18 @@ class CaptionCard:
             disp_tok = raw_tok[:-1] if (raw_tok.endswith(".") and not raw_tok.endswith("...") and not raw_tok[:-1].isdigit()) else raw_tok
             norm.append((disp_tok, float(w[1]), float(w[2]), bool(w[3]) if len(w) > 3 else False, breaks_phrase))
         current: list[tuple[str, float, float, bool]] = []
-        for disp_tok, s_t, e_t, emph_f, breaks_phrase in norm:
+        for idx, (disp_tok, s_t, e_t, emph_f, breaks_phrase) in enumerate(norm):
             word = (disp_tok, s_t, e_t, emph_f)
             cand = [*current, word]
             too_wide = self._text(" ".join(w[0] for w in cand)).width > self.inner_w * 0.94
-            if current and (len(cand) > self.MAX_WORDS or too_wide):
+            if current and (len(cand) > self.MAX_WORDS + 1 or too_wide):
                 self._chunks.append((current[0][1], current))
                 current = [word]
             else:
                 current = cand
-            # Phrase-aware breaks keep each caption a readable thought (using original punctuation)
-            if breaks_phrase and len(current) >= 2:
+            next_tok = norm[idx + 1][0].lower().strip(".,!?;:") if idx + 1 < len(norm) else ""
+            soft_break = next_tok in self.SOFT_BREAK_WORDS and len(current) >= 3 and self._text(" ".join(w[0] for w in current)).width > self.inner_w * 0.62
+            if (breaks_phrase and len(current) >= 2) or soft_break:
                 self._chunks.append((current[0][1], current))
                 current = []
         if current:

@@ -3,837 +3,170 @@
   "topic": "Pythagorean Theorem Geometric Proof",
   "title": "Why a^2 + b^2 = c^2",
   "audience": "general",
+  "strategy": "Pose the area puzzle visually, construct one 3-4-5 right triangle inside an (a+b) square, duplicate and rotate three congruent copies into the corners, reveal the tilted c^2 center, and transform the area equation to cancel 2ab.",
+  "target_duration_s": 50.0,
   "scenes": [
     {
       "scene_id": "s1_hook",
-      "purpose": "Show right triangle with squares on all three sides",
-      "narration": "Why do the squares built on the two legs of a right triangle always equal the *hypotenuse* square?",
+      "purpose": "Pose the area puzzle with squares on all three sides",
+      "narration": "Why do the squares on a right triangle's two legs <bookmark mark='sum_sq'/>always match the *hypotenuse* square?",
       "color_role": "highlight",
       "sfx_cue": "whoosh_soft",
-      "objects": [
+      "constructions": [
         {
-          "id": "eq_hook",
-          "kind": "equation",
-          "persist": false,
+          "op": "right_triangle",
+          "output_ids": ["tri_hook"],
+          "params": {"a": 3.0, "b": 4.0, "origin": [-1.5, -2.0]},
           "color_role": "highlight",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": "a^2 + b^2 = c^2",
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": ""
-        },
-        {
-          "id": "tri_hook",
-          "kind": "polygon",
           "persist": false,
-          "color_role": "highlight",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -1.5,
-              -2.0
-            ],
-            [
-              1.5,
-              -2.0
-            ],
-            [
-              -1.5,
-              2.0
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
           "label": "triangle"
         },
         {
-          "id": "sq_a",
-          "kind": "polygon",
-          "persist": false,
+          "op": "square_on_segment",
+          "output_ids": ["sq_a"],
+          "source_id": "tri_hook",
+          "params": {"edge_index": 0, "outward": true},
           "color_role": "primary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -1.5,
-              -2.0
-            ],
-            [
-              1.5,
-              -2.0
-            ],
-            [
-              1.5,
-              -5.0
-            ],
-            [
-              -1.5,
-              -5.0
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
+          "persist": false,
           "label": "square"
         },
         {
-          "id": "sq_b",
-          "kind": "polygon",
-          "persist": false,
+          "op": "square_on_segment",
+          "output_ids": ["sq_b"],
+          "source_id": "tri_hook",
+          "params": {"edge_index": 2, "outward": true},
           "color_role": "tertiary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -1.5,
-              2.0
-            ],
-            [
-              -1.5,
-              -2.0
-            ],
-            [
-              -5.5,
-              -2.0
-            ],
-            [
-              -5.5,
-              2.0
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
+          "persist": false,
           "label": "square"
         },
         {
-          "id": "sq_c",
-          "kind": "polygon",
-          "persist": false,
+          "op": "square_on_segment",
+          "output_ids": ["sq_c"],
+          "source_id": "tri_hook",
+          "params": {"edge_index": 1, "outward": true},
           "color_role": "secondary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              1.5,
-              -2.0
-            ],
-            [
-              -1.5,
-              2.0
-            ],
-            [
-              2.5,
-              5.0
-            ],
-            [
-              5.5,
-              1.0
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
+          "persist": false,
           "label": "square"
-        },
-        {
-          "id": "lbl_sq_a",
-          "kind": "annotation",
-          "persist": false,
-          "color_role": "primary",
-          "text": "a²",
-          "coords": [0.0, -3.5],
-          "label": "a squared"
-        },
-        {
-          "id": "lbl_sq_b",
-          "kind": "annotation",
-          "persist": false,
-          "color_role": "tertiary",
-          "text": "b²",
-          "coords": [-3.5, 0.0],
-          "label": "b squared"
-        },
-        {
-          "id": "lbl_sq_c",
-          "kind": "annotation",
-          "persist": false,
-          "color_role": "secondary",
-          "text": "c²",
-          "coords": [2.0, 1.5],
-          "label": "c squared"
         }
       ],
+      "claims": [
+        {"kind": "right_triangle", "object_ids": ["tri_hook"], "statement": "Hook triangle is a 3-4-5 right triangle."},
+        {"kind": "square", "object_ids": ["sq_a", "sq_b", "sq_c"], "statement": "All three side-squares are valid squares."}
+      ],
+      "objects": [
+        {"id": "eq_hook", "kind": "equation", "persist": false, "color_role": "highlight", "tex": "a^2 + b^2 = c^2", "card": true},
+        {"id": "lbl_sq_a", "kind": "annotation", "persist": false, "color_role": "primary", "text": "a²", "coords": [0.0, -3.5], "label": "a squared"},
+        {"id": "lbl_sq_b", "kind": "annotation", "persist": false, "color_role": "tertiary", "text": "b²", "coords": [-3.5, 0.0], "label": "b squared"},
+        {"id": "lbl_sq_c", "kind": "annotation", "persist": false, "color_role": "secondary", "text": "c²", "coords": [2.0, 1.5], "label": "c squared"}
+      ],
       "events": [
-        {
-          "op": "create",
-          "target_id": "eq_hook",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "tri_hook",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "sq_a",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "sq_b",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "sq_c",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "lbl_sq_a",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "lbl_sq_b",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "lbl_sq_c",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "create", "target_id": "eq_hook"},
+        {"op": "create", "target_id": "tri_hook"},
+        {"op": "create", "target_id": "sq_a"},
+        {"op": "create", "target_id": "sq_b"},
+        {"op": "create", "target_id": "sq_c"},
+        {"op": "create", "target_id": "lbl_sq_a"},
+        {"op": "create", "target_id": "lbl_sq_b"},
+        {"op": "create", "target_id": "lbl_sq_c"},
+        {"op": "focus", "target_id": "sq_c", "anchor_mark": "sum_sq"}
       ]
     },
     {
-      "scene_id": "s2_outer_frame",
-      "purpose": "Frame a square of side a + b",
-      "narration": "Start with a single square whose side is *a plus b*\u2014for example, three plus four equals seven.",
+      "scene_id": "s2_outer_and_one_tri",
+      "purpose": "Build the (a+b) square and place the first right triangle",
+      "narration": "Draw a square of side *a plus b*, and tuck <bookmark mark='first_tri'/>one right triangle into the bottom corner.",
       "color_role": "primary",
       "sfx_cue": "tick_soft",
-      "objects": [
+      "constructions": [
         {
-          "id": "eq_outer",
-          "kind": "equation",
-          "persist": true,
-          "color_role": "primary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": "\\text{Side} = a + b",
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": ""
-        },
-        {
-          "id": "outer_square",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "primary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -3.5,
-              -3.5
-            ],
-            [
-              3.5,
-              -3.5
-            ],
-            [
-              3.5,
-              3.5
-            ],
-            [
-              -3.5,
-              3.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "square"
+          "op": "pythagorean_dissection",
+          "output_ids": ["outer_square", "tri_1", "tri_2", "tri_3", "tri_4", "inner_square"],
+          "params": {"a": 3.0, "b": 4.0},
+          "persist": true
         }
       ],
+      "claims": [
+        {"kind": "square", "object_ids": ["outer_square", "inner_square"], "statement": "Outer and inner shapes are valid squares."},
+        {"kind": "congruent_triangles", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4"], "statement": "Four corner triangles are congruent."}
+      ],
+      "objects": [
+        {"id": "eq_outer", "kind": "equation", "persist": true, "color_role": "primary", "tex": "\\text{Side} = a + b", "card": true}
+      ],
       "events": [
-        {
-          "op": "create",
-          "target_id": "eq_outer",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "outer_square",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "create", "target_id": "eq_outer"},
+        {"op": "create", "target_id": "outer_square"},
+        {"op": "create", "target_id": "tri_1", "anchor_mark": "first_tri"}
       ]
     },
     {
-      "scene_id": "s3_four_triangles",
-      "purpose": "Place four congruent right triangles in the corners",
-      "narration": "Place *four congruent* right triangles inside the corners, each with legs a and b and hypotenuse c.",
+      "scene_id": "s3_rotate_copies",
+      "purpose": "Rotate and place three congruent copies around the corners",
+      "narration": "Now rotate <bookmark mark='rot_two'/>three *congruent* copies <bookmark mark='rot_three'/>around the corners, <bookmark mark='rot_four'/>locking legs a and b along every edge.",
       "color_role": "secondary",
       "sfx_cue": "pop_marimba",
-      "objects": [
-        {
-          "id": "tri_1",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "secondary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -3.5,
-              -3.5
-            ],
-            [
-              -0.5,
-              -3.5
-            ],
-            [
-              -3.5,
-              0.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "triangle"
-        },
-        {
-          "id": "tri_2",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "tertiary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -0.5,
-              -3.5
-            ],
-            [
-              3.5,
-              -3.5
-            ],
-            [
-              3.5,
-              -0.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "triangle"
-        },
-        {
-          "id": "tri_3",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "secondary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              3.5,
-              -0.5
-            ],
-            [
-              3.5,
-              3.5
-            ],
-            [
-              0.5,
-              3.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "triangle"
-        },
-        {
-          "id": "tri_4",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "tertiary",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              0.5,
-              3.5
-            ],
-            [
-              -3.5,
-              3.5
-            ],
-            [
-              -3.5,
-              0.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "triangle"
-        }
+      "claims": [
+        {"kind": "congruent_triangles", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4"], "statement": "All four corner triangles are congruent."}
       ],
+      "objects": [],
       "events": [
-        {
-          "op": "create",
-          "target_id": "tri_1",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "tri_2",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "tri_3",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "tri_4",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "create", "target_id": "tri_2", "anchor_mark": "rot_two"},
+        {"op": "rotate", "target_id": "tri_2", "angle_deg": 360.0, "anchor_mark": "rot_two"},
+        {"op": "create", "target_id": "tri_3", "anchor_mark": "rot_three"},
+        {"op": "rotate", "target_id": "tri_3", "angle_deg": 360.0, "anchor_mark": "rot_three"},
+        {"op": "create", "target_id": "tri_4", "anchor_mark": "rot_four"},
+        {"op": "rotate", "target_id": "tri_4", "angle_deg": 360.0, "anchor_mark": "rot_four"}
       ]
     },
     {
       "scene_id": "s4_inner_square",
-      "purpose": "Reveal central tilted square of side c",
-      "narration": "Look at the uncovered space in the center: four equal sides of length c form a tilted *square* of area c squared.",
+      "purpose": "Reveal the tilted center square of side c",
+      "narration": "What remains in the middle? Four hypotenuses of length c <bookmark mark='center_reveal'/>form a tilted *square* of area c squared.",
       "color_role": "highlight",
       "sfx_cue": "chime_reveal",
+      "claims": [
+        {"kind": "square", "object_ids": ["inner_square"], "statement": "Center gap is a true square of side c."},
+        {"kind": "partition_of", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4", "inner_square"], "container_id": "outer_square", "statement": "Four triangles plus inner square exactly partition outer square."}
+      ],
       "objects": [
-        {
-          "id": "eq_center",
-          "kind": "equation",
-          "persist": true,
-          "color_role": "highlight",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": "\\text{Center Area} = c^2",
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": ""
-        },
-        {
-          "id": "inner_square",
-          "kind": "polygon",
-          "persist": true,
-          "color_role": "highlight",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": null,
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [
-            [
-              -0.5,
-              -3.5
-            ],
-            [
-              3.5,
-              -0.5
-            ],
-            [
-              0.5,
-              3.5
-            ],
-            [
-              -3.5,
-              0.5
-            ]
-          ],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": "square"
-        },
-        {
-          "id": "lbl_inner_c2",
-          "kind": "annotation",
-          "persist": true,
-          "color_role": "highlight",
-          "text": "c²",
-          "coords": [0.0, 0.0],
-          "label": "center square area"
-        }
+        {"id": "eq_center", "kind": "equation", "persist": true, "color_role": "highlight", "tex": "\\text{Center Area} = c^2", "card": true},
+        {"id": "lbl_inner_c2", "kind": "annotation", "persist": true, "color_role": "highlight", "text": "c²", "coords": [0.0, 0.0], "label": "center square area"}
       ],
       "events": [
-        {
-          "op": "create",
-          "target_id": "eq_center",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "inner_square",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "create",
-          "target_id": "lbl_inner_c2",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "highlight",
-          "target_id": "inner_square",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "create", "target_id": "eq_center"},
+        {"op": "create", "target_id": "inner_square", "anchor_mark": "center_reveal"},
+        {"op": "create", "target_id": "lbl_inner_c2", "anchor_mark": "center_reveal"},
+        {"op": "focus", "target_id": "inner_square", "anchor_mark": "center_reveal"}
       ]
     },
     {
       "scene_id": "s5_area_equation",
       "purpose": "Equate outer area to 4 triangles plus inner square",
-      "narration": "The total area a plus b squared equals four triangles\u2014four times half a b\u2014plus the *center* square c squared.",
+      "narration": "So the whole square a plus b squared <bookmark mark='eq_build'/>equals four half-a-b triangles plus the *center* c squared.",
       "color_role": "success",
       "sfx_cue": "pop_marimba",
+      "claims": [
+        {"kind": "area_conservation", "object_ids": ["tri_1", "tri_2", "tri_3", "tri_4", "inner_square"], "container_id": "outer_square", "statement": "Total area is conserved."}
+      ],
       "objects": [
-        {
-          "id": "eq_area",
-          "kind": "equation",
-          "persist": true,
-          "color_role": "success",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": "(a+b)^2 = 4\\left(\\tfrac{1}{2}ab\\right) + c^2",
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": ""
-        }
+        {"id": "eq_area", "kind": "equation", "persist": true, "color_role": "success", "tex": "(a+b)^2 = 4\\left(\\tfrac{1}{2}ab\\right) + c^2", "card": true}
       ],
       "events": [
-        {
-          "op": "create",
-          "target_id": "eq_area",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "highlight",
-          "target_id": "outer_square",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "create", "target_id": "eq_area", "anchor_mark": "eq_build"},
+        {"op": "highlight", "target_id": "outer_square", "anchor_mark": "eq_build"}
       ]
     },
     {
       "scene_id": "s6_expand_simplify",
-      "purpose": "Expand and cancel 2ab to reveal a^2 + b^2 = c^2",
-      "narration": "Expand the left side to a squared plus two a b plus b squared. Cancel two a b from both sides, leaving *a squared plus b squared equals c squared*.",
+      "purpose": "Transform equation to expand and cancel 2ab",
+      "narration": "Expand the left side, <bookmark mark='cancel_2ab'/>cancel two a b from both sides, and only *a squared plus b squared equals c squared* remains.",
       "color_role": "highlight",
       "sfx_cue": "chord_epiphany",
       "objects": [
-        {
-          "id": "eq_final",
-          "kind": "equation",
-          "persist": true,
-          "color_role": "highlight",
-          "expr": null,
-          "t_range": null,
-          "x_range": null,
-          "y_range": null,
-          "tex": "a^2 + 2ab + b^2 = 2ab + c^2 \\;\\Rightarrow\\; a^2 + b^2 = c^2",
-          "text": null,
-          "values": [],
-          "bar_labels": [],
-          "log_scale": false,
-          "coords": null,
-          "end_coords": null,
-          "vertices": [],
-          "radius": null,
-          "axes_id": null,
-          "equal_aspect": false,
-          "param_name": null,
-          "param_init": 0.0,
-          "label": ""
-        }
+        {"id": "eq_final", "kind": "equation", "persist": true, "color_role": "highlight", "tex": "a^2 + 2ab + b^2 = 2ab + c^2 \\;\\Rightarrow\\; a^2 + b^2 = c^2", "card": true}
       ],
       "events": [
-        {
-          "op": "create",
-          "target_id": "eq_final",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        },
-        {
-          "op": "highlight",
-          "target_id": "inner_square",
-          "source_id": null,
-          "anchor_mark": null,
-          "shift": null,
-          "scale_factor": null,
-          "angle_deg": null,
-          "param_range": null
-        }
+        {"op": "transform", "source_id": "eq_area", "target_id": "eq_final", "anchor_mark": "cancel_2ab"},
+        {"op": "highlight", "target_id": "inner_square", "anchor_mark": "cancel_2ab"}
       ]
     }
   ]

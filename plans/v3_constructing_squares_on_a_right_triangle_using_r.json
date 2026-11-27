@@ -1,0 +1,530 @@
+{
+  "schema_version": "3.0",
+  "topic": "Constructing squares on a right triangle",
+  "title": "The Squares of Pythagoras",
+  "audience": "general",
+  "strategy": "Build geometric intuition by deterministically constructing a right triangle, attaching outward squares on each side, and showing how the areas partition and combine.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "hook",
+      "purpose": "Introduce the right triangle and its sides with an immediate visual question.",
+      "narration": "What happens when you build a square on every side of a <bookmark mark='b1'/>*right triangle*?",
+      "color_role": "primary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -6.0,
+            6.0
+          ],
+          "y_range": [
+            -5.0,
+            5.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "construction",
+      "purpose": "Deterministically construct the base right triangle.",
+      "narration": "We start with a precise <bookmark mark='b2'/>*right triangle* having legs of lengths three and four.",
+      "color_role": "secondary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [
+        {
+          "op": "right_triangle",
+          "output_ids": [
+            "tri"
+          ],
+          "source_id": null,
+          "params": {
+            "a": 3.0,
+            "b": 4.0,
+            "origin": [
+              -2.0,
+              -2.0
+            ],
+            "edge_index": null,
+            "outward": null,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null
+          },
+          "color_role": "secondary",
+          "persist": true,
+          "label": "Base Triangle"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "right_triangle",
+          "object_ids": [
+            "tri"
+          ],
+          "container_id": null,
+          "statement": "The triangle has legs 3 and 4 with a right angle at the vertex."
+        }
+      ],
+      "objects": [
+        {
+          "id": "tri",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "secondary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              -2.0,
+              -2.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              -2.0,
+              2.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Base Triangle",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "tri",
+          "source_id": null,
+          "anchor_mark": "b2",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "squares_legs",
+      "purpose": "Construct squares on the two shorter legs using deterministic square_on_segment operations.",
+      "narration": "Next, we attach <bookmark mark='b3'/>*squares* outward onto each of the two shorter legs.",
+      "color_role": "highlight",
+      "sfx_cue": "tick_soft",
+      "constructions": [
+        {
+          "op": "square_on_segment",
+          "output_ids": [
+            "sq_a"
+          ],
+          "source_id": "tri",
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": 0,
+            "outward": true,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null
+          },
+          "color_role": "highlight",
+          "persist": true,
+          "label": "Square A"
+        },
+        {
+          "op": "square_on_segment",
+          "output_ids": [
+            "sq_b"
+          ],
+          "source_id": "tri",
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": 1,
+            "outward": true,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null
+          },
+          "color_role": "tertiary",
+          "persist": true,
+          "label": "Square B"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "square",
+          "object_ids": [
+            "sq_a"
+          ],
+          "container_id": null,
+          "statement": "Constructed square on leg a with area 9."
+        },
+        {
+          "kind": "square",
+          "object_ids": [
+            "sq_b"
+          ],
+          "container_id": null,
+          "statement": "Constructed square on leg b with area 16."
+        }
+      ],
+      "objects": [
+        {
+          "id": "sq_a",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              -2.0,
+              -2.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              1.0,
+              -5.0
+            ],
+            [
+              -2.0,
+              -5.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Square A",
+          "card": false
+        },
+        {
+          "id": "sq_b",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "tertiary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              -2.0,
+              2.0
+            ],
+            [
+              2.0,
+              5.0
+            ],
+            [
+              5.0,
+              1.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Square B",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "sq_a",
+          "source_id": null,
+          "anchor_mark": "b3",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sq_b",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "hypotenuse_square",
+      "purpose": "Construct the square on the hypotenuse side.",
+      "narration": "Now we build the largest <bookmark mark='b4'/>*square* directly on the hypotenuse of our triangle.",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "constructions": [
+        {
+          "op": "square_on_segment",
+          "output_ids": [
+            "sq_c"
+          ],
+          "source_id": "tri",
+          "params": {
+            "a": null,
+            "b": null,
+            "origin": null,
+            "edge_index": 2,
+            "outward": true,
+            "dx": null,
+            "dy": null,
+            "angle_deg": null,
+            "center": null,
+            "p1": null,
+            "p2": null
+          },
+          "color_role": "success",
+          "persist": true,
+          "label": "Square C"
+        }
+      ],
+      "claims": [
+        {
+          "kind": "square",
+          "object_ids": [
+            "sq_c"
+          ],
+          "container_id": null,
+          "statement": "Constructed square on hypotenuse with area 25."
+        }
+      ],
+      "objects": [
+        {
+          "id": "sq_c",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "success",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              -2.0,
+              2.0
+            ],
+            [
+              -2.0,
+              -2.0
+            ],
+            [
+              -6.0,
+              -2.0
+            ],
+            [
+              -6.0,
+              2.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Square C",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "sq_c",
+          "source_id": null,
+          "anchor_mark": "b4",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "discovery",
+      "purpose": "Show the area relationship visually summing the two smaller squares into the hypotenuse square.",
+      "narration": "Notice how the combined areas of the two smaller squares exactly match the <bookmark mark='b5'/>*hypotenuse* area.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [],
+      "events": [
+        {
+          "op": "highlight",
+          "target_id": "sq_a",
+          "source_id": null,
+          "anchor_mark": "b5",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "sq_b",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "sq_c",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "payoff",
+      "purpose": "Display the final Pythagorean equation card summing the constructed squares.",
+      "narration": "This proves the timeless relationship that a squared plus b squared equals <bookmark mark='b6'/>*c squared*.",
+      "color_role": "primary",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "pyth_eq",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "highlight",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "a^2 + b^2 = c^2",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "pyth_eq",
+          "source_id": null,
+          "anchor_mark": "b6",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

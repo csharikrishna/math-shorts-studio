@@ -1,0 +1,524 @@
+{
+  "schema_version": "3.0",
+  "topic": "Bayes theorem conditional probability",
+  "title": "Unraveling Conditional Probability",
+  "audience": "general",
+  "strategy": "Build conditional probability visually through nested set partitions on a 2D sample space, moving from absolute frequencies to inverse probabilities.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "scene_hook",
+      "purpose": "Pose an immediate visual question on overlapping probabilities.",
+      "narration": "What happens when our <bookmark mark='b1'/>*evidence* flips our initial <bookmark mark='b2'/>*belief* upside down?",
+      "color_role": "highlight",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            10.0
+          ],
+          "y_range": [
+            0.0,
+            10.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "sample_space",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              1.0
+            ],
+            [
+              9.0,
+              1.0
+            ],
+            [
+              9.0,
+              9.0
+            ],
+            [
+              1.0,
+              9.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sample_space",
+          "source_id": null,
+          "anchor_mark": "b1",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_intuition",
+      "purpose": "Introduce the prior probability region within the sample space.",
+      "narration": "Let us isolate the prior <bookmark mark='b3'/>*hypothesis* space as a fraction of the total area.",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            10.0
+          ],
+          "y_range": [
+            0.0,
+            10.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "hypothesis_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              1.0
+            ],
+            [
+              4.0,
+              1.0
+            ],
+            [
+              4.0,
+              9.0
+            ],
+            [
+              1.0,
+              9.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "hypothesis_region",
+          "source_id": null,
+          "anchor_mark": "b3",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_construction",
+      "purpose": "Overlay the evidence region intersecting the hypothesis.",
+      "narration": "Now we intersect this with the observed <bookmark mark='b4'/>*evidence* band across the space.",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            10.0
+          ],
+          "y_range": [
+            0.0,
+            10.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "hypothesis_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              1.0
+            ],
+            [
+              4.0,
+              1.0
+            ],
+            [
+              4.0,
+              9.0
+            ],
+            [
+              1.0,
+              9.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "evidence_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              4.0
+            ],
+            [
+              9.0,
+              4.0
+            ],
+            [
+              9.0,
+              7.0
+            ],
+            [
+              1.0,
+              7.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "evidence_region",
+          "source_id": null,
+          "anchor_mark": "b4",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_discovery",
+      "purpose": "Highlight the overlapping intersection of hypothesis and evidence.",
+      "narration": "The overlap represents <bookmark mark='b5'/>*joint* probability, scaling both our terms neatly.",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            0.0,
+            10.0
+          ],
+          "y_range": [
+            0.0,
+            10.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "intersection_region",
+          "kind": "polygon",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [
+            [
+              1.0,
+              4.0
+            ],
+            [
+              4.0,
+              4.0
+            ],
+            [
+              4.0,
+              7.0
+            ],
+            [
+              1.0,
+              7.0
+            ]
+          ],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "intersection_region",
+          "source_id": null,
+          "anchor_mark": "b5",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_payoff",
+      "purpose": "Display the final Bayes theorem equation card.",
+      "narration": "Dividing by total evidence yields the final <bookmark mark='b6'/>*conditional* probability formula card.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "bayes_equation",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "P(A|B) = \\frac{P(B|A)P(A)}{P(B)}",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "bayes_equation",
+          "source_id": null,
+          "anchor_mark": "b6",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

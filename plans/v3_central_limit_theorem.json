@@ -1,0 +1,369 @@
+{
+  "schema_version": "3.0",
+  "topic": "Central limit theorem",
+  "title": "The Magic of Normal Curves from Chaos",
+  "audience": "general",
+  "strategy": "Build intuition by rolling unfair dice or adding independent non-normal random variables, showing how their sum inexorably morphs into a bell curve.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "purpose": "hook",
+      "narration": "What happens when you roll many weird dice and add their outcomes together? Watch chaos create a <bookmark mark='b1'/>*bell* curve.",
+      "color_role": "danger",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -5.0,
+            5.0
+          ],
+          "y_range": [
+            0.0,
+            1.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "flat_dist",
+          "kind": "bar_chart",
+          "persist": true,
+          "color_role": "danger",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "bar_labels": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "flat_dist",
+          "source_id": null,
+          "anchor_mark": "b1",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "purpose": "intuition",
+      "narration": "A single die is completely flat, giving every face equal probability. There is no hint of a <bookmark mark='b2'/>*normal* shape here.",
+      "color_role": "primary",
+      "sfx_cue": "tick_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "uniform_eq",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "P(X = k) = \\frac{1}{6}",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "uniform_eq",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "flat_dist",
+          "source_id": null,
+          "anchor_mark": "b2",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "purpose": "construction",
+      "narration": "Now let us add two identical dice together. The possible sums immediately start forming a <bookmark mark='b3'/>*triangle* peak.",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "sum_two_dice",
+          "kind": "bar_chart",
+          "persist": true,
+          "color_role": "secondary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0,
+            6.0,
+            5.0,
+            4.0,
+            3.0,
+            2.0,
+            1.0
+          ],
+          "bar_labels": [
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12"
+          ],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "remove",
+          "target_id": "flat_dist",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sum_two_dice",
+          "source_id": null,
+          "anchor_mark": "b3",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_4",
+      "purpose": "discovery",
+      "narration": "With five dice combined, the jagged steps smooth out into a gorgeous <bookmark mark='b4'/>*symmetric* mound without fail.",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "sum_five_dice",
+          "kind": "function_plot",
+          "persist": true,
+          "color_role": "success",
+          "expr": "exp(-x*x)",
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Normal Approximation",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "remove",
+          "target_id": "sum_two_dice",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "sum_five_dice",
+          "source_id": null,
+          "anchor_mark": "b4",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_5",
+      "purpose": "payoff",
+      "narration": "This phenomenon is the central limit theorem, guaranteeing a <bookmark mark='b5'/>*Gaussian* limit for any independent random sums.",
+      "color_role": "highlight",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "clt_formula",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "Z = \\frac{\\sum X_i - \\mu}{\\sigma / \\sqrt{n}} \\xrightarrow{d} \\mathcal{N}(0,1)",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "clt_formula",
+          "source_id": null,
+          "anchor_mark": "b5",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "sum_five_dice",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

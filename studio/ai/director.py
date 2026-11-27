@@ -334,17 +334,26 @@ def create_v2_plan(
 
 V3_STYLE_GUIDE = """
 You are an educational math filmmaker creating a composable VideoPlanV3 (schema_version="3.0").
-Think through: concept -> prerequisites -> central discovery -> visual objects -> narration -> animation events.
-Objects persist across scenes when persist=true (keep axes, target curves, or geometric shapes on screen!).
-Object kinds:
+Think through: explanation strategy -> prerequisites -> central discovery -> visual objects -> narration -> animation events.
+STORYTELLING RULES:
+- Start Scene 1 with an immediate visual question or surprising demonstration.
+- NEVER use generic cliché phrases like "Welcome to a mathematical journey", "Unlocking profound mathematical secrets", or "Mathematical relationships that last forever".
+- Every scene must introduce a meaningful visual discovery; never just fade in completed static diagrams when motion/transformation explains the idea.
+- Put 1-2 key words in *asterisks* for caption emphasis, and use <bookmark mark='name'/> before key words to trigger synchronized animation events.
+- Objects persist across scenes when persist=true (keep axes, target curves, or geometric shapes on screen!).
+- Use `strategy` to state the pedagogical explanation strategy before the storyboard, and `card=true` only on key takeaway equations.
+OBJECT KINDS:
 - axes (x_range, y_range, equal_aspect=true for geometry/complex plane), function_plot (expr, axes_id),
 - parametric_curve (expr="X(t);Y(t)", t_range, axes_id), bar_chart (values, bar_labels, log_scale),
-- equation (tex), point (coords or param_name+expr="cos(theta);sin(theta)", axes_id),
+- equation (tex, card), point (coords or param_name+expr="cos(theta);sin(theta)", axes_id),
 - line / vector (coords, end_coords or param_name+expr, axes_id), angle_arc (axes_id, param_name, radius),
 - projection (axes_id, param_name), polygon (vertices, axes_id), circle (coords, radius, axes_id),
 - number_line (x_range), annotation (text, coords, axes_id).
-Events reference object ids: op in {create, draw, transform, highlight, move, scale, rotate, remove, focus, animate_param}.
-For animate_param, include param_range=[start, end] to smoothly sweep ValueTracker-bound objects.
+DETERMINISTIC CONSTRUCTIONS (optional `constructions` list per scene, preferred for exact geometry):
+- op in {right_triangle, square_on_segment, pythagorean_dissection, translate_polygon, rotate_polygon} with `output_ids`, `params`, `source_id`.
+EVENTS:
+- op in {create, draw, transform, highlight, move, scale, rotate, remove, focus, animate_param} with `target_id` and optional `anchor_mark`.
+- For animate_param, include param_range=[start, end] to smoothly sweep ValueTracker-bound objects.
 Create 5 to 8 progressive scenes (hook -> intuition -> construction -> discovery -> payoff) with 12-22 words per narration.
 Ensure mathematical accuracy: formulas, degrees, and plotted expressions must agree.
 """
@@ -357,32 +366,50 @@ def create_v3_plan(
     out_dir: Path = PLANS_DIR,
     provider_name: str = "gemini",
     free_only: bool = True,
+    audience: str = "general",
+    target_duration_s: float = 55.0,
 ) -> Path:
     """Generate and validate a composable object-and-event VideoPlanV3 from a topic or prompt."""
     from studio.ai.v3_schema import VideoPlanV3
     from studio.ai.validate_v3 import validate_v3_plan
+    from studio.ai.world_model import materialize_constructions
 
     if not topic and not prompt:
         raise ValueError("Give a topic or a prompt.")
     label = prompt or topic or "video"
     director = GeminiDirector(model=model, provider_name=provider_name, free_only=free_only)
-    req = f"{V3_STYLE_GUIDE}\n\nTopic/Concept: {label}\nGenerate a complete VideoPlanV3 JSON."
+    req = (
+        f"{V3_STYLE_GUIDE}\n\nTopic/Concept: {label}\nAudience: {audience}\n"
+        f"Target duration: {target_duration_s:.0f}s\nGenerate a complete VideoPlanV3 JSON."
+    )
     plan, resp = director.provider.generate_structured(req, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.5)
     director._log(f"{resp.provider}/{resp.model}: V3 plan generated in {resp.latency_s:.1f}s (tokens: {resp.prompt_tokens}+{resp.completion_tokens})")
 
+    out_dir.mkdir(parents=True, exist_ok=True)
+    slug = slugify(label)
+    raw_path = out_dir / f"v3_{slug}_raw.json"
+    raw_path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
+
+    repair_log: list[dict] = []
     for round_idx in range(1, MAX_REPAIRS + 1):
         issues = validate_v3_plan(plan)
         if not issues:
             break
+        repair_log.append({"round": round_idx, "issues": issues})
         director._log(f"V3 repair round {round_idx}/{MAX_REPAIRS} ({len(issues)} issues)")
         fix_prompt = "Fix these VideoPlanV3 issues:\n- " + "\n- ".join(issues) + f"\n\nCurrent JSON:\n{plan.model_dump_json()}"
         plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=V3_STYLE_GUIDE, temperature=0.3)
 
     issues = validate_v3_plan(plan)
     if issues:
+        if repair_log:
+            (out_dir / f"v3_{slug}_repairs.json").write_text(json.dumps(repair_log, indent=2), encoding="utf-8")
         raise DirectorError("VideoPlanV3 still invalid after repairs:\n- " + "\n- ".join(issues))
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"v3_{slugify(label)}.json"
+    if repair_log:
+        (out_dir / f"v3_{slug}_repairs.json").write_text(json.dumps(repair_log, indent=2), encoding="utf-8")
+
+    plan = materialize_constructions(plan)
+    path = out_dir / f"v3_{slug}.json"
     path.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
     return path

@@ -10,6 +10,7 @@ import numpy as np
 from scenes.multi_scene import plot_clipped_segments
 from studio.ai.expr import compile_expr
 from studio.ai.v3_schema import AnimationEvent, SceneObject, VideoPlanV3
+from studio.ai.world_model import materialize_constructions
 from studio.audio.tts import BeatSpec
 from studio.config import CAPTION_FONT
 from studio.layout import CaptionCard, fit_mobject
@@ -18,7 +19,7 @@ from studio.scene import StoryScene
 DEFAULT_V3_PLAN = Path(__file__).resolve().parent.parent / "plans" / "v3_demo.json"
 V3_PLAN_PATH = Path(os.environ.get("STUDIO_V3_PLAN", str(DEFAULT_V3_PLAN)))
 V3_PLAN = (
-    VideoPlanV3.model_validate_json(V3_PLAN_PATH.read_text(encoding="utf-8"))
+    materialize_constructions(VideoPlanV3.model_validate_json(V3_PLAN_PATH.read_text(encoding="utf-8")))
     if V3_PLAN_PATH.exists()
     else VideoPlanV3(topic="Demo", title="Demo", scenes=[])
 )
@@ -53,18 +54,25 @@ class V3Scene(StoryScene):
         self.axes_ranges: dict[str, tuple[list[float], list[float]]] = {}
         self.params: dict[str, m.ValueTracker] = {}
         self._active_eq_id: str | None = None
+        self._geom_frame: tuple[float, np.ndarray] | None = None
+        self._live_unaxed_polys: set[str] = set()
 
-        for sc in V3_PLAN.scenes:
+        for idx, sc in enumerate(V3_PLAN.scenes):
+            self._cur_scene_idx = idx
             new_eq_ids = [o.id for o in sc.objects if o.kind == "equation"]
             for obj in sc.objects:
                 if obj.id in self.registry:
                     raise RuntimeError(f"Scene {sc.scene_id}: duplicate live object {obj.id!r}")
                 self.registry[obj.id] = self._build_object(obj)
+                if obj.kind == "polygon" and not obj.axes_id:
+                    self._live_unaxed_polys.add(obj.id)
 
+            transform_srcs = {e.source_id for e in sc.events if e.op == "transform" and e.source_id}
             main_anims: list[m.Animation] = []
             if new_eq_ids and self._active_eq_id and self._active_eq_id in self.registry:
-                old_eq = self.registry.pop(self._active_eq_id)
-                main_anims.append(m.FadeOut(old_eq))
+                if self._active_eq_id not in transform_srcs:
+                    old_eq = self.registry.pop(self._active_eq_id)
+                    main_anims.append(m.FadeOut(old_eq))
                 self._active_eq_id = None
 
             cues: dict[str, list[AnimationEvent]] = {}
@@ -91,8 +99,15 @@ class V3Scene(StoryScene):
                 self._active_eq_id = new_eq_ids[-1]
 
             to_drop = [self.registry.pop(o.id) for o in sc.objects if not o.persist and o.id in self.registry]
+            for o in sc.objects:
+                if not o.persist:
+                    self._live_unaxed_polys.discard(o.id)
             if to_drop:
                 self.remove(*to_drop)
+            # Reset composition frame when no un-axed polygons remain live
+            if not any(oid in self.registry for oid in self._live_unaxed_polys):
+                self._live_unaxed_polys.clear()
+                self._geom_frame = None
 
     def _compile_event(self, ev: AnimationEvent) -> m.Animation:
         if ev.target_id not in self.registry:
@@ -110,7 +125,8 @@ class V3Scene(StoryScene):
         if ev.op == "highlight":
             return m.Indicate(mob, scale_factor=1.08)
         if ev.op == "move" and ev.shift:
-            vec = np.array([ev.shift[0], ev.shift[1], ev.shift[2] if len(ev.shift) > 2 else 0.0])
+            s = self._get_geom_scale() if not getattr(mob, "_uses_axes", False) else 1.0
+            vec = np.array([ev.shift[0] * s, ev.shift[1] * s, (ev.shift[2] * s) if len(ev.shift) > 2 else 0.0])
             return mob.animate.shift(vec)
         if ev.op == "scale" and ev.scale_factor:
             return mob.animate.scale(ev.scale_factor)
@@ -118,6 +134,7 @@ class V3Scene(StoryScene):
             return m.Rotate(mob, angle=float(np.deg2rad(ev.angle_deg)))
         if ev.op == "remove":
             self.registry.pop(ev.target_id, None)
+            self._live_unaxed_polys.discard(ev.target_id)
             return m.FadeOut(mob)
         if ev.op == "focus":
             return m.Circumscribe(mob, color=self.theme.accent_highlight)
@@ -129,24 +146,42 @@ class V3Scene(StoryScene):
             return tracker.animate.set_value(float(ev.param_range[1]))
         return m.FadeIn(mob)
 
-    def _get_geom_scale(self) -> float:
-        scale = getattr(self, "_geom_scale", None)
-        if scale is None:
+    def _get_geom_frame(self) -> tuple[float, np.ndarray]:
+        if self._geom_frame is None:
             L = self.layout
-            max_span = max(
-                (max(abs(v[0]), abs(v[1])) for sc in V3_PLAN.scenes for o in sc.objects if o.kind == "polygon" and not o.axes_id for v in o.vertices),
-                default=0.0,
-            )
-            scale = (min(L.stage_w, L.stage_h) * 0.72) / max(2.0 * max_span, 1e-6) if max_span > 0 else 1.0
-            self._geom_scale = scale
-        return scale
+            start = getattr(self, "_cur_scene_idx", 0)
+            xs: list[float] = []
+            ys: list[float] = []
+            for sc in V3_PLAN.scenes[start:]:
+                has_unaxed = False
+                for o in sc.objects:
+                    if o.kind == "polygon" and not o.axes_id and o.vertices:
+                        has_unaxed = True
+                        for v in o.vertices:
+                            xs.append(float(v[0]))
+                            ys.append(float(v[1]))
+                if has_unaxed and all(not o.persist for o in sc.objects if o.kind == "polygon" and not o.axes_id):
+                    break
+            if xs and ys:
+                cx = 0.5 * (min(xs) + max(xs))
+                cy = 0.5 * (min(ys) + max(ys))
+                span_x = max(max(xs) - min(xs), 1e-6)
+                span_y = max(max(ys) - min(ys), 1e-6)
+                scale = min((L.stage_w * 0.78) / span_x, (L.stage_h * 0.72) / span_y)
+                self._geom_frame = (scale, np.array([cx, cy, 0.0]))
+            else:
+                self._geom_frame = (1.0, np.zeros(3))
+        return self._geom_frame
+
+    def _get_geom_scale(self) -> float:
+        return self._get_geom_frame()[0]
 
     def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
         ax = self.registry.get(axes_id or "")
         if isinstance(ax, m.Axes):
             return ax.c2p(coords[0], coords[1])
-        s = self._get_geom_scale()
-        return self.layout.stage_center + np.array([coords[0] * s, coords[1] * s, 0.0])
+        s, center = self._get_geom_frame()
+        return self.layout.stage_center + np.array([(coords[0] - center[0]) * s, (coords[1] - center[1]) * s, 0.0])
 
     def _build_object(self, obj: SceneObject) -> m.Mobject:
         L, T = self.layout, self.theme
@@ -199,19 +234,23 @@ class V3Scene(StoryScene):
 
         if obj.kind == "equation":
             eq = m.MathTex(obj.tex or "x", font_size=40, color=color)
-            fit_mobject(eq, max_width=L.safe_w * 0.84, max_height=L.header_max_h * 0.56)
+            if obj.card or obj.color_role == "highlight":
+                fit_mobject(eq, max_width=L.safe_w * 0.84, max_height=L.header_max_h * 0.56)
+                eq.move_to(L.header_center)
+                pill = m.RoundedRectangle(
+                    corner_radius=0.16,
+                    width=min(L.safe_w * 0.94, eq.width + 0.56),
+                    height=min(L.header_max_h * 0.82, eq.height + 0.34),
+                    fill_color=T.surface,
+                    fill_opacity=0.90,
+                    stroke_color=color,
+                    stroke_opacity=0.45,
+                    stroke_width=1.8,
+                ).move_to(L.header_center)
+                return m.VGroup(pill, eq)
+            fit_mobject(eq, max_width=L.safe_w * 0.90, max_height=L.header_max_h * 0.65)
             eq.move_to(L.header_center)
-            pill = m.RoundedRectangle(
-                corner_radius=0.16,
-                width=min(L.safe_w * 0.94, eq.width + 0.56),
-                height=min(L.header_max_h * 0.82, eq.height + 0.34),
-                fill_color=T.surface,
-                fill_opacity=0.90,
-                stroke_color=color,
-                stroke_opacity=0.45,
-                stroke_width=1.8,
-            ).move_to(L.header_center)
-            return m.VGroup(pill, eq)
+            return eq
 
         if obj.kind == "annotation":
             txt = m.Text(obj.text or obj.label, font_size=26, font=CAPTION_FONT, weight="BOLD", color=color)
@@ -257,13 +296,9 @@ class V3Scene(StoryScene):
             return m.Arrow(p0, p1, color=color, buff=0) if obj.kind == "vector" else m.Line(p0, p1, color=color, stroke_width=3.0)
 
         if obj.kind == "polygon":
-            if obj.axes_id and isinstance(self.registry.get(obj.axes_id), m.Axes):
-                pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
-            else:
-                # Full-stage geometry scaling (e.g. 7x7 dissection centered around origin -> ~72% stage)
-                scale = self._get_geom_scale()
-                pts = [L.stage_center + np.array([v[0] * scale, v[1] * scale, 0.0]) for v in obj.vertices]
+            pts = [self._to_point(v, obj.axes_id) for v in obj.vertices]
             poly = m.Polygon(*pts, color=color, fill_color=color, fill_opacity=0.28, stroke_width=3.2)
+            poly._uses_axes = bool(obj.axes_id)  # type: ignore[attr-defined]
             return poly
 
         if obj.kind == "circle":
@@ -272,13 +307,31 @@ class V3Scene(StoryScene):
             ax = self.registry.get(obj.axes_id or "")
             if isinstance(ax, m.Axes):
                 r = float(np.linalg.norm(ax.c2p(r, 0.0) - ax.c2p(0.0, 0.0)))
-            return m.Circle(radius=r, color=color, stroke_width=3.2).move_to(pos)
+            else:
+                r = r * self._get_geom_scale()
+            c_mob = m.Circle(radius=r, color=color, stroke_width=3.2).move_to(pos)
+            c_mob._uses_axes = bool(obj.axes_id)  # type: ignore[attr-defined]
+            return c_mob
 
         if obj.kind == "number_line":
             xr = obj.x_range or [-3.0, 3.0]
-            return m.NumberLine(x_range=[xr[0], xr[1], 1.0], length=L.stage_w * 0.85, color=color, include_numbers=True).move_to(L.stage_center)
+            step = max(1.0, round((xr[1] - xr[0]) / 6.0, 2))
+            nl = m.NumberLine(
+                x_range=[xr[0], xr[1], step],
+                length=L.stage_w * 0.85,
+                color=color,
+                include_numbers=True,
+                label_direction=m.DOWN,
+                line_to_number_buff=0.35,
+                font_size=22,
+            ).move_to(L.stage_center + np.array([0.0, -L.stage_h * 0.25, 0.0]))
+            return nl
 
         if obj.kind == "bar_chart" and obj.values:
+            if not obj.axes_id:
+                for v in self.registry.values():
+                    if isinstance(v, m.Axes):
+                        self.remove(v)
             vals = obj.values
             if obj.log_scale:
                 logs = [float(np.log10(max(v, 1e-12))) for v in vals]

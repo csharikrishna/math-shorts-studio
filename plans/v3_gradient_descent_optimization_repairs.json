@@ -1,0 +1,15 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 1 (hook_landscape) obj surface_curve: function_plot requires expr.",
+      "scene 5 (descent_motion): event highlight on 'min_marker' before it is created/drawn."
+    ]
+  },
+  {
+    "round": 2,
+    "issues": [
+      "scene 1 (hook_landscape) obj surface_curve: unknown name 'y' in 'sin(x) * cos(y)' (allowed: ['x'])"
+    ]
+  }
+]

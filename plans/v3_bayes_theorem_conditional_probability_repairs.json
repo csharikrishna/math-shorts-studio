@@ -1,0 +1,12 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (scene_intuition): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 3 (scene_construction): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 3 (scene_construction): object 'hypothesis_region' already exists as persistent; cannot redeclare without removing first.",
+      "scene 4 (scene_discovery): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 4 (scene_discovery): event highlight on 'intersection_region' before it is created/drawn."
+    ]
+  }
+]

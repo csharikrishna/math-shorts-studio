@@ -62,6 +62,63 @@ class SceneObject(BaseModel):
     param_name: Optional[str] = None
     param_init: float = 0.0
     label: str = ""
+    card: bool = False
+
+
+ConstructionKind = Literal[
+    "right_triangle",
+    "square_on_segment",
+    "pythagorean_dissection",
+    "translate_polygon",
+    "rotate_polygon",
+]
+
+
+class ConstructionParams(BaseModel):
+    """Typed parameters for deterministic mathematical construction operations."""
+
+    a: Optional[float] = None
+    b: Optional[float] = None
+    origin: Optional[list[float]] = None
+    edge_index: Optional[int] = None
+    outward: Optional[bool] = None
+    dx: Optional[float] = None
+    dy: Optional[float] = None
+    angle_deg: Optional[float] = None
+    center: Optional[list[float]] = None
+    p1: Optional[list[float]] = None
+    p2: Optional[list[float]] = None
+
+
+class ConstructionOp(BaseModel):
+    """Typed deterministic mathematical construction operation."""
+
+    op: ConstructionKind
+    output_ids: list[str] = Field(default_factory=list)
+    source_id: Optional[str] = None
+    params: ConstructionParams = Field(default_factory=ConstructionParams)
+    color_role: ColorRole = "primary"
+    persist: bool = True
+    label: str = ""
+
+
+ClaimRuleKind = Literal[
+    "right_triangle",
+    "square",
+    "congruent_triangles",
+    "area_conservation",
+    "partition_of",
+    "nonzero_area",
+]
+
+
+class StructuredClaim(BaseModel):
+    """Explicit mathematical constraint verified against live geometry."""
+
+    kind: ClaimRuleKind
+    object_ids: list[str] = Field(default_factory=list)
+    container_id: Optional[str] = None
+    statement: str = ""
 
 
 class AnimationEvent(BaseModel):
@@ -81,6 +138,8 @@ class SceneV3(BaseModel):
     narration: str
     color_role: ColorRole = "primary"
     sfx_cue: SfxCue = "pop_marimba"
+    constructions: list[ConstructionOp] = Field(default_factory=list)
+    claims: list[StructuredClaim] = Field(default_factory=list)
     objects: list[SceneObject] = Field(default_factory=list)
     events: list[AnimationEvent] = Field(default_factory=list)
 
@@ -90,4 +149,6 @@ class VideoPlanV3(BaseModel):
     topic: str
     title: str
     audience: str = "general"
+    strategy: str = ""
+    target_duration_s: float = 55.0
     scenes: list[SceneV3]

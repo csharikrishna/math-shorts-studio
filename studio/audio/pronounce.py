@@ -19,6 +19,11 @@ _REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"≠"), "does not equal"),
     (re.compile(r"≤"), "is less than or equal to"),
     (re.compile(r"≥"), "is greater than or equal to"),
+    (re.compile(r"\b([A-Za-z0-9]+)\^2\b"), r"\1 squared"),
+    (re.compile(r"\b([A-Za-z0-9]+)\^3\b"), r"\1 cubed"),
+    (re.compile(r"([A-Za-z0-9])²"), r"\1 squared"),
+    (re.compile(r"([A-Za-z0-9])³"), r"\1 cubed"),
+    (re.compile(r"\b1/2\b"), "one half"),
     (re.compile(r"\b([A-Za-z])_(\d+)\b"), r"\1 \2"),
 ]
 
@@ -29,3 +34,12 @@ def normalize_for_speech(text: str) -> str:
     for pattern, repl in _REPLACEMENTS:
         out = pattern.sub(repl, out)
     return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def normalize_for_speech_with_map(text: str) -> dict[str, object]:
+    """Normalize narration for TTS while returning original, spoken, and bookmark metadata."""
+    from studio.audio.tts import BOOKMARK_RE
+
+    marks = BOOKMARK_RE.findall(text)
+    spoken = normalize_for_speech(text)
+    return {"original": text, "spoken": spoken, "bookmarks": marks}

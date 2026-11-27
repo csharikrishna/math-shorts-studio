@@ -132,3 +132,169 @@ def pythagorean_dissection(a: float = 3.0, b: float = 4.0) -> dict[str, object]:
         "triangles_area": 4.0 * 0.5 * a * b,
         "inner_area": c * c,
     }
+
+
+def all_coords_finite(pts: Sequence[Sequence[float]]) -> bool:
+    return all(len(v) >= 2 and math.isfinite(float(v[0])) and math.isfinite(float(v[1])) for v in pts)
+
+
+def _ensure_ccw(pts: list[list[float]]) -> list[list[float]]:
+    s = 0.0
+    for i in range(len(pts)):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % len(pts)]
+        s += x1 * y2 - x2 * y1
+    return pts if s >= 0 else list(reversed(pts))
+
+
+def _clip_convex(subject: list[list[float]], clipper: list[list[float]]) -> list[list[float]]:
+    """Sutherland-Hodgman convex polygon intersection."""
+    output = _ensure_ccw(clean_polygon_vertices(subject))
+    clip = _ensure_ccw(clean_polygon_vertices(clipper))
+    if len(output) < 3 or len(clip) < 3:
+        return []
+    for i in range(len(clip)):
+        a = clip[i]
+        b = clip[(i + 1) % len(clip)]
+        inp = output
+        output = []
+        if not inp:
+            break
+
+        def _inside(p: Sequence[float]) -> bool:
+            return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-9
+
+        def _intersect(p1: Sequence[float], p2: Sequence[float]) -> list[float]:
+            dc = [a[0] - b[0], a[1] - b[1]]
+            dp = [p1[0] - p2[0], p1[1] - p2[1]]
+            n1 = a[0] * b[1] - a[1] * b[0]
+            n2 = p1[0] * p2[1] - p1[1] * p2[0]
+            denom = dc[0] * dp[1] - dc[1] * dp[0]
+            if abs(denom) < 1e-12:
+                return [float(p2[0]), float(p2[1])]
+            return [(n1 * dp[0] - n2 * dc[0]) / denom, (n1 * dp[1] - n2 * dc[1]) / denom]
+
+        s = inp[-1]
+        for e in inp:
+            if _inside(e):
+                if not _inside(s):
+                    output.append(_intersect(s, e))
+                output.append([float(e[0]), float(e[1])])
+            elif _inside(s):
+                output.append(_intersect(s, e))
+            s = e
+    return output
+
+
+def polygons_overlap(p1: Sequence[Sequence[float]], p2: Sequence[Sequence[float]], tol: float = 1e-4) -> bool:
+    """Return True if two convex polygons have positive-area interior intersection (> tol)."""
+    inter = _clip_convex([list(v) for v in p1], [list(v) for v in p2])
+    return polygon_area(inter) > tol
+
+
+def polygon_inside(inner: Sequence[Sequence[float]], outer: Sequence[Sequence[float]], tol: float = 1e-3) -> bool:
+    """Return True if convex polygon `inner` is contained within convex polygon `outer`."""
+    c_in = clean_polygon_vertices(inner)
+    a_in = polygon_area(c_in)
+    if a_in <= 0:
+        return False
+    inter = _clip_convex(c_in, [list(v) for v in outer])
+    return abs(polygon_area(inter) - a_in) <= tol
+
+
+def verify_partition(pieces: Sequence[Sequence[Sequence[float]]], outer: Sequence[Sequence[float]], tol: float = 1e-3) -> list[str]:
+    """Verify pieces lie inside `outer`, do not overlap pairwise, and conserve total area."""
+    issues: list[str] = []
+    for i, pc in enumerate(pieces):
+        if not polygon_inside(pc, outer, tol=tol):
+            issues.append(f"Partition piece {i} extends outside outer container.")
+    for i in range(len(pieces)):
+        for j in range(i + 1, len(pieces)):
+            if polygons_overlap(pieces[i], pieces[j], tol=tol):
+                issues.append(f"Partition pieces {i} and {j} overlap.")
+    total_pieces = sum(polygon_area(pc) for pc in pieces)
+    outer_a = polygon_area(outer)
+    if abs(total_pieces - outer_a) > tol:
+        issues.append(f"Partition area conservation failed: pieces={total_pieces:.4f} vs outer={outer_a:.4f}.")
+    return issues
+
+
+def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
+    """Deterministically materialize typed ConstructionOps into SceneObject polygons."""
+    from studio.ai.v3_schema import SceneObject
+
+    out = plan.model_copy(deep=True)
+    registry: dict[str, list[list[float]]] = {}
+
+    for sc in out.scenes:
+        for obj in sc.objects:
+            if obj.kind == "polygon" and obj.vertices:
+                registry[obj.id] = clean_polygon_vertices(obj.vertices)
+        if not sc.constructions:
+            continue
+
+        existing_ids = {o.id for o in sc.objects}
+        for c in sc.constructions:
+            p = c.params
+            if c.op == "right_triangle":
+                a = float(p.a if p.a is not None else 3.0)
+                b = float(p.b if p.b is not None else 4.0)
+                origin = tuple(float(x) for x in (p.origin or [0.0, 0.0]))
+                verts = right_triangle(a, b, (origin[0], origin[1]))
+                oid = c.output_ids[0] if c.output_ids else "right_tri"
+                registry[oid] = verts
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "triangle"))
+                    existing_ids.add(oid)
+            elif c.op == "square_on_segment":
+                src = registry.get(c.source_id or "")
+                idx0 = int(p.edge_index if p.edge_index is not None else 0)
+                outward = bool(p.outward if p.outward is not None else True)
+                if src and len(src) >= 2:
+                    p1, p2 = src[idx0 % len(src)], src[(idx0 + 1) % len(src)]
+                else:
+                    p1 = [float(x) for x in (p.p1 or [0.0, 0.0])]
+                    p2 = [float(x) for x in (p.p2 or [1.0, 0.0])]
+                verts = square_on_segment(p1, p2, outward=outward)
+                oid = c.output_ids[0] if c.output_ids else f"sq_{idx0}"
+                registry[oid] = verts
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "square"))
+                    existing_ids.add(oid)
+            elif c.op == "pythagorean_dissection":
+                a = float(p.a if p.a is not None else 3.0)
+                b = float(p.b if p.b is not None else 4.0)
+                d = pythagorean_dissection(a, b)
+                ids = c.output_ids or ["outer_square", "tri_1", "tri_2", "tri_3", "tri_4", "inner_square"]
+                items: list[tuple[str, list[list[float]], str, str]] = [
+                    (ids[0], d["outer_square"], "primary", "square"),  # type: ignore[arg-type]
+                    (ids[1], d["triangles"][0], "secondary", "triangle"),  # type: ignore[index]
+                    (ids[2], d["triangles"][1], "tertiary", "triangle"),  # type: ignore[index]
+                    (ids[3], d["triangles"][2], "secondary", "triangle"),  # type: ignore[index]
+                    (ids[4], d["triangles"][3], "tertiary", "triangle"),  # type: ignore[index]
+                    (ids[5], d["inner_square"], "highlight", "square"),  # type: ignore[arg-type]
+                ]
+                for oid, verts, role, lbl in items:
+                    registry[oid] = verts
+                    if oid not in existing_ids:
+                        sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=role, vertices=verts, label=lbl))  # type: ignore[arg-type]
+                        existing_ids.add(oid)
+            elif c.op == "translate_polygon" and c.source_id in registry:
+                dx = float(p.dx if p.dx is not None else 0.0)
+                dy = float(p.dy if p.dy is not None else 0.0)
+                verts = translate_polygon(registry[c.source_id], dx, dy)
+                oid = c.output_ids[0] if c.output_ids else f"{c.source_id}_shifted"
+                registry[oid] = verts
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "polygon"))
+                    existing_ids.add(oid)
+            elif c.op == "rotate_polygon" and c.source_id in registry:
+                ang = math.radians(float(p.angle_deg if p.angle_deg is not None else 90.0))
+                ctr = tuple(float(x) for x in (p.center or [0.0, 0.0]))
+                verts = rotate_polygon(registry[c.source_id], ang, (ctr[0], ctr[1]))
+                oid = c.output_ids[0] if c.output_ids else f"{c.source_id}_rot"
+                registry[oid] = verts
+                if oid not in existing_ids:
+                    sc.objects.append(SceneObject(id=oid, kind="polygon", persist=c.persist, color_role=c.color_role, vertices=verts, label=c.label or "polygon"))
+                    existing_ids.add(oid)
+    return out

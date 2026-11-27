@@ -1,0 +1,374 @@
+{
+  "schema_version": "3.0",
+  "topic": "Gradient descent optimization",
+  "title": "Finding the Valley of Error",
+  "audience": "general",
+  "strategy": "Use a 2D topographical landscape and a bouncing ball analogy to build intuition for partial derivatives, followed by stepping down along steepest slopes.",
+  "target_duration_s": 55.0,
+  "scenes": [
+    {
+      "scene_id": "hook_landscape",
+      "purpose": "Pose the problem of finding the lowest point on an unseen hilly surface.",
+      "narration": "Can we blindly navigate a treacherous mountain range to find the absolute <bookmark mark='lowest'/> *valley* using only our feet?",
+      "color_role": "primary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "main_axes",
+          "kind": "axes",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": [
+            -3.0,
+            3.0
+          ],
+          "y_range": [
+            -3.0,
+            3.0
+          ],
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": true,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        },
+        {
+          "id": "surface_curve",
+          "kind": "function_plot",
+          "persist": true,
+          "color_role": "primary",
+          "expr": "sin(x) * cos(x)",
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Cost Function",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "main_axes",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "draw",
+          "target_id": "surface_curve",
+          "source_id": null,
+          "anchor_mark": "lowest",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "intuition_drop",
+      "purpose": "Drop a point on the surface representing our initial random guess.",
+      "narration": "We start at a random hilltop where error is high and knowledge is <bookmark mark='zero'/> *zero*.",
+      "color_role": "secondary",
+      "sfx_cue": "pop_marimba",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "current_point",
+          "kind": "point",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            2.0,
+            2.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Initial Guess",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "current_point",
+          "source_id": null,
+          "anchor_mark": "zero",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "slope_discovery",
+      "purpose": "Show the tangent line pointing downward to indicate slope direction.",
+      "narration": "Gravity reveals the slope beneath us, telling us precisely which way is <bookmark mark='down'/> *down*.",
+      "color_role": "highlight",
+      "sfx_cue": "tick_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "tangent_vector",
+          "kind": "vector",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            2.0,
+            2.0
+          ],
+          "end_coords": [
+            1.0,
+            1.0
+          ],
+          "vertices": [],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Gradient",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "draw",
+          "target_id": "tangent_vector",
+          "source_id": null,
+          "anchor_mark": "down",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "step_size",
+      "purpose": "Introduce the learning rate parameter controlling step size.",
+      "narration": "How far should we step? Take giant bounds or cautious *micro* <bookmark mark='micro'/> strides?",
+      "color_role": "tertiary",
+      "sfx_cue": "whoosh_soft",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "learning_rate_eq",
+          "kind": "equation",
+          "persist": false,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "\\alpha = \\text{learning rate}",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "learning_rate_eq",
+          "source_id": null,
+          "anchor_mark": "micro",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "descent_motion",
+      "purpose": "Iteratively move the point down the slope toward the minimum.",
+      "narration": "Repeatedly sampling the gradient lets us roll down until motion <bookmark mark='halts'/> *halts* entirely.",
+      "color_role": "success",
+      "sfx_cue": "chime_reveal",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "min_marker",
+          "kind": "point",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": null,
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": [
+            0.0,
+            0.0
+          ],
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": "main_axes",
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "Minimum",
+          "card": false
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "min_marker",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "move",
+          "target_id": "current_point",
+          "source_id": null,
+          "anchor_mark": "halts",
+          "shift": [
+            -2.0,
+            -1.5
+          ],
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        },
+        {
+          "op": "highlight",
+          "target_id": "min_marker",
+          "source_id": null,
+          "anchor_mark": null,
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    },
+    {
+      "scene_id": "payoff_equation",
+      "purpose": "Summarize the core update rule as the final takeaway.",
+      "narration": "This simple iterative adjustment fuels modern machine learning and artificial <bookmark mark='brains'/> *intelligence*.",
+      "color_role": "primary",
+      "sfx_cue": "chord_epiphany",
+      "constructions": [],
+      "claims": [],
+      "objects": [
+        {
+          "id": "gradient_rule",
+          "kind": "equation",
+          "persist": true,
+          "color_role": "primary",
+          "expr": null,
+          "t_range": null,
+          "x_range": null,
+          "y_range": null,
+          "tex": "w_{t+1} = w_t - \\alpha \\nabla L(w_t)",
+          "text": null,
+          "values": [],
+          "bar_labels": [],
+          "log_scale": false,
+          "coords": null,
+          "end_coords": null,
+          "vertices": [],
+          "radius": null,
+          "axes_id": null,
+          "equal_aspect": false,
+          "param_name": null,
+          "param_init": 0.0,
+          "label": "",
+          "card": true
+        }
+      ],
+      "events": [
+        {
+          "op": "create",
+          "target_id": "gradient_rule",
+          "source_id": null,
+          "anchor_mark": "brains",
+          "shift": null,
+          "scale_factor": null,
+          "angle_deg": null,
+          "param_range": null
+        }
+      ]
+    }
+  ]
+}

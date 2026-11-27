@@ -1,0 +1,16 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (scene_2): event highlight on 'flat_dist' before it is created/drawn.",
+      "scene 3 (scene_3): object 'flat_dist' already exists as persistent; cannot redeclare without removing first.",
+      "scene 3 (scene_3): event remove on 'flat_dist' before it is created/drawn.",
+      "scene 4 (scene_4): object 'sum_two_dice' already exists as persistent; cannot redeclare without removing first.",
+      "scene 4 (scene_4) obj sum_five_dice: function_plot requires expr.",
+      "scene 4 (scene_4): event remove on 'sum_two_dice' before it is created/drawn.",
+      "scene 5 (scene_5): object 'sum_five_dice' already exists as persistent; cannot redeclare without removing first.",
+      "scene 5 (scene_5) obj sum_five_dice: function_plot requires expr.",
+      "scene 5 (scene_5): event highlight on 'sum_five_dice' before it is created/drawn."
+    ]
+  }
+]

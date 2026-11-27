@@ -1,0 +1,12 @@
+[
+  {
+    "round": 1,
+    "issues": [
+      "scene 2 (construction): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 3 (squares_legs): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 4 (hypotenuse_square): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 5 (discovery): object 'main_axes' already exists as persistent; cannot redeclare without removing first.",
+      "scene 6 (payoff): object 'main_axes' already exists as persistent; cannot redeclare without removing first."
+    ]
+  }
+]
