@@ -48,6 +48,7 @@ class HyperFramesBackend(RenderBackend):
         voice: str = "en-US-AndrewNeural",
         rate: str = "-4%",
         pitch: str = "-2Hz",
+        video_only: bool = False,
     ) -> BackendRenderResult:
         t0 = time.perf_counter()
         prof = FORMATS.get(format_name, FORMATS["widescreen_hd"])
@@ -77,9 +78,6 @@ class HyperFramesBackend(RenderBackend):
                 speaker_voices=sp_voices,
             )
 
-        SfxLibrary(bdir / "sfx").ensure_all()
-        bgm_wav = generate_ambient_bgm(bdir / "bgm.wav", duration=audio_timeline.total_duration + 3.0)
-
         from studio.captions import CaptionIR
         from studio.timeline import MasterTimeline
 
@@ -107,39 +105,62 @@ class HyperFramesBackend(RenderBackend):
 
         fps = prof.fps
         ffmpeg_bin = find_ffmpeg()
-        from studio.audio.demo_signals import apply_plan_audio_demos
-
-        voice_wav_use = apply_plan_audio_demos(plan, audio_timeline, bdir)
-        audio_mix = build_audio_mix_graph(1, 2, sfx_idx=None)
-        ln_filter = measure_loudnorm_filter(
-            ffmpeg_bin,
-            ["-i", str(voice_wav_use), "-i", str(bgm_wav)],
-            audio_mix,
-        )
         enc_name, codec_flags = _pick_encoder()
-        filter_complex = f"{audio_mix},{ln_filter}[master_a];[0:v]tpad=stop_mode=clone:stop_duration=2.0,format=yuv420p[master_v]"
+        if video_only:
+            # Hybrid segment path: skip redundant SFX/BGM/loudnorm/AAC encode (concat + master_video handles audio)
+            seg_v_flags = (
+                ["-c:v", "h264_nvenc", "-preset", "p1", "-rc", "vbr", "-cq", "18", "-b:v", "0", "-pix_fmt", "yuv420p"]
+                if enc_name == "h264_nvenc"
+                else ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p"]
+            )
+            ff_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "-framerate", str(fps),
+                "-i", "-",
+                "-an",
+                *seg_v_flags,
+                "-fps_mode", "cfr",
+                "-t", f"{audio_timeline.total_duration:.4f}",
+                str(out_mp4),
+            ]
+        else:
+            SfxLibrary(bdir / "sfx").ensure_all()
+            bgm_wav = generate_ambient_bgm(bdir / "bgm.wav", duration=audio_timeline.total_duration + 3.0)
+            from studio.audio.demo_signals import apply_plan_audio_demos
 
-        ff_cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-framerate", str(fps),
-            "-i", "-",
-            "-i", str(voice_wav_use),
-            "-i", str(bgm_wav),
-            "-filter_complex", filter_complex,
-            "-map", "[master_v]",
-            "-map", "[master_a]",
-            *codec_flags,
-            "-fps_mode", "cfr",
-            "-shortest",
-            "-c:a", "aac",
-            "-ar", "48000",
-            "-b:a", "160k",
-            "-movflags", "+faststart",
-            str(out_mp4),
-        ]
+            voice_wav_use = apply_plan_audio_demos(plan, audio_timeline, bdir)
+            audio_mix = build_audio_mix_graph(1, 2, sfx_idx=None)
+            ln_filter = measure_loudnorm_filter(
+                ffmpeg_bin,
+                ["-i", str(voice_wav_use), "-i", str(bgm_wav)],
+                audio_mix,
+            )
+            filter_complex = f"{audio_mix},{ln_filter}[master_a];[0:v]tpad=stop_mode=clone:stop_duration=2.0,format=yuv420p[master_v]"
+
+            ff_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "-framerate", str(fps),
+                "-i", "-",
+                "-i", str(voice_wav_use),
+                "-i", str(bgm_wav),
+                "-filter_complex", filter_complex,
+                "-map", "[master_v]",
+                "-map", "[master_a]",
+                *codec_flags,
+                "-fps_mode", "cfr",
+                "-shortest",
+                "-c:a", "aac",
+                "-ar", "48000",
+                "-b:a", "160k",
+                "-movflags", "+faststart",
+                str(out_mp4),
+            ]
 
         server, port = _start_loopback_server(site_dir)
         tmp_profile = Path(tempfile.mkdtemp(prefix="hf_chrome_"))
@@ -161,22 +182,23 @@ class HyperFramesBackend(RenderBackend):
         from studio.provenance import build_and_write_manifest
 
         dur = _probe_duration(out_mp4)
-        build_and_write_manifest(
-            slug=slug,
-            topic=plan.topic,
-            title=plan.title,
-            mp4_path=out_mp4,
-            plan=plan,
-            backend=self.name,
-            format_name=format_name,
-            look_name=resolved_look,
-            caption_style=resolved_cap,
-            build_dir=bdir,
-            audio_timeline=audio_timeline,
-            timeline_path=(bdir / "timeline.json") if (bdir / "timeline.json").exists() else None,
-            caption_ir_path=cap_ir_file if cap_ir_file.exists() else None,
-            renderer_config={"tts_engine": tts_engine, "voice": voice, "rate": rate},
-        )
+        if not video_only:
+            build_and_write_manifest(
+                slug=slug,
+                topic=plan.topic,
+                title=plan.title,
+                mp4_path=out_mp4,
+                plan=plan,
+                backend=self.name,
+                format_name=format_name,
+                look_name=resolved_look,
+                caption_style=resolved_cap,
+                build_dir=bdir,
+                audio_timeline=audio_timeline,
+                timeline_path=(bdir / "timeline.json") if (bdir / "timeline.json").exists() else None,
+                caption_ir_path=cap_ir_file if cap_ir_file.exists() else None,
+                renderer_config={"tts_engine": tts_engine, "voice": voice, "rate": rate},
+            )
         return BackendRenderResult(
             backend=self.name,
             video_path=out_mp4,

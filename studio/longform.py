@@ -455,7 +455,6 @@ def create_longform_plan(
             for b in ch_beats
         )
         ch_prompt = (
-            f"{ch_system}\n\n"
             f"Compile an exact VideoPlanV3 VISUAL PLAN bound 1-to-1 to the APPROVED ScriptIR beats below.\n"
             f"Overall Topic: {topic}\nChapter {idx}/{len(lf_plan.chapters)}: {ch.title}\n"
             f"Summary: {ch.summary}\nKnowledge context: {node_ctx}\n"
@@ -701,7 +700,11 @@ def build_longform_video(
                     )
                     return j_idx, j_ch, j_ckey, j_skey, j_up, hf_res.video_path
 
-                hf_workers = 1 if backend == "hybrid" else max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HF_WORKERS", str(min(3, max(1, (os.cpu_count() or 4) // 2)))))))
+                hf_workers = (
+                    max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HYB_WORKERS", "2"))))
+                    if backend == "hybrid"
+                    else max(1, min(len(pending_jobs), int(os.environ.get("STUDIO_HF_WORKERS", str(min(3, max(1, (os.cpu_count() or 4) // 2)))))))
+                )
                 with ThreadPoolExecutor(max_workers=hf_workers) as pool:
                     for j_idx, j_ch, j_ckey, j_skey, j_up, mp4 in pool.map(_render_hf, pending_jobs):
                         jobs.put_cached(j_ckey, mp4)

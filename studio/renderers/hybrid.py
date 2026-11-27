@@ -256,6 +256,7 @@ class HybridRenderBackend(RenderBackend):
                     out_path=seg_mp4,
                     build_dir=seg_dir,
                     caption_style=resolved_cap,
+                    video_only=True,
                 )
                 layout_issues.extend(res.layout_issues)
             else:
@@ -320,9 +321,15 @@ class HybridRenderBackend(RenderBackend):
             lbl = f"v{idx}"
             fc_parts.append(f"[{idx}:v]fps={prof.fps},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[{lbl}]")
             v_labels.append(f"[{lbl}]")
+        from studio.audio.master import _pick_encoder
+
+        enc_name, _enc_flags = _pick_encoder()
+        hyb_v_flags = (
+            ["-c:v", "h264_nvenc", "-preset", "p1", "-rc", "vbr", "-cq", "18", "-b:v", "0", "-pix_fmt", "yuv420p"]
+            if enc_name == "h264_nvenc"
+            else ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p"]
+        )
         n_segs = len(seg_raw_mp4s)
-        anull_idx = n_segs
-        ff_inputs.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
         fc_parts.append(f"{''.join(v_labels)}concat=n={n_segs}:v=1:a=0[vout]")
         subprocess.run(
             [
@@ -333,23 +340,10 @@ class HybridRenderBackend(RenderBackend):
                 ";".join(fc_parts),
                 "-map",
                 "[vout]",
-                "-map",
-                f"{anull_idx}:a:0",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-crf",
-                "12",
-                "-pix_fmt",
-                "yuv420p",
+                "-an",
+                *hyb_v_flags,
                 "-r",
                 str(prof.fps),
-                "-c:a",
-                "aac",
-                "-ar",
-                "48000",
-                "-shortest",
                 str(joined_video),
             ],
             check=True,

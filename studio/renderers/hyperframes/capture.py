@@ -45,8 +45,22 @@ def capture_frames_to_ffmpeg(
         )
         cdp.call("Page.enable")
         cdp.call("Page.navigate", {"url": url})
-        time.sleep(0.35)
-        cdp.call("Runtime.evaluate", {"expression": "typeof window.__HF_STEP === 'function'"})
+        ready = False
+        deadline = time.perf_counter() + 2.5
+        while time.perf_counter() < deadline:
+            chk = cdp.call(
+                "Runtime.evaluate",
+                {
+                    "expression": "document.readyState === 'complete' && typeof window.__HF_STEP === 'function'",
+                    "returnByValue": True,
+                },
+            )
+            if bool(chk.get("result", {}).get("value")):
+                ready = True
+                break
+            time.sleep(0.02)
+        if not ready:
+            cdp.call("Runtime.evaluate", {"expression": "typeof window.__HF_STEP === 'function'"})
 
         ff_proc = subprocess.Popen(ff_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         audit_frames = {int(round(0.5 * (sb.start_time + sb.end_time) * fps)) for sb in audio_timeline.beats}

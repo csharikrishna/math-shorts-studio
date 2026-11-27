@@ -349,6 +349,37 @@ class TestV39Regressions(unittest.TestCase):
         self.assertEqual(len(mat.scenes[0].objects[2].points_list), 9)
         self.assertEqual(validate_v3_plan(mat), [])
 
+    def test_18_gemini_json_mode_cache_and_hybrid_speed_paths(self) -> None:
+        import inspect
+        from types import SimpleNamespace
+        from studio.providers.gemini import GeminiProvider, _COMPACT_SCHEMA_CACHE, _JSON_MODE_ONLY_SCHEMAS
+        from studio.renderers.hyperframes.assembly import HyperFramesBackend
+
+        self.assertIn("VideoPlanV3", _JSON_MODE_ONLY_SCHEMAS)
+        sig_hf = inspect.signature(HyperFramesBackend.render)
+        self.assertIn("video_only", sig_hf.parameters)
+
+        # Verify GeminiProvider skips constrained-schema roundtrip for VideoPlanV3 in a single call
+        calls: list[dict] = []
+        valid_plan = VideoPlanV3(
+            topic="T",
+            title="T",
+            scenes=[SceneV3(scene_id="s1", purpose="P", narration="Explain the ratio cleanly.")],
+        ).model_dump_json()
+
+        class _FakeModels:
+            def generate_content(self, *, model, contents, config):
+                calls.append({"model": model, "has_response_schema": bool(getattr(config, "response_schema", None) or getattr(config, "response_json_schema", None))})
+                return SimpleNamespace(text=valid_plan, usage_metadata=SimpleNamespace(prompt_token_count=10, candidates_token_count=20))
+
+        prov = GeminiProvider(api_key="test-key")
+        prov._client = SimpleNamespace(models=_FakeModels())
+        parsed, _resp = prov.generate_structured("Make plan", VideoPlanV3, system="SYS")
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0]["has_response_schema"])
+        self.assertIn("VideoPlanV3", _COMPACT_SCHEMA_CACHE)
+        self.assertEqual(parsed.topic, "T")
+
 
 if __name__ == "__main__":
     unittest.main()

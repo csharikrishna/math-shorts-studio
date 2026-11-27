@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Type, TypeVar
 
@@ -23,6 +24,9 @@ DEFAULT_GEMINI_MODELS = (
     "gemini-3.8-flash",
 )
 TRANSIENT_CODES = {429, 500, 502, 503, 504}
+_SCHEMA_CACHE_LOCK = threading.Lock()
+_JSON_MODE_ONLY_SCHEMAS: set[str] = {"VideoPlanV3"}
+_COMPACT_SCHEMA_CACHE: dict[str, str] = {}
 
 
 class GeminiProvider(LLMProvider):
@@ -58,14 +62,17 @@ class GeminiProvider(LLMProvider):
                     last_err = exc
                     if getattr(exc, "code", None) == 400 and ("too many states" in str(exc).lower() or "schema" in str(exc).lower()):
                         raise ProviderError(f"Gemini schema complexity error on {m}: {exc}") from exc
+                    if exc.code == 429:
+                        # Rate-limited / quota-exhausted on this model: switch immediately instead of sleeping
+                        break
                     if exc.code in TRANSIENT_CODES and attempt < self.retries_per_model:
-                        time.sleep(4.0 * attempt)
+                        time.sleep(1.5 * attempt)
                         continue
                     break
                 except Exception as exc:
                     last_err = exc
                     if attempt < self.retries_per_model:
-                        time.sleep(4.0 * attempt)
+                        time.sleep(1.5 * attempt)
                         continue
                     break
         raise ProviderError(f"Gemini failed across {chain}: {last_err}")
@@ -100,44 +107,32 @@ class GeminiProvider(LLMProvider):
                     _strip_unsupported(item)
             return node
 
-        has_ap = "additionalProperties" in _json.dumps(raw_schema)
-        if has_ap:
-            cleaned = _strip_unsupported(raw_schema)
-            cfg = types.GenerateContentConfig(
-                system_instruction=system or None,
-                response_mime_type="application/json",
-                response_json_schema=cleaned,
-                temperature=temperature,
-            )
-        else:
-            cfg = types.GenerateContentConfig(
-                system_instruction=system or None,
-                response_mime_type="application/json",
-                response_schema=schema,
-                temperature=temperature,
-            )
-        try:
-            resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
-            raw = getattr(resp, "text", "") or ""
-            parsed = schema.model_validate_json(raw)
-        except ProviderError as exc:
-            err_l = str(exc).lower()
-            if "too many states" not in err_l and "invalid_argument" not in err_l and "schema" not in err_l:
-                raise
-            # Schema exceeded Gemini grammar state cap on constrained decoding; fall back cleanly to JSON-mode + Pydantic validation
-            def _compact_schema(node: object) -> object:
+        def _compact_schema_str() -> str:
+            sname = schema.__name__
+            with _SCHEMA_CACHE_LOCK:
+                cached = _COMPACT_SCHEMA_CACHE.get(sname)
+            if cached is not None:
+                return cached
+
+            def _compact_node(node: object) -> object:
                 if isinstance(node, dict):
                     node.pop("additionalProperties", None)
                     node.pop("description", None)
                     node.pop("title", None)
                     for val in node.values():
-                        _compact_schema(val)
+                        _compact_node(val)
                 elif isinstance(node, list):
                     for item in node:
-                        _compact_schema(item)
+                        _compact_node(item)
                 return node
 
-            compact_fields = _json.dumps(_compact_schema(schema.model_json_schema()), separators=(",", ":"))
+            cstr = _json.dumps(_compact_node(schema.model_json_schema()), separators=(",", ":"))
+            with _SCHEMA_CACHE_LOCK:
+                _COMPACT_SCHEMA_CACHE[sname] = cstr
+            return cstr
+
+        def _run_json_mode() -> tuple[T, object, str, float, str]:
+            compact_fields = _compact_schema_str()
             json_prompt = (
                 f"{prompt}\n\n"
                 f"Return STRICT valid JSON conforming to `{schema.__name__}` matching schema:\n{compact_fields}"
@@ -147,21 +142,65 @@ class GeminiProvider(LLMProvider):
                 response_mime_type="application/json",
                 temperature=temperature,
             )
-            resp, used_model, dt = self._call_with_fallback(json_prompt, json_cfg, model)
-            raw = getattr(resp, "text", "") or ""
+            r_obj, m_used, dur = self._call_with_fallback(json_prompt, json_cfg, model)
+            raw_txt = getattr(r_obj, "text", "") or ""
+            obj_parsed: T | None = None
             for _rep in range(3):
                 try:
-                    parsed = schema.model_validate_json(raw)
+                    obj_parsed = schema.model_validate_json(raw_txt)
                     break
                 except Exception as val_exc:
                     if _rep == 2:
                         raise
                     repair_prompt = (
                         f"Fix ONLY the JSON validation error below and output complete valid JSON matching `{schema.__name__}`:\n"
-                        f"ERROR: {val_exc}\n\nBAD_JSON:\n{raw}"
+                        f"ERROR: {val_exc}\n\nBAD_JSON:\n{raw_txt}"
                     )
-                    resp, used_model, dt = self._call_with_fallback(repair_prompt, json_cfg, used_model)
+                    r_obj, m_used, dur = self._call_with_fallback(repair_prompt, json_cfg, m_used)
+                    raw_txt = getattr(r_obj, "text", "") or ""
+            assert obj_parsed is not None
+            return obj_parsed, r_obj, m_used, dur, raw_txt
+
+        with _SCHEMA_CACHE_LOCK:
+            use_json_directly = schema.__name__ in _JSON_MODE_ONLY_SCHEMAS
+
+        if use_json_directly:
+            parsed, resp, used_model, dt, raw = _run_json_mode()
+        else:
+            raw_schema = schema.model_json_schema()
+            schema_json = _json.dumps(raw_schema)
+            if len(schema_json) > 14000:
+                with _SCHEMA_CACHE_LOCK:
+                    _JSON_MODE_ONLY_SCHEMAS.add(schema.__name__)
+                parsed, resp, used_model, dt, raw = _run_json_mode()
+            else:
+                has_ap = "additionalProperties" in schema_json
+                if has_ap:
+                    cleaned = _strip_unsupported(raw_schema)
+                    cfg = types.GenerateContentConfig(
+                        system_instruction=system or None,
+                        response_mime_type="application/json",
+                        response_json_schema=cleaned,
+                        temperature=temperature,
+                    )
+                else:
+                    cfg = types.GenerateContentConfig(
+                        system_instruction=system or None,
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                        temperature=temperature,
+                    )
+                try:
+                    resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
                     raw = getattr(resp, "text", "") or ""
+                    parsed = schema.model_validate_json(raw)
+                except ProviderError as exc:
+                    err_l = str(exc).lower()
+                    if "too many states" not in err_l and "invalid_argument" not in err_l and "schema" not in err_l:
+                        raise
+                    with _SCHEMA_CACHE_LOCK:
+                        _JSON_MODE_ONLY_SCHEMAS.add(schema.__name__)
+                    parsed, resp, used_model, dt, raw = _run_json_mode()
         um = getattr(resp, "usage_metadata", None)
         pt = int(getattr(um, "prompt_token_count", 0) or 0)
         ct = int(getattr(um, "candidates_token_count", 0) or 0)

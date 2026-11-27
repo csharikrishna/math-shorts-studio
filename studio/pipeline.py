@@ -21,6 +21,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 from studio.audio.bgm import generate_ambient_bgm
 from studio.audio.master import LOOKS, master_video
 from studio.audio.sfx import SfxLibrary
@@ -31,6 +32,7 @@ from studio.scene import Story3DScene, StoryScene, _StoryMixin
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AI_SCENE_SCRIPT = PROJECT_ROOT / "scenes" / "ai_short.py"
+_V3_SCENE_ENV_LOCK = threading.Lock()
 
 
 def _load_scene_class(script_path: Path, scene_name: str | None) -> tuple[str, type[_StoryMixin]]:
@@ -87,18 +89,19 @@ def run_pipeline(
     resolved_cap_style = caption_style or ("kinetic" if (profile.is_vertical and ui in ("card", "neon")) else ("editorial" if not profile.is_vertical else "minimal"))
     script_path = script_path.resolve()
     prev_env_vals: dict[str, str | None] = {}
-    if extra_env:
-        for ek, ev in extra_env.items():
-            prev_env_vals[ek] = os.environ.get(ek)
-            os.environ[ek] = ev
-    try:
-        resolved_name, scene_cls = _load_scene_class(script_path, scene_name)
-    finally:
-        for ek, old_v in prev_env_vals.items():
-            if old_v is None:
-                os.environ.pop(ek, None)
-            else:
-                os.environ[ek] = old_v
+    with _V3_SCENE_ENV_LOCK:
+        if extra_env:
+            for ek, ev in extra_env.items():
+                prev_env_vals[ek] = os.environ.get(ek)
+                os.environ[ek] = ev
+        try:
+            resolved_name, scene_cls = _load_scene_class(script_path, scene_name)
+        finally:
+            for ek, old_v in prev_env_vals.items():
+                if old_v is None:
+                    os.environ.pop(ek, None)
+                else:
+                    os.environ[ek] = old_v
     stem = output_stem or resolved_name
 
     build_dir = PROJECT_ROOT / "build" / f"{stem}_{format_name}"

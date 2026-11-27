@@ -443,7 +443,7 @@ def create_v3_plan(
     min_words = max(45, int(target_duration_s * 1.9))
     max_words = max(min_words + 20, int(target_duration_s * 2.28))
     req = (
-        f"{system_prompt}\n\nTopic/Concept: {label}\nAudience: {audience}\n"
+        f"Topic/Concept: {label}\nAudience: {audience}\n"
         f"Format aspect: {aspect} ({format_name}), Narration mode: {narration_mode}, Look: {look_name}.\n"
         f"Target duration: {target_duration_s:.0f}s (TARGET WORD BUDGET: {min_words}-{max_words} total spoken words; do NOT exceed {max_words} words).\n"
         f"{creative_context}\n"
