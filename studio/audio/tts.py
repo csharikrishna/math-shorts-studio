@@ -61,6 +61,7 @@ class SyncedBeat:
     words: list = field(default_factory=list)
     # Bookmark name -> absolute time (s), resolved from word boundaries
     marks: dict = field(default_factory=dict)
+    speaker: str = "narrator"
 
 
 @dataclass
@@ -499,6 +500,7 @@ def build_voice_timeline(
                 total_duration=round(total_beat_dur, 4),
                 words=words,
                 marks=marks,
+                speaker=getattr(beat, "speaker", "narrator"),
             )
         )
         cursor += total_beat_dur

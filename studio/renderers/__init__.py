@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def get_backend(name: str = "manimgx") -> RenderBackend:
-    """Resolve named render backend ('manimgx' or 'hyperframes')."""
+    """Resolve named render backend ('manimgx', 'hyperframes', or 'hybrid')."""
     key = name.strip().lower()
     if key == "manimgx":
         return ManimGXBackend()
@@ -21,7 +21,11 @@ def get_backend(name: str = "manimgx") -> RenderBackend:
         from studio.renderers.hyperframes_backend import HyperFramesBackend
 
         return HyperFramesBackend()
-    raise ValueError(f"Unknown render backend {name!r}. Choose 'manimgx' or 'hyperframes'.")
+    if key in ("hybrid", "auto"):
+        from studio.renderers.hybrid import HybridRenderBackend
+
+        return HybridRenderBackend()
+    raise ValueError(f"Unknown render backend {name!r}. Choose 'manimgx', 'hyperframes', or 'hybrid'.")
 
 
 def benchmark_backends(

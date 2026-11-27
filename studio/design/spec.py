@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from studio.config import FORMATS, THEMES
+from studio.config import FORMATS, THEMES, Theme
+from studio.design.fonts import FONT_SPECS, effective_px_scale
 
 
 BANNED_DEFAULTS: list[str] = [
@@ -38,15 +39,18 @@ class LookTokens(BaseModel):
 
 
 class TypographySpec(BaseModel):
-    display_font: str = "'Inter', 'Segoe UI', system-ui, sans-serif"
-    body_font: str = "'Inter', 'Segoe UI', system-ui, sans-serif"
+    display_font: str = FONT_SPECS["display"]["css_stack"]
+    body_font: str = FONT_SPECS["body"]["css_stack"]
+    serif_font: str = FONT_SPECS["serif"]["css_stack"]
+    math_font: str = FONT_SPECS["math"]["css_stack"]
     mono_font: str = "'Consolas', 'Cascadia Mono', monospace"
-    title_px: int = 52
-    subtitle_px: int = 28
-    body_px: int = 26
-    math_label_px: int = 34
-    caption_px: int = 38
-    min_readable_px: int = 26
+    title_px: int = 54
+    subtitle_px: int = 32
+    body_px: int = 30
+    math_label_px: int = 36
+    equation_px: int = 60
+    caption_px: int = 44
+    min_readable_px: int = 28
     line_height: float = 1.25
 
 
@@ -84,91 +88,99 @@ class DesignSpec(BaseModel):
     banned_defaults: list[str] = Field(default_factory=lambda: list(BANNED_DEFAULTS))
 
 
-NAMED_LOOKS: dict[str, LookTokens] = {
-    "midnight_studio": LookTokens(
-        name="midnight_studio",
-        ground=THEMES["midnight_studio"].background,
-        surface=THEMES["midnight_studio"].surface,
-        surface_border=THEMES["midnight_studio"].surface_border,
-        ink_primary=THEMES["midnight_studio"].text_primary,
-        ink_muted=THEMES["midnight_studio"].text_muted,
-        accent_primary=THEMES["midnight_studio"].accent_primary,
-        accent_secondary=THEMES["midnight_studio"].accent_secondary,
-        accent_tertiary=THEMES["midnight_studio"].accent_tertiary,
-        accent_highlight=THEMES["midnight_studio"].accent_highlight,
-        success=THEMES["midnight_studio"].success,
-        danger=THEMES["midnight_studio"].danger,
-        grid_line=THEMES["midnight_studio"].grid_line,
-        medium="Deep slate vector stage with crisp high-contrast ink strokes",
-        is_light=False,
-    ),
-    "obsidian_chalk": LookTokens(
-        name="obsidian_chalk",
-        ground=THEMES["obsidian_chalk"].background,
-        surface=THEMES["obsidian_chalk"].surface,
-        surface_border=THEMES["obsidian_chalk"].surface_border,
-        ink_primary=THEMES["obsidian_chalk"].text_primary,
-        ink_muted=THEMES["obsidian_chalk"].text_muted,
-        accent_primary=THEMES["obsidian_chalk"].accent_primary,
-        accent_secondary=THEMES["obsidian_chalk"].accent_secondary,
-        accent_tertiary=THEMES["obsidian_chalk"].accent_tertiary,
-        accent_highlight=THEMES["obsidian_chalk"].accent_highlight,
-        success=THEMES["obsidian_chalk"].success,
-        danger=THEMES["obsidian_chalk"].danger,
-        grid_line=THEMES["obsidian_chalk"].grid_line,
-        medium="Charcoal chalkboard with warm amber/teal drafting lines",
-        is_light=False,
-    ),
-    "cartesian_stone": LookTokens(
-        name="cartesian_stone",
-        ground="#EDE8E0",
-        surface="#FAF7F2",
-        surface_border="#B8B0A4",
-        ink_primary="#1A1A1A",
-        ink_muted="#5A5A5A",
-        accent_primary="#2563EB",
-        accent_secondary="#B45309",
-        accent_tertiary="#7C3AED",
-        accent_highlight="#0F766E",
-        success="#15803D",
-        danger="#B91C1C",
-        grid_line="#D9D2C7",
-        medium="Warm stone drafting paper with 1px hairline structure and restrained cobalt ink",
-        grain_pct=0.0,
-        is_light=True,
-    ),
-    "editorial_paper": LookTokens(
-        name="editorial_paper",
-        ground="#FAF9F5",
-        surface="#EFE9DE",
-        surface_border="#D5CCBE",
-        ink_primary="#141413",
-        ink_muted="#57534E",
-        accent_primary="#1D4ED8",
-        accent_secondary="#CC785C",
-        accent_tertiary="#0F766E",
-        accent_highlight="#B45309",
-        success="#15803D",
-        danger="#DC2626",
-        grid_line="#E6DFD3",
-        medium="Cream research-note paper with coral emphasis and tabular monospace figures",
-        is_light=True,
-    ),
-}
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return (128, 128, 128)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _rel_luminance(rgb: tuple[int, int, int]) -> float:
+    def _chan(v: int) -> float:
+        s = v / 255.0
+        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
+
+    r, g, b = rgb
+    return 0.2126 * _chan(r) + 0.7152 * _chan(g) + 0.0722 * _chan(b)
+
+
+def wcag_contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+    """Compute WCAG 2.1 contrast ratio between two hex colors."""
+    l1 = _rel_luminance(_hex_to_rgb(fg_hex))
+    l2 = _rel_luminance(_hex_to_rgb(bg_hex))
+    hi, lo = max(l1, l2), min(l1, l2)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def validate_look_contrast(look: LookTokens) -> list[str]:
+    """Audit primary/muted text & semantic accent contrast ratios on ground & surface."""
+    issues: list[str] = []
+    for role, col, req in (
+        ("ink_primary", look.ink_primary, 7.0),
+        ("ink_muted", look.ink_muted, 4.5),
+        ("accent_primary", look.accent_primary, 4.5),
+        ("accent_secondary", look.accent_secondary, 4.5),
+        ("accent_tertiary", look.accent_tertiary, 4.5),
+        ("accent_highlight", look.accent_highlight, 4.5),
+        ("success", look.success, 4.5),
+        ("danger", look.danger, 4.5),
+    ):
+        for bg_name, bg_hex in (("ground", look.ground), ("surface", look.surface)):
+            ratio = wcag_contrast_ratio(col, bg_hex)
+            if ratio < req:
+                issues.append(f"Look '{look.name}' {role} ({col}) on {bg_name} ({bg_hex}) contrast {ratio:.2f} < {req:.1f}")
+    return issues
+
+
+def look_from_theme(theme: Theme) -> LookTokens:
+    """Build a synchronized LookTokens model directly from a Theme dataclass."""
+    return LookTokens(
+        name=theme.name,
+        ground=theme.background,
+        surface=theme.surface,
+        surface_border=theme.surface_border,
+        ink_primary=theme.text_primary,
+        ink_muted=theme.text_muted,
+        accent_primary=theme.accent_primary,
+        accent_secondary=theme.accent_secondary,
+        accent_tertiary=theme.accent_tertiary,
+        accent_highlight=theme.accent_highlight,
+        success=theme.success,
+        danger=theme.danger,
+        grid_line=theme.grid_line,
+        medium=theme.medium,
+        is_light=theme.is_light,
+    )
+
+
+NAMED_LOOKS: dict[str, LookTokens] = {name: look_from_theme(th) for name, th in THEMES.items()}
+
+
+def resolve_look(look_name: str = "midnight_studio") -> LookTokens:
+    """Resolve light/dark look aliases cleanly without coercing light themes to dark."""
+    alias = {
+        "editorial_light": "light",
+        "cinematic_dark": "dark",
+    }.get(look_name, look_name)
+    return NAMED_LOOKS.get(alias, NAMED_LOOKS["midnight_studio"])
 
 
 def default_design_spec(format_name: str = "widescreen_hd", look_name: str = "midnight_studio") -> DesignSpec:
     """Build a responsive, aspect-aware DesignSpec for portrait (9:16) or landscape (16:9)."""
     profile = FORMATS.get(format_name, FORMATS["widescreen_hd"])
-    look = NAMED_LOOKS.get(look_name, NAMED_LOOKS["midnight_studio"])
+    look = resolve_look(look_name)
     is_vert = profile.is_vertical
+    px_scale = effective_px_scale(profile.pixel_width, profile.pixel_height)
     typo = TypographySpec(
-        title_px=56 if is_vert else 48,
-        subtitle_px=30 if is_vert else 26,
-        body_px=28 if is_vert else 24,
-        math_label_px=36 if is_vert else 30,
-        caption_px=42 if is_vert else 34,
-        min_readable_px=28 if is_vert else 24,
+        title_px=px_scale.title_px,
+        subtitle_px=px_scale.subtitle_px,
+        body_px=px_scale.body_px,
+        math_label_px=px_scale.math_label_px,
+        equation_px=px_scale.equation_px,
+        caption_px=px_scale.caption_px,
+        min_readable_px=px_scale.min_readable_px,
     )
     safe = SafeZoneSpec(
         width=profile.pixel_width,

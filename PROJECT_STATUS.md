@@ -1,4 +1,28 @@
-# Math Shorts Studio — Project Status (Adaptive Educational Engine)
+# Math Shorts Studio — Project Status (V3.7 Professional Filmmaking & Visual QA)
+
+## V3.7 Implemented & Verified
+- **Audit, Pinned Offline Typography & Unified WCAG Design (`docs/ARCHITECTURE_AUDIT.md`, `studio/design/fonts.py`, `studio/config.py`, `studio/design/spec.py`, `assets/fonts/`)**
+  - Pinned SIL OFL-1.1 binaries (`Inter-Variable.ttf`, `SourceSans3-Variable.ttf`, `STIXTwoText-Variable.ttf`, `STIX2Math.otf`) with SHA-256 manifest verification (`verify_pinned_fonts()`).
+  - Unified 6 `THEMES` / `NAMED_LOOKS` (`light`, `dark`, `midnight_studio`, `obsidian_chalk`, `cartesian_stone`, `editorial_paper`), enforced WCAG 2.1 contrast (`wcag_contrast_ratio`, `validate_look_contrast() == []` across all 6), and removed silent dark-theme coercion so `light` renders genuinely light frames across ManimGX and HyperFrames.
+- **Unified `CaptionIR`, Adaptive Layout Solver & Scene Polishing (`studio/captions/`, `studio/layout/solver.py`, `studio/layout/components.py`, `scenes/v3_scene.py`)**
+  - Added 6 cohesive `CaptionStyle` presets (`editorial`, `kinetic`, `minimal`, `dialogue`, `accessible`, `off`), grammatical & pixel-width phrase chunking without orphan conjunction tails, and `export_ass()`.
+  - Built shared pixel-space `compute_adaptive_zones`, `fit_axes_pixel_box`, and `resolve_non_overlapping_boxes`, retiring superseded apparatus before obstacle computation, clipping `data_series`/`parametric_curve` runs inside `axes` bounds, separating side-by-side `table`/`bar_chart`/`matrix`/`polygon` slots cleanly, and fixing persistent-axes + future-equation reservation.
+- **Locked `ScriptIR`, Dialogue Isolation & Calibrated Pacing (`studio/creative/`, `studio/longform.py`, `studio/pipeline.py`, `studio/ai/director.py`)**
+  - Connected `CreativeDirector` (`STORYLINES.md`, `SCRIPT.md`), `lock_script_to_plan()`, measured `AudioTimeline` storyboard alignment, non-overwriting `resolve_speaker_voices()`, concept-depth `_allocate_chapter_budgets()`, and `KOKORO_EFFECTIVE_WPS = 2.08` (`[1.85, 2.28]` word budget).
+- **Executable Registry, Modular HyperFrames & Scene-Level `HybridRenderBackend` (`studio/registry/`, `studio/renderers/hyperframes/`, `studio/renderers/hybrid.py`)**
+  - Bound executable schemas/self-tests onto `ComponentRegistry` (`verify_registry_contracts() == []`), refactored HyperFrames into a clean modular package (`11` focused modules with offline `@font-face` and Unicode math labels), and implemented `HybridRenderBackend` (`partition_plan_by_backend` + FFmpeg normalized `concat` filter mux onto one canonical `AudioTimeline`).
+- **Stability Math Truth, Honest 10-Category QA & Dependency-Verified Caching (`studio/ai/math_truth.py`, `studio/ai/validate_v3.py`, `studio/qa/engine.py`, `studio/storage/cache.py`)**
+  - Added `verify_eigenvalue_stability_regime()` (word-boundary checked), row-stochastic Markov diagnostics, pre-render rejection of bare empty `axes` and non-geometric `rotate`, decoded-frame contact sheets (`verify_decoded_frames()`), honest 10-category `audit_educational_quality()` (blocks fake `100/100`), and `ArtifactCache` SHA-256 integrity checks across look/caption keys.
+- **V3.7 Production Renders, Visual Inspection & Suite Verification (`docs/BENCHMARK_REPORT.md`)**
+  - **Eigenvalues Documentary (`--theme light --caption-style editorial`):** `585.42 s` (`+8.4%` vs `540s`), `7/7` chapters `layout: no problems`, `-15.3 LUFS`, `TruePeak=-1.8 dBFS`, `48000 Hz`, `60.00 fps`, `drift=0.00 s`, `REVIEW.md` **`97.5/100`** (`approved=True`, `edge_clips=0`).
+  - **Derived Native Portrait Short (`--derive-short`):** `55.00 s` (`0.0%` vs `55s`), `1080x1920 @ 60.00 fps`, `layout: no problems in 8 samples`, `-15.3 LUFS`, `drift=0.00 s`, `REVIEW.md` **`94.0/100`**.
+  - **Unseen Documentary: Markov Chains (`--theme dark --duration 510`):** `490.92 s` (`-3.7%` vs `510s`), `6/6` chapters `layout: no problems`, `-15.3 LUFS`, `TruePeak=-1.7 dBFS`, `48000 Hz`, `60.00 fps`, `drift=0.00 s`, `REVIEW.md` **`90.0/100`** (`edge_clips=0`).
+  - **Warm-Cache Theme/Caption Switch (`16.20 s` 1080p60):** `25.524 s` cold -> **`6.864 s`** warm (`3.72x` speedup).
+  - **Test Suite:** **55 tests passing** (`tests/test_v37.py` + `tests/test_generalization.py` + regression suites).
+
+---
+
+# Prior Baseline (Adaptive Educational Engine)
 
 ## Newly Implemented & Verified
 - **Creative Intelligence, Storylines, Dialogue & Script IR (`studio/creative/`, `studio/design/`, `studio/storyboard/`)**

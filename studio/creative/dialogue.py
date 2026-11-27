@@ -139,6 +139,38 @@ def format_dialogue_instructions(mode: NarrationMode) -> str:
     )
 
 
+def resolve_speaker_voices(
+    narration_mode: NarrationMode | str = "single_educator",
+    voice_override: str | None = None,
+) -> dict[str, tuple[str, str]]:
+    """Build case-insensitive speaker->(kokoro_voice, edge_voice) mapping without clobbering across profiles.
+
+    Earlier code iterated every DialogueProfile blindly into one dict, overwriting
+    `single_educator`/`socratic` voices with later profiles (`documentary`/`technical_instructor`).
+    """
+    prof = DIALOGUE_PROFILES.get(narration_mode, DIALOGUE_PROFILES["single_educator"])  # type: ignore[arg-type]
+    mapping: dict[str, tuple[str, str]] = {}
+    # Seed lower-priority fallbacks first, then overlay the active profile's speakers cleanly
+    for fallback_prof in DIALOGUE_PROFILES.values():
+        for sp in fallback_prof.speakers:
+            key = sp.role.lower()
+            if key not in mapping:
+                mapping[key] = (sp.kokoro_voice, sp.edge_voice)
+                mapping[sp.role] = (sp.kokoro_voice, sp.edge_voice)
+    for sp in prof.speakers:
+        pair = (sp.kokoro_voice, voice_override or sp.edge_voice)
+        mapping[sp.role.lower()] = pair
+        mapping[sp.role] = pair
+        if sp.label:
+            mapping[sp.label.lower()] = pair
+    # Normalize common narrator synonyms cleanly without falling back to wrong profile
+    default_pair = (prof.speakers[0].kokoro_voice, voice_override or prof.speakers[0].edge_voice) if prof.speakers else ("am_michael", "en-US-AndrewNeural")
+    for alias in ("narrator", "host", "default"):
+        if alias not in mapping:
+            mapping[alias] = default_pair
+    return mapping
+
+
 def merge_consecutive_speaker_turns(turns: list[tuple[SpeakerRole, str]]) -> list[tuple[SpeakerRole, str]]:
     """Reconcile consecutive identical speaker turns cleanly (adapted from Podcastfy alternation guard)."""
     merged: list[tuple[SpeakerRole, str]] = []

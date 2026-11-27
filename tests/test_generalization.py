@@ -239,7 +239,25 @@ class TestGeneralization(unittest.TestCase):
             topic="Stability",
             title="Dynamical Stability",
             scenes=[
-                SceneV3(scene_id="sc1", purpose="Question", speaker="learner", composition="side_by_side_comparison", narration="Wait—watch <bookmark mark='k1'/> the curve.", objects=[SceneObject(id="ax", kind="axes", x_range=[-2, 2], y_range=[-2, 2], panel_slot="left"), SceneObject(id="fn", kind="function_plot", expr="x**2", axes_id="ax")], events=[AnimationEvent(op="draw", target_id="fn", anchor_mark="k1")]),
+                SceneV3(
+                    scene_id="sc1",
+                    purpose="Question",
+                    speaker="learner",
+                    composition="side_by_side_comparison",
+                    narration="Wait—watch <bookmark mark='k1'/> the curve.",
+                    objects=[
+                        SceneObject(id="ax", kind="axes", x_range=[-2, 2], y_range=[-2, 2], panel_slot="left"),
+                        SceneObject(id="fn", kind="function_plot", expr="x**2", axes_id="ax"),
+                        SceneObject(id="pt0", kind="point", coords=[0.0, 0.0], axes_id="ax"),
+                    ],
+                    claims=[
+                        StructuredClaim(kind="stationary_point", object_ids=["pt0"], expr="x**2", x_val=0.0, expected_value=0.0, statement="Origin is a stationary minimum of x^2.")
+                    ],
+                    events=[
+                        AnimationEvent(op="draw", target_id="fn", anchor_mark="k1"),
+                        AnimationEvent(op="create", target_id="pt0", anchor_mark="k1"),
+                    ],
+                ),
             ],
         )
         sb = storyboard_from_v3_plan(v3p, format_name="shorts_hd", script=script)
@@ -255,7 +273,7 @@ class TestGeneralization(unittest.TestCase):
         rep = audit_educational_quality(topic="Stability", title="Dynamical Stability", plan=v3p, format_name="shorts_hd", backend="hyperframes", script=script)
         self.assertIn("Claim Verification Coverage", export_review_md(rep))  # type: ignore[arg-type]
 
-        # Multi-chapter audit must NOT flag duplicate scene_id across independent chapters
+        # Multi-chapter pre-render audit: zero duplicate scene errors, math passes, unrendered video cannot claim 100/100 or final approval
         rep_multi = audit_educational_quality(
             topic="Stability",
             title="Dynamical Stability Multi",
@@ -264,8 +282,10 @@ class TestGeneralization(unittest.TestCase):
             backend="manimgx",
             chapter_plans=[v3p, v3p],
         )
-        self.assertTrue(rep_multi.approved)  # type: ignore[attr-defined]
-        self.assertGreaterEqual(rep_multi.overall_score, 90.0)  # type: ignore[attr-defined]
+        self.assertTrue(rep_multi.math_grounding_ok)  # type: ignore[attr-defined]
+        self.assertLess(rep_multi.overall_score, 100.0)  # type: ignore[attr-defined]
+        self.assertFalse(rep_multi.approved)  # type: ignore[attr-defined]
+        self.assertEqual(rep_multi.category_statuses["rendering_media_integrity"], "not_evaluated")  # type: ignore[attr-defined]
 
         from studio.renderers.hyperframes_backend import _current_process_rss_mb, _pretty_math_label
 

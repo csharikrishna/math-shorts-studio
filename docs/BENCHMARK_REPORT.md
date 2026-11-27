@@ -54,3 +54,19 @@ Implemented pipeline, encoder, CDP capture, and TTS/cache optimizations while ma
 | `ManimGX` warm shared TTS cache (cross-backend) | `84.506 s` | **`25.312 s`** | **3.34x** | `-15.3 LUFS`, `drift=0.00s` |
 | `HyperFrames` cold end-to-end (incl. Kokoro CPU) | `266.696 s` | **`67.098 – 78.086 s`** | **~3.4x – 4.0x** | `-15.8 LUFS`, `drift=0.00s` |
 | `HyperFrames` warm shared TTS cache | `266.696 s` | **`26.680 s`** | **10.0x** | `-15.8 LUFS`, `drift=0.00s` |
+
+## 5. V3.7 Production Verification, Light/Dark & Unseen Documentary, Hybrid Mux & Warm-Cache Switch Benchmarks
+
+Measured after the V3.7 upgrades (pinned offline OFL fonts, WCAG-validated unified `light`/`dark` looks, `CaptionIR`, adaptive layout solver, `CreativeDirector` locked script, `HybridRenderBackend`, honest 10-category QA, and `ArtifactCache` dependency integrity):
+
+| Deliverable / Configuration | Output / Scope | Duration & Target | Media & Loudness QA | Decoded-Frame / Review QA |
+| --- | --- | --- | --- | --- |
+| **Eigenvalues Documentary (`light`, `editorial`, `manimgx`)** | `output/LF_eigenvalues_phase_space_and_dynamical_stability_widescreen_hd.mp4` (`7` chapters, `26` scenes) | `585.42 s` vs `540.0 s` (`+8.4%`) | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.3 LUFS`, `-1.8 dBFS`, `drift=0.00 s` | `layout: no problems` (`CH1..CH7`), `edge_clips=0`, `median_stage_w=40.5%`, `REVIEW.md`: **`97.5/100`** (`approved=True`, `det_verified=23`, `num_tested=18`, `unsupported=1`, `failed=0`) |
+| **Derived Native Portrait Short (`light`, `kinetic`, `manimgx`)** | `output/SHORT_eigenvalues_phase_space_and_dynamical_stability_shorts_hd.mp4` (`3` scenes) | `55.00 s` vs `55.0 s` (`0.0%`) | `1080x1920 @ 60.00 fps`, `48000 Hz`, `-15.3 LUFS`, `-1.2 dBFS`, `drift=0.00 s` | `layout: no problems in 8 samples`, `edge_clips=0`, `median_stage_w=76.5%`, `REVIEW.md`: **`94.0/100`** (`approved=True`) |
+| **Unseen Documentary: Markov Chains (`dark`, `editorial`, `manimgx`)** | `output/LF_markov_chains_random_walks_and_stationary_equili_widescreen_hd.mp4` (`6` chapters, `22` scenes, `12` `ObjectKind`s) | `490.92 s` vs `510.0 s` (`-3.7%`) | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.3 LUFS`, `-1.7 dBFS`, `drift=0.00 s` | `layout: no problems` (`c1..c6`), `edge_clips=0`, `median_stage_w=61.4%`, `REVIEW.md`: **`90.0/100`** (`approved=True`, `det_verified=9`, `unsupported=11`, `failed=0`) |
+| **Scene-Level `HybridRenderBackend` Mux Smoke (`hyb_smoke`)** | `manimgx(1) -> hyperframes(1)` onto single `AudioTimeline` (`1280x720 @ 30 fps`) | `7.60 s` | `30.00 fps`, `48000 Hz`, `-15.4 LUFS`, `-2.9 dBFS`, `drift=0.00 s` | `FRAMES: passed` (`edge_clips=0`, `finds=[]`) |
+
+### Warm-Cache Theme & Caption Switch Experiment (`eig_sample`, `16.20 s` `1920x1080 @ 60 fps`)
+- **Pass 1 (`--theme light --caption-style editorial`, cold Kokoro TTS + GPU + NVENC):** **`25.524 s`** (`-15.4 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `layout: no problems`).
+- **Pass 2 (`--theme dark --caption-style minimal`, warm Kokoro voice-segment reuse + GPU + NVENC):** **`6.864 s`** (**`3.72x` speedup**; `-15.4 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `layout: no problems`).
+- **Dependency Cache Verification (`ArtifactCache`):** `tts` stage lookup remained `(True, "hit")`, while `captions` / `chapter_assembly` keys cleanly returned `(False, "miss:dependency_or_payload_changed")` on theme/caption mutation.

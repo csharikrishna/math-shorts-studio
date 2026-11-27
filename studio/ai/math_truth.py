@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import sympy as sp
 
 from studio.ai.expr import compile_expr
@@ -356,6 +357,52 @@ def matrix_transform_and_eigen(matrix_2x2: list[list[float]]) -> dict[str, objec
     }
 
 
+def verify_eigenvalue_stability_regime(
+    matrix_2x2: list[list[float]],
+    *,
+    expected_regime: str | None = None,
+    statement: str = "",
+) -> tuple[bool, str]:
+    """Deterministically verify 2D linear stability definitions & distinguish saddle vs unstable source vs sink."""
+    info = matrix_transform_and_eigen(matrix_2x2)
+    regime = str(info["regime"])
+    eigs: list[tuple[float, float]] = list(info["eigenvalues_ri"])  # type: ignore[arg-type]
+    re_parts = [re_v for re_v, _ in eigs]
+
+    if expected_regime and expected_regime != regime:
+        return False, f"expected_regime={expected_regime!r} disagrees with computed regime={regime!r} (eigs={eigs})"
+
+    low = (statement or "").lower()
+    all_neg = all(r < -1e-6 for r in re_parts)
+    all_pos = all(r > 1e-6 for r in re_parts)
+    any_pos = any(r > 1e-6 for r in re_parts)
+    any_zero = any(abs(r) <= 1e-6 for r in re_parts)
+
+    has_stable_phrase = bool(
+        re.search(r"\b(?:stable\s+sink|asymptotically\s+stable|stable\s+node|stable\s+spiral|attracting\s+equilibrium)\b", low)
+    )
+    has_unstable_word = bool(re.search(r"\bunstable\b", low))
+    has_not_stable = bool(re.search(r"\bnot\s+stable\b", low))
+
+    if has_stable_phrase and not all_neg:
+        return False, f"claimed asymptotically stable regime ({statement!r}), but eigenvalues {eigs} do not satisfy all Re(lambda) < 0"
+    if re.search(r"\b(?:unstable\s+source|source)\b", low) and not re.search(r"\bsaddle\b", low) and not all_pos:
+        return False, f"claimed unstable source ({statement!r}), but regime is {regime!r} (all eigenvalues must have Re(lambda) > 0)"
+    if re.search(r"\bsaddle\b", low) and regime != "saddle":
+        return False, f"claimed saddle point ({statement!r}), but computed regime is {regime!r}"
+    if re.search(r"\bcenter\b", low) and regime != "center":
+        return False, f"claimed center ({statement!r}), but computed regime is {regime!r}"
+    if "re(lambda) > 0" in low or r"re(\lambda) > 0" in low or "positive real part" in low:
+        if re.search(r"\bstable\b", low) and not has_unstable_word and not has_not_stable:
+            return False, f"statement mixes Re(lambda) > 0 with stable behavior ({statement!r})"
+    if (re.search(r"\bstable\b", low) and not has_unstable_word and not has_not_stable) and any_pos:
+        return False, f"statement claims stability despite positive real-part eigenvalue {eigs}"
+    if (re.search(r"\b(?:linearization|nonlinear)\b", low)) and any_zero and ("non-hyperbolic" not in low and "inconclusive" not in low and "center" not in low):
+        return False, f"linearization at Re(lambda)=0 is non-hyperbolic; note non-hyperbolic caveat ({eigs})"
+
+    return True, f"verified {regime} (Re={[round(r, 4) for r in re_parts]})"
+
+
 def transform_points_2x2(points: list[list[float]], matrix_2x2: list[list[float]]) -> list[list[float]]:
     """Transform 2D coordinates by linear matrix A."""
     a, b = float(matrix_2x2[0][0]), float(matrix_2x2[0][1])
@@ -498,10 +545,13 @@ def markov_chain_trajectory(
     p = np.asarray(initial_state, dtype=float)
     if P.ndim != 2 or P.shape[0] != P.shape[1] or p.shape != (P.shape[0],):
         raise ValueError("Invalid Markov dimensions.")
-    if np.any(P < -1e-9) or np.any(np.abs(P.sum(axis=1) - 1.0) > 1e-3):
-        raise ValueError("Transition matrix rows must be non-negative and sum to 1.")
+    row_sums = P.sum(axis=1)
+    col_sums = P.sum(axis=0)
+    if np.any(P < -1e-9) or np.any(np.abs(row_sums - 1.0) > 1e-3):
+        hint = " (matrix appears column-stochastic; transpose rows/columns so EACH ROW sums to 1.0)" if (np.all(P >= -1e-9) and np.all(np.abs(col_sums - 1.0) <= 1e-3)) else ""
+        raise ValueError(f"Transition matrix rows must be non-negative and sum to 1 (got row sums={[round(float(x), 4) for x in row_sums]}){hint}.")
     if np.any(p < -1e-9) or abs(float(p.sum()) - 1.0) > 1e-3:
-        raise ValueError("Initial distribution must be non-negative and sum to 1.")
+        raise ValueError(f"Initial distribution must be non-negative and sum to 1 (got sum={float(p.sum()):.4f}).")
     p = p / p.sum()
     states: list[list[float]] = [[float(v) for v in p]]
     cur = p.copy()

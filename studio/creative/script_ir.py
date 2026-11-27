@@ -112,6 +112,63 @@ def script_ir_to_beat_specs(script: ScriptIR) -> list[BeatSpec]:
     return specs
 
 
+def lock_script_to_plan(
+    plan: object,
+    script: ScriptIR,
+    *,
+    stage: Literal["initial", "editorial_repair", "manual"] = "editorial_repair",
+    restore_locked_spoken_text: bool = True,
+) -> ScriptIR:
+    """Bind VideoPlanV3 scenes cleanly to locked ScriptIR beat IDs, speakers, and revision provenance."""
+    beats_by_scene = {b.scene_id: b for b in script.beats}
+    scenes = getattr(plan, "scenes", [])
+    changed = False
+    updated_beats: list[NarrationBeatIR] = []
+
+    for idx, sc in enumerate(scenes):
+        sid = getattr(sc, "scene_id", "")
+        b_ref = beats_by_scene.get(sid)
+        if b_ref is None and idx < len(script.beats):
+            b_ref = script.beats[idx]
+        if b_ref is None:
+            continue
+        # Always lock authoritative speaker role from ScriptIR / CreativeDirector
+        if getattr(sc, "speaker", None) != b_ref.speaker:
+            setattr(sc, "speaker", b_ref.speaker)
+        sc_narr = clean_spoken_text(str(getattr(sc, "narration", "") or ""))
+        locked_txt = clean_spoken_text(b_ref.spoken_text)
+        # Preserve math-repaired wording only when restore_locked_spoken_text=False; otherwise lock canonical ScriptIR prose
+        if restore_locked_spoken_text and not detect_banned_cliches(locked_txt):
+            # Preserve bookmarks attached in VideoPlanV3 if missing from ScriptIR raw text
+            plan_marks = set(BOOKMARK_RE.findall(sc_narr))
+            script_marks = set(BOOKMARK_RE.findall(locked_txt))
+            if plan_marks.issubset(script_marks):
+                setattr(sc, "narration", b_ref.spoken_text)
+                sc_narr = locked_txt
+        new_beat = b_ref.model_copy(deep=True)
+        if sc_narr and sc_narr != clean_spoken_text(b_ref.spoken_text):
+            new_beat.spoken_text = sc_narr
+            changed = True
+        updated_beats.append(new_beat)
+
+    if updated_beats:
+        merged_ids = {b.beat_id for b in updated_beats}
+        for orig in script.beats:
+            if orig.beat_id not in merged_ids:
+                updated_beats.append(orig)
+        script.beats = updated_beats
+    if changed:
+        script.revisions.append(
+            ScriptRevision(
+                revision=len(script.revisions) + 1,
+                stage=stage,
+                notes="Synced VideoPlanV3 scene narration & mathematical repairs with ScriptIR.",
+                beats=[b.model_copy(deep=True) for b in script.beats],
+            )
+        )
+    return script
+
+
 def export_script_md(script: ScriptIR) -> str:
     """Export human-readable SCRIPT.md preserving metadata, visual links, and spoken normalization."""
     lines = [

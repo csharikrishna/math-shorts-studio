@@ -7,6 +7,12 @@ import os
 import manimgx as m
 import numpy as np
 from studio.config import FormatProfile, Theme, CAPTION_FONT, HEADER_FONT
+from studio.design.fonts import manimgx_font_paths
+
+
+def _text_font_kwargs() -> dict:
+    fp = manimgx_font_paths()
+    return {"font_paths": fp} if fp else {}
 
 
 @dataclass(frozen=True)
@@ -26,34 +32,53 @@ class SafeLayout:
     min_text_h: float
 
     @classmethod
-    def from_config(cls, profile: FormatProfile) -> SafeLayout:
+    def from_config(
+        cls,
+        profile: FormatProfile,
+        *,
+        has_header_banner: bool = True,
+        has_equation_band: bool = False,
+        caption_style: str | None = None,
+    ) -> SafeLayout:
+        from studio.captions.model import CAPTION_PRESETS, normalize_caption_style
+
         fw = float(m.config.frame_width)
         fh = float(m.config.frame_height)
 
         side_pad = fw * profile.side_safe_ratio
         top_pad = fh * profile.top_safe_ratio
-        bot_pad = fh * profile.bottom_safe_ratio
+        norm_cap = normalize_caption_style(
+            caption_style or os.environ.get("STUDIO_CAPTION_STYLE") or os.environ.get("STUDIO_UI"),
+            default="editorial" if not profile.is_vertical else "kinetic",
+        )
+        preset = CAPTION_PRESETS[norm_cap]
+        cap_ratio = preset.reserve_band_ratio_portrait if profile.is_vertical else preset.reserve_band_ratio_landscape
+        bot_pad = fh * (profile.bottom_safe_ratio * 0.25 if norm_cap == "off" else 0.02)
 
         safe_w = fw - 2.0 * side_pad
-        usable_h = fh - top_pad - bot_pad
         usable_top = fh * 0.5 - top_pad
         usable_bot = -fh * 0.5 + bot_pad
 
-        if profile.is_vertical:
-            header_h = usable_h * 0.23
-            caption_h = usable_h * 0.16
-            gap = usable_h * 0.025
+        caption_h = fh * cap_ratio
+        if has_header_banner:
+            usable_h = fh - top_pad - bot_pad
+            header_h = usable_h * (0.22 if profile.is_vertical else 0.19)
+            gap = usable_h * 0.020
+        elif has_equation_band:
+            header_h = fh * (0.105 if profile.is_vertical else 0.105)
+            gap = fh * 0.016
         else:
-            header_h = usable_h * 0.24
-            caption_h = usable_h * 0.14
-            gap = usable_h * 0.030
+            header_h = 0.0
+            gap = fh * 0.014
 
-        stage_h = usable_h - header_h - caption_h - 2.0 * gap
+        stage_top = usable_top - header_h - (gap if header_h > 0 else 0.0)
+        stage_bot = usable_bot + caption_h + gap
+        stage_h = max(fh * 0.42, stage_top - stage_bot)
         header_y = usable_top - header_h * 0.5
         caption_y = usable_bot + caption_h * 0.5
-        stage_y = (usable_top - header_h - gap + usable_bot + caption_h + gap) * 0.5
+        stage_y = 0.5 * (stage_top + stage_bot)
 
-        # ManimGX flags text smaller than ~21px at 1080p normalized height; enforce 26px+ floor
+        # Enforce 26px+ readable floor across 1080p vertical & widescreen formats
         min_text_h = fh * (26.0 / 1080.0)
 
         return cls(
@@ -61,7 +86,7 @@ class SafeLayout:
             frame_h=fh,
             safe_w=safe_w,
             header_center=np.array([0.0, header_y, 0.0]),
-            header_max_h=header_h,
+            header_max_h=max(0.45, header_h),
             stage_center=np.array([0.0, stage_y, 0.0]),
             stage_w=safe_w,
             stage_h=stage_h,
@@ -232,15 +257,16 @@ def ambient_grid(layout: SafeLayout, theme: Theme, drift_speed: float = 0.06) ->
     step = max(layout.frame_w, layout.frame_h) / 9.0
     half_w = layout.frame_w * 0.5 + 2.0 * step
     half_h = layout.frame_h * 0.5 + 2.0 * step
+    is_light = getattr(theme, "is_light", False)
     plane = m.NumberPlane(
         x_range=[-half_w / step, half_w / step, 1.0],
         y_range=[-half_h / step, half_h / step, 1.0],
         x_length=2.0 * half_w,
         y_length=2.0 * half_h,
         background_line_style={
-            "stroke_color": theme.surface_border,
-            "stroke_width": 1.4,
-            "stroke_opacity": 0.38,
+            "stroke_color": theme.grid_line if is_light else theme.surface_border,
+            "stroke_width": 1.1 if is_light else 1.4,
+            "stroke_opacity": 0.55 if is_light else 0.34,
         },
         faded_line_ratio=2,
         axis_config={"stroke_opacity": 0.0, "stroke_width": 0.0},
@@ -293,57 +319,84 @@ class CaptionCard:
         TikTok / YouTube Shorts high-energy style). Great for fast-paced mathematics.
     """
 
-    MAX_WORDS = 6
+    MAX_WORDS = 9
     # Outline stroke width (scene units × 100) — keeps bare text crisp over grids and curves
-    OUTLINE_WIDTH = 6.0
-    # Caption text height as a fraction of caption zone height — governs overall text size.
-    # Previously this was 2.3 × min_text_h which was huge; 1.5 × feels right for Shorts.
-    LINE_H_SCALE = 1.45
+    OUTLINE_WIDTH = 4.2
+    # Proportional scale for 1-line vs 2-line captions
+    LINE_H_SCALE = 1.48
 
-    def __init__(self, layout: SafeLayout, theme: Theme, initial_text: str, style: str | None = None) -> None:
+    def __init__(
+        self,
+        layout: SafeLayout,
+        theme: Theme,
+        initial_text: str,
+        style: str | None = None,
+        caption_style: str | None = None,
+    ) -> None:
+        from studio.captions.model import CAPTION_PRESETS, normalize_caption_style
+
         self.layout = layout
         self.theme = theme
-        self.style = ui_style(style)
-        self.minimal = self.style == "minimal"
+        is_port = layout.frame_h > layout.frame_w
+        raw_style = caption_style or os.environ.get("STUDIO_CAPTION_STYLE") or style or os.environ.get("STUDIO_UI")
+        default_cap = "kinetic" if (is_port and (style in ("card", "neon"))) else ("editorial" if not is_port else "minimal")
+        self.caption_style = normalize_caption_style(raw_style, default=default_cap)
+        self.preset = CAPTION_PRESETS[self.caption_style]
+        self.legacy_style = ui_style(style if style in UI_STYLES else None)
+        # Preserve card/neon pill feel strictly when kinetic/card/neon is active
+        self.style = (
+            "card"
+            if (self.caption_style == "kinetic" and style == "card") or self.caption_style in ("accessible", "dialogue")
+            else ("neon" if (self.caption_style == "kinetic" and style == "neon") else "minimal")
+        )
+        self.minimal = not self.preset.use_box and self.caption_style in ("editorial", "minimal", "off")
         self.card_w = layout.safe_w
-        self.card_h = layout.caption_h
+        self.card_h = max(0.45, layout.caption_h)
+        self._speaker = "narrator"
 
-        # ---- Proportional line height ------------------------------------------
-        # Keep captions at a sensible size: at most LINE_H_SCALE × min_text_h,
-        # and at most 42 % of the caption zone height so they don't eat the frame.
-        self.line_h = min(layout.min_text_h * self.LINE_H_SCALE, layout.caption_h * 0.42)
+        # Two-line editorial captions need slightly tighter single-line cap height so 2 lines stay centered
+        two_line_factor = 0.34 if self.preset.max_lines >= 2 else 0.44
+        self.line_h = min(layout.min_text_h * self.LINE_H_SCALE, self.card_h * two_line_factor)
 
         if self.minimal or self.style == "neon":
-            self.inner_w = self.card_w - 0.20
+            self.inner_w = self.card_w * 0.94
             self.inner_h = self.card_h
         else:
-            self.inner_w = self.card_w - 0.70
-            self.inner_h = self.card_h - 0.36
+            self.inner_w = self.card_w - 0.56
+            self.inner_h = self.card_h - 0.24
 
-        # Reference height for scaling text glyphs to self.line_h
-        self._ref_h = m.Text("Hg", font_size=48, font=CAPTION_FONT, weight="BOLD").height
-        self.accent = theme.accent_highlight
+        self._ref_h = m.Text("Hg", font_size=48, font=CAPTION_FONT, weight="BOLD", **_text_font_kwargs()).height
+        self.accent = theme.accent_primary if self.caption_style == "editorial" else theme.accent_highlight
 
-        # Invisible layout anchor (always present for consistent VGroup structure)
-        bg_opacity = 0.0 if (self.minimal or self.style == "neon") else 0.92
+        bg_opacity = 0.0
+        border_w = 0.0
+        if self.caption_style == "accessible":
+            bg_opacity = 0.96
+            border_w = 1.6
+        elif self.caption_style == "dialogue":
+            bg_opacity = 0.90
+            border_w = 1.4
+        elif self.style == "card" and self.caption_style == "kinetic":
+            bg_opacity = 0.90
+            border_w = 2.0
+
         self.bg = m.RoundedRectangle(
-            corner_radius=0.22 if self.style == "card" else 0.0,
+            corner_radius=0.16,
             width=self.card_w,
             height=self.card_h,
-            fill_color=theme.surface if self.style == "card" else "#000000",
+            fill_color=theme.surface if bg_opacity > 0 else theme.background,
             fill_opacity=bg_opacity,
             stroke_color=theme.surface_border,
-            stroke_width=0.0 if (self.minimal or self.style == "neon") else 2.5,
+            stroke_width=border_w,
         ).move_to(layout.caption_center)
 
-        # Neon style: opaque (>=0.92 for QA) cinema dock with a sleek glowing top accent rule
-        if self.style == "neon":
-            bar_h = self.card_h * 1.08
+        if self.style == "neon" and self.caption_style == "kinetic":
+            bar_h = self.card_h * 1.06
             dock = m.Rectangle(
                 width=layout.frame_w,
                 height=bar_h,
                 fill_color=theme.surface,
-                fill_opacity=0.93,
+                fill_opacity=0.92,
                 stroke_width=0.0,
             ).move_to(layout.caption_center)
             top_y = layout.caption_center[1] + bar_h * 0.5
@@ -351,8 +404,8 @@ class CaptionCard:
                 np.array([-layout.frame_w * 0.5, top_y, 0.0]),
                 np.array([layout.frame_w * 0.5, top_y, 0.0]),
                 color=theme.accent_primary,
-                stroke_width=3.0,
-                stroke_opacity=0.85,
+                stroke_width=2.5,
+                stroke_opacity=0.80,
             )
             self._neon_bar = m.VGroup(dock, glow_line)
         else:
@@ -360,9 +413,10 @@ class CaptionCard:
 
         self.pill: m.Mobject = m.VGroup()
         self.line: m.Mobject = m.VGroup()
-        self.group = m.VGroup(self._neon_bar, self.bg, self.pill, self.line)
+        self._speaker_badge: m.Mobject = m.VGroup()
+        self.group = m.VGroup(self._neon_bar, self.bg, self._speaker_badge, self.pill, self.line)
 
-        self._chunks: list[tuple[float, list[tuple[str, float, float]]]] = []
+        self._chunks: list[tuple[float, list[tuple[str, float, float]], list[str]]] = []
         self._built: dict[int, tuple[m.Text, list[m.VGroup]]] = {}
         self._shown: tuple[int, int] = (-1, -1)
         self._pill_born = 0.0
@@ -371,38 +425,45 @@ class CaptionCard:
         self._bounce_part = None
         self._bounce_center = np.zeros(3)
         self._bounce_scale = 1.0
-        self._pop_amp = 0.10
+        self._pop_amp = 0.08
         self._bounce_amp = 0.0
         self._spring = False
-        self.set_words([(w, 0.0, 0.0, False) for w in initial_text.split()], 0.0)
-        self._tick(0.0)
+        if self.caption_style != "off":
+            self.set_words([(w, 0.0, 0.0, False) for w in initial_text.split()], 0.0)
+            self._tick(0.0)
+        else:
+            self.group.submobjects = []
         self.group.add_updater(lambda _mob: self._tick(scene_time()))
 
-    # -- chunking -------------------------------------------------------------
     def _text(self, s: str) -> m.Text:
+        is_light = getattr(self.theme, "is_light", False)
         txt = m.Text(
             s,
             font_size=48,
             font=CAPTION_FONT,
-            weight="BOLD",
-            color=self.theme.text_muted,
+            weight="SEMIBOLD" if self.caption_style in ("editorial", "minimal") else "BOLD",
+            color=self.theme.text_muted if self.caption_style == "kinetic" else self.theme.text_primary,
             disable_ligatures=True,
+            **_text_font_kwargs(),
         )
         txt.scale(self.line_h / max(self._ref_h, 1e-6))
-        if self.minimal or self.style == "neon":
-            # Soft dark outline drawn behind the fill keeps bare text crisp over grids and curves
-            txt.set_stroke(color=self.theme.background, width=self.OUTLINE_WIDTH, opacity=0.92, background=True)
+        if not self.preset.use_box:
+            # Ground-matched soft halo keeps bare editorial glyphs legible without muddy borders
+            stroke_w = self.OUTLINE_WIDTH * (0.65 if is_light else 1.05)
+            txt.set_stroke(color=self.theme.background, width=stroke_w, opacity=0.88, background=True)
         return txt
 
-    def _make_line(self, words: list[str]) -> tuple[m.Text, list[m.VGroup]]:
-        line = self._text(" ".join(words))
-        fit_mobject(line, max_width=self.inner_w)
-        line.move_to(self.bg.get_center())
+    def _make_line(self, words: list[str], lines_hint: list[str] | None = None) -> tuple[m.Text, list[m.VGroup]]:
+        display_str = "\n".join(lines_hint) if lines_hint else " ".join(words)
+        line = self._text(display_str)
+        fit_mobject(line, max_width=self.inner_w, max_height=self.card_h * (0.86 if self.preset.show_speaker_badge else 0.94))
+        y_off = -self.card_h * 0.10 if (self.preset.show_speaker_badge and len(self._speaker_badge.submobjects) > 0) else 0.0
+        line.move_to(self.bg.get_center() + np.array([0.0, y_off, 0.0]))
         glyphs = list(line.submobjects)
         parts: list[m.VGroup] = []
         cursor = 0
         for w in words:
-            n = len(w.replace(" ", ""))
+            n = len(w.replace(" ", "").replace("\n", ""))
             parts.append(m.VGroup(*glyphs[cursor : cursor + n]))
             cursor += n
         return line, parts
@@ -411,46 +472,56 @@ class CaptionCard:
     SOFT_BREAK_WORDS = {"and", "or", "but", "so", "because", "while", "where", "when", "then", "which", "that", "plus", "equals"}
 
     def set_words(self, words: list[tuple], beat_start: float) -> None:
-        """Pack timed words into grammatical phrase chunks (shared with SRT/VTT semantic segmentation).
+        """Pack timed words into balanced phrase chunks via CaptionIR segmentation."""
+        from studio.captions.layout import chunk_caption_cues
+        from studio.audio.tts import SyncedBeat
 
-        Each word is (text, start, end[, emphasis]).
-        """
         self._chunks = []
         self._built = {}
-        norm = []
-        for w in words:
-            raw_tok = str(w[0])
-            breaks_phrase = raw_tok.endswith(self.PHRASE_END)
-            disp_tok = raw_tok[:-1] if (raw_tok.endswith(".") and not raw_tok.endswith("...") and not raw_tok[:-1].isdigit()) else raw_tok
-            norm.append((disp_tok, float(w[1]), float(w[2]), bool(w[3]) if len(w) > 3 else False, breaks_phrase))
-        current: list[tuple[str, float, float, bool]] = []
-        for idx, (disp_tok, s_t, e_t, emph_f, breaks_phrase) in enumerate(norm):
-            word = (disp_tok, s_t, e_t, emph_f)
-            cand = [*current, word]
-            too_wide = self._text(" ".join(w[0] for w in cand)).width > self.inner_w * 0.94
-            if current and (len(cand) > self.MAX_WORDS + 1 or too_wide):
-                self._chunks.append((current[0][1], current))
-                current = [word]
-            else:
-                current = cand
-            next_tok = norm[idx + 1][0].lower().strip(".,!?;:") if idx + 1 < len(norm) else ""
-            soft_break = next_tok in self.SOFT_BREAK_WORDS and len(current) >= 3 and self._text(" ".join(w[0] for w in current)).width > self.inner_w * 0.62
-            if (breaks_phrase and len(current) >= 2) or soft_break:
-                self._chunks.append((current[0][1], current))
-                current = []
-        if current:
-            self._chunks.append((current[0][1], current))
+        if self.caption_style == "off" or not words:
+            self.group.submobjects = []
+            return
+        start_s = float(words[0][1]) if len(words[0]) > 1 else beat_start
+        end_s = max(start_s + 0.3, float(words[-1][2]) if len(words[-1]) > 2 else start_s + 2.0)
+        b = SyncedBeat(
+            id="_w",
+            narration=" ".join(str(w[0]) for w in words),
+            caption="",
+            audio_path="",
+            start_time=start_s,
+            end_time=end_s,
+            speech_duration=max(0.2, end_s - start_s),
+            total_duration=max(0.2, end_s - start_s),
+            words=[list(w) for w in words],
+            marks={},
+            speaker=self._speaker,
+        )
+        is_port = self.layout.frame_h > self.layout.frame_w
+        max_chars = self.preset.portrait_max_chars if is_port else self.preset.landscape_max_chars
+        cues = chunk_caption_cues([b], max_chars_per_line=max_chars, max_lines=self.preset.max_lines)
+        for c in cues:
+            self._chunks.append((float(c.start_s), [(w.text, w.start_s, w.end_s, w.emphasis) for w in c.words], list(c.lines)))
         if self._chunks:
-            self._chunks[0] = (beat_start, self._chunks[0][1])
+            self._chunks[0] = (beat_start, self._chunks[0][1], self._chunks[0][2])
         self._shown = (-1, -1)
 
     def set_segments(self, segments: list, beat_start: float) -> None:
-        """Bind precomputed semantic CaptionSegment list (single source of truth with SRT/VTT)."""
+        """Bind precomputed semantic CaptionSegment / CaptionCue list cleanly."""
         self._chunks = []
         self._built = {}
+        if self.caption_style == "off":
+            self.group.submobjects = []
+            return
         for seg in segments:
-            if seg.words:
-                self._chunks.append((float(seg.start_s), [tuple(w) for w in seg.words]))
+            lns = list(getattr(seg, "lines", []) or [])
+            if getattr(seg, "words", None):
+                wds = []
+                for w in seg.words:
+                    if isinstance(w, tuple) or isinstance(w, list):
+                        wds.append((str(w[0]), float(w[1]), float(w[2]), bool(w[3]) if len(w) > 3 else False))
+                    else:
+                        wds.append((str(w.text), float(w.start_s), float(w.end_s), bool(w.emphasis)))
+                self._chunks.append((float(seg.start_s), wds, lns))
             else:
                 toks = seg.text.replace("\n", " ").split()
                 if not toks:
@@ -458,15 +529,50 @@ class CaptionCard:
                 span = max(0.1, float(seg.end_s) - float(seg.start_s))
                 step = span / len(toks)
                 wds = [(t, float(seg.start_s) + i * step, float(seg.start_s) + (i + 1) * step, False) for i, t in enumerate(toks)]
-                self._chunks.append((float(seg.start_s), wds))
+                self._chunks.append((float(seg.start_s), wds, lns or [" ".join(toks)]))
         if self._chunks:
-            self._chunks[0] = (beat_start, self._chunks[0][1])
+            self._chunks[0] = (beat_start, self._chunks[0][1], self._chunks[0][2])
         self._shown = (-1, -1)
 
-    def set_beat(self, words: list, narration: str, start: float, speech_end: float) -> None:
-        """Bind a beat using the shared build_semantic_captions() single source of truth."""
+    def set_beat(
+        self,
+        words: list,
+        narration: str,
+        start: float,
+        speech_end: float,
+        speaker: str = "narrator",
+    ) -> None:
+        """Bind a beat using CaptionIR single source of truth across captions & subtitles."""
         from studio.audio.tts import SyncedBeat
-        from studio.timeline import build_semantic_captions
+        from studio.captions.layout import chunk_caption_cues
+
+        self._speaker = speaker or "narrator"
+        if self.caption_style == "off":
+            self._chunks = []
+            self.group.submobjects = []
+            return
+
+        # Optional quiet speaker badge for dialogue/accessible tracks
+        if self.preset.show_speaker_badge and speaker:
+            sp_lbl = speaker.replace("_", " ").title()
+            sp_col = self.theme.accent_secondary if speaker.lower() not in ("narrator", "host", "explainer") else self.theme.accent_primary
+            badge_t = m.Text(sp_lbl.upper(), font_size=20, font=HEADER_FONT, weight="BOLD", color=sp_col, **_text_font_kwargs())
+            badge_t.scale(min(1.0, (self.card_h * 0.22) / max(badge_t.height, 1e-6)))
+            badge_bg = m.RoundedRectangle(
+                corner_radius=0.08,
+                width=badge_t.width + 0.22,
+                height=badge_t.height + 0.10,
+                fill_color=self.theme.surface,
+                fill_opacity=0.92,
+                stroke_color=sp_col,
+                stroke_width=1.2,
+            )
+            badge = m.VGroup(badge_bg, badge_t).move_to(
+                self.bg.get_top() + np.array([0.0, badge_t.height * 0.45 + 0.04, 0.0])
+            )
+            self._speaker_badge = badge
+        else:
+            self._speaker_badge = m.VGroup()
 
         timed = [tuple(w) for w in words] if words else []
         if not timed:
@@ -489,67 +595,96 @@ class CaptionCard:
             total_duration=max(0.1, speech_end - start),
             words=[list(w) for w in timed],
             marks={},
+            speaker=self._speaker,
         )
-        segs = build_semantic_captions([beat])
-        if segs:
-            self.set_segments(segs, start)
+        is_port = self.layout.frame_h > self.layout.frame_w
+        max_chars = self.preset.portrait_max_chars if is_port else self.preset.landscape_max_chars
+        cues = chunk_caption_cues([beat], max_chars_per_line=max_chars, max_lines=self.preset.max_lines)
+        if cues:
+            self.set_segments(cues, start)
         else:
             self.set_words(timed, start)
         self._tick(scene_time())
 
     # -- per-frame drive ------------------------------------------------------
     def _tick(self, t: float) -> None:
-        if not self._chunks:
+        if self.caption_style == "off" or not self._chunks:
             return
         ci = 0
-        for idx, (c_start, _) in enumerate(self._chunks):
+        for idx, (c_start, _, _lns) in enumerate(self._chunks):
             if t + 1e-6 >= c_start:
                 ci = idx
         words = self._chunks[ci][1]
+        lines_hint = self._chunks[ci][2] if len(self._chunks[ci]) > 2 else None
         wi = 0
         for j, w in enumerate(words):
             if t + 1e-6 >= w[1]:
                 wi = j
         if (ci, wi) != self._shown:
-            self._show(ci, wi, words, t)
+            self._show(ci, wi, words, lines_hint, t)
         self._animate(t)
 
-    def _show(self, ci: int, wi: int, words: list[tuple], t: float) -> None:
+    def _show(self, ci: int, wi: int, words: list[tuple], lines_hint: list[str] | None, t: float) -> None:
         if ci not in self._built:
-            self._built[ci] = self._make_line([w[0] for w in words])
+            self._built[ci] = self._make_line([w[0] for w in words], lines_hint=lines_hint)
         line, parts = self._built[ci]
         self._reset_bounce()
-        emph = words[wi][3]
+        emph = words[wi][3] if len(words[wi]) > 3 else False
+        mode = self.preset.word_highlight_mode
+        sp_col = (
+            self.theme.accent_secondary
+            if self._speaker.lower() not in ("narrator", "host", "explainer", "")
+            else self.theme.accent_primary
+        )
         for j, part in enumerate(parts):
-            if self.style == "neon":
-                part.set_stroke(color=self.theme.background, width=self.OUTLINE_WIDTH, opacity=0.92, background=True)
-            if j == wi:
-                if self.minimal or self.style == "neon":
-                    part.set_fill(color=self.theme.accent_primary if emph else self.accent)
+            if mode == "none":
+                # Clean uniform broadcast subtitle text with zero distracting color flash
+                part.set_fill(color=self.theme.text_primary)
+            elif mode == "subtle_ink":
+                if j == wi:
+                    part.set_fill(color=sp_col if (self.preset.show_speaker_badge or emph) else self.theme.text_primary)
+                elif j < wi:
+                    part.set_fill(color=self.theme.text_primary)
                 else:
-                    part.set_color(self.theme.background)
-            elif j < wi:
-                # Spoken emphasis words stay lit in the secondary (cyan) accent
-                part.set_fill(color=self.theme.accent_primary if words[j][3] else self.theme.text_primary)
+                    part.set_fill(color=self.theme.text_muted)
             else:
-                part.set_fill(color=self.theme.text_muted)
+                if self.style == "neon":
+                    part.set_stroke(color=self.theme.background, width=self.OUTLINE_WIDTH, opacity=0.90, background=True)
+                if j == wi:
+                    if self.minimal or self.style == "neon":
+                        part.set_fill(color=self.theme.accent_primary if emph else self.accent)
+                    else:
+                        part.set_color(self.theme.background)
+                elif j < wi:
+                    part.set_fill(color=self.theme.accent_primary if (len(words[j]) > 3 and words[j][3]) else self.theme.text_primary)
+                else:
+                    part.set_fill(color=self.theme.text_muted)
+
+        if mode in ("none", "subtle_ink"):
+            self.group.submobjects = [self._neon_bar, self.bg, self._speaker_badge, line]
+            self.pill, self.line = m.VGroup(), line
+            self._bounce_part = None
+            self._pop_amp = 0.0
+            self._bounce_amp = 0.0
+            self._shown = (ci, wi)
+            return
+
         if self.minimal or self.style == "neon":
             self._show_minimal(ci, wi, line, parts, emph, t)
             return
-        # Uniform pill height for every word (ascenders/descenders never change its size)
-        pill_h = self.line_h * 1.30
+
+        pill_h = self.line_h * 1.24
         pad_y = max(0.0, (pill_h - parts[wi].height) * 0.5)
         pill = m.BackgroundRectangle(
             parts[wi],
-            buff=(self.line_h * 0.16, pad_y),
-            corner_radius=self.line_h * 0.18,
+            buff=(self.line_h * 0.14, pad_y),
+            corner_radius=self.line_h * 0.16,
             color=self.theme.accent_primary if emph else self.accent,
             fill_opacity=0.95,
             stroke_width=0.0,
         )
-        # Draw order: card, pill, words
         pill.move_to(np.array([pill.get_center()[0], line.get_center()[1], 0.0]))
-        self.group.submobjects = [self.bg, pill, line]
+        self.group.submobjects = [self.bg, self._speaker_badge, pill, line]
         self.pill, self.line = pill, line
         self._pill_center = pill.get_center().copy()
         self._pill_born = t
@@ -557,36 +692,28 @@ class CaptionCard:
         self._bounce_part = parts[wi] if emph else None
         self._bounce_center = parts[wi].get_center().copy()
         self._bounce_scale = 1.0
-        # Pops are capped per word so growth never reaches the neighbouring words: the pill may
-        # grow into at most a third of the inter-word space, and the bouncing word stays inside
-        # its resting pill.
-        space = self.line_h * 0.30
-        self._pop_amp = min(0.20 if emph else 0.10, 2.0 * space / 3.0 / max(pill.width, 1e-6))
-        self._bounce_amp = min(0.14, pill.width / max(parts[wi].width, 1e-6) - 1.0)
+        space = self.line_h * 0.28
+        self._pop_amp = min(0.16 if emph else 0.08, 2.0 * space / 3.0 / max(pill.width, 1e-6))
+        self._bounce_amp = min(0.12, pill.width / max(parts[wi].width, 1e-6) - 1.0)
         self._shown = (ci, wi)
 
     def _show_minimal(self, ci: int, wi: int, line: m.Text, parts: list[m.VGroup], emph: bool, t: float) -> None:
-        """Box-free or neon bar: no pill; the active word pops (emphasis words spring with glow)."""
-        if self.style == "neon":
-            self.group.submobjects = [self._neon_bar, self.bg, line]
-        else:
-            self.group.submobjects = [self._neon_bar, self.bg, line]
+        """Box-free or kinetic minimal: active word pops lightly without neighbor overlap."""
+        self.group.submobjects = [self._neon_bar, self.bg, self._speaker_badge, line]
         self.pill, self.line = m.VGroup(), line
         self._pill_born = t
         self._pill_scale = 1.0
         self._bounce_part = parts[wi]
         self._bounce_center = parts[wi].get_center().copy()
         self._bounce_scale = 1.0
-        # Growth is capped so the word never reaches its neighbours (~40 % of a space per side)
-        space = self.line_h * 0.30
-        cap = 0.8 * space / max(parts[wi].width, 1e-6)
+        space = self.line_h * 0.28
+        cap = 0.75 * space / max(parts[wi].width, 1e-6)
         self._pop_amp = 0.0
-        self._bounce_amp = min(0.16 if emph else 0.08, cap)
+        self._bounce_amp = min(0.14 if emph else 0.07, cap)
         self._spring = emph
-        # Neon style: subtle colored halo strictly behind the crisp glyph fill
         if self.style == "neon":
             glow_color = self.theme.accent_primary if emph else self.accent
-            parts[wi].set_stroke(color=glow_color, width=self.OUTLINE_WIDTH * 1.45, opacity=0.45, background=True)
+            parts[wi].set_stroke(color=glow_color, width=self.OUTLINE_WIDTH * 1.35, opacity=0.42, background=True)
         self._shown = (ci, wi)
 
     def _reset_bounce(self) -> None:

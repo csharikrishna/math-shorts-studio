@@ -23,6 +23,8 @@ class _StoryMixin:
     BEATS: list[BeatSpec] = []
     DEFAULT_FORMAT: str = "shorts_hd"
     DEFAULT_THEME: str = "midnight_studio"
+    HAS_HEADER_BANNER: bool = True
+    HAS_EQUATION_BAND: bool = False
 
     def setup_studio(self) -> None:
         """Load format profile, theme, layout zones, SFX library, and audio timeline."""
@@ -32,11 +34,18 @@ class _StoryMixin:
 
         self.profile: FormatProfile = FORMATS[fmt_name]
         self.theme: Theme = THEMES[theme_name]
+        cap_default = "kinetic" if (self.profile.is_vertical and os.environ.get("STUDIO_UI", "minimal") in ("card", "neon")) else ("editorial" if not self.profile.is_vertical else "minimal")
+        self.caption_style: str = os.environ.get("STUDIO_CAPTION_STYLE") or cap_default
 
         m.config.background_color = self.theme.background
         self.camera.background_color = self.theme.background  # type: ignore[attr-defined]
 
-        self.layout = SafeLayout.from_config(self.profile)
+        self.layout = SafeLayout.from_config(
+            self.profile,
+            has_header_banner=getattr(self, "HAS_HEADER_BANNER", True),
+            has_equation_band=getattr(self, "HAS_EQUATION_BAND", False),
+            caption_style=self.caption_style,
+        )
         self.sfx_lib = SfxLibrary(build_dir / "sfx")
 
         timeline_path = build_dir / "timeline.json"
@@ -98,8 +107,9 @@ class _StoryMixin:
         start, speech_end, end, caption_text, narration, words, marks = self._beat_window(beat_id)
         target_dur = max(0.2, end - self.now())
 
+        speaker = getattr(self.timeline.by_id(beat_id), "speaker", "narrator") if self.timeline is not None else "narrator"
         if self.caption_card is not None:
-            self.caption_card.set_beat(words, narration, start, speech_end)
+            self.caption_card.set_beat(words, narration, start, speech_end, speaker=speaker)
         self.add_subcaption(caption_text, duration=max(0.1, end - start), offset=max(0.0, start - self.now()))  # type: ignore[attr-defined]
 
         if sfx is not None:
@@ -121,7 +131,10 @@ class _StoryMixin:
             budget = target_dur * anim_ratio
             if cue_times:
                 budget = min(budget, cue_times[0][0] - self.now())
-            run_t = max(0.35, min(budget, target_dur - 0.10))
+            # Keep fade/setup entrances brisk (<= 1.05s) so opening/transition frames reach full contrast fast
+            all_fades = all(isinstance(a, (m.FadeIn, m.FadeOut)) for a in beat_anims)
+            cap_t = 0.85 if all_fades else 1.45
+            run_t = max(0.32, min(budget, target_dur - 0.10, cap_t))
             kwargs = {"run_time": run_t}
             if rate_func is not None:
                 kwargs["rate_func"] = rate_func

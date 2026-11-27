@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import numpy as np
 
 from studio.ai.expr import ExprError, compile_expr
@@ -17,6 +18,7 @@ from studio.ai.math_truth import (
     is_stationary_point,
     matrix_transform_and_eigen,
     symbolic_derivative,
+    verify_eigenvalue_stability_regime,
     verify_polynomial_degree,
 )
 from studio.ai.schema import BOOKMARK_RE
@@ -167,6 +169,10 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 issues.append(f"{where}: event target_id {ev.target_id!r} is not live (missing or removed).")
             if ev.op in ("move", "rotate", "scale", "highlight", "focus", "remove", "animate_param", "zoom", "iterate_states", "interpolate_values") and st == "declared":
                 issues.append(f"{where}: event {ev.op} on {ev.target_id!r} before it is created/drawn.")
+            if ev.op == "rotate" and st in ("declared", "visible") and ev.target_id in live_objs:
+                t_kind = live_objs[ev.target_id].kind
+                if t_kind in ("matrix", "table", "equation", "axes", "annotation", "bar_chart"):
+                    issues.append(f"{where}: cannot rotate non-geometric object {ev.target_id!r} of kind {t_kind!r}.")
             if ev.op in ("create", "draw", "reveal", "trace", "sequence", "parallel", "group"):
                 state[ev.target_id] = "visible"
             elif ev.op in ("transform", "morph", "duplicate"):
@@ -472,6 +478,26 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                         msg = f"{where} claim eigenvalue_determinant: {exc}"
                         issues.append(msg); failed_claims.append(msg)
 
+            elif cl.kind == "eigenvalue_stability_regime":
+                if not cl.matrix_2x2:
+                    msg = f"{where} claim eigenvalue_stability_regime: requires matrix_2x2."
+                    issues.append(msg); unsupported_claims.append(msg)
+                else:
+                    try:
+                        ok_reg, reg_detail = verify_eigenvalue_stability_regime(
+                            cl.matrix_2x2,
+                            expected_regime=cl.expected_regime,
+                            statement=cl.statement or sc.narration,
+                        )
+                        if not ok_reg:
+                            msg = f"{where} claim eigenvalue_stability_regime: {reg_detail}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: eigenvalue_stability_regime({reg_detail})")
+                    except Exception as exc:
+                        msg = f"{where} claim eigenvalue_stability_regime: {exc}"
+                        issues.append(msg); failed_claims.append(msg)
+
             elif cl.kind == "ode_equilibrium":
                 if not cl.dx_expr or not cl.dy_expr:
                     msg = f"{where} claim ode_equilibrium: requires dx_expr and dy_expr."
@@ -510,8 +536,29 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             sq_cnt = sum(1 for verts in live_poly_vals if is_square(verts))
             if sq_cnt < 3:
                 issues.append(f"{where}: narration claims three squares, but only {sq_cnt} valid live square(s) exist.")
-        if ("rotate" in low_narr or "rotates" in low_narr) and not any(e.op in ("rotate", "animate_param") for e in sc.events):
-            issues.append(f"{where}: narration mentions rotation, but no rotate/animate_param event is present.")
+        if live_poly_vals and re.search(r"\b(?:rotate|rotates|rotating)\b", low_narr) and not re.search(r"\b(?:never|without|not|no)\s+rotat", low_narr):
+            if not any(e.op in ("rotate", "animate_param") for e in sc.events):
+                issues.append(f"{where}: narration mentions rotation, but no rotate/animate_param event is present.")
+
+        # Reject bare empty axes stages (every declared axes must host at least one plotted curve, vector, trajectory, point, or polygon)
+        non_chrome_kinds = ("axes", "annotation", "equation", "matrix", "table")
+        scene_axes_ids = [o.id for o in sc.objects if o.kind == "axes"]
+        scene_non_chrome = [o for o in sc.objects if o.kind not in non_chrome_kinds]
+        for ax_id in scene_axes_ids:
+            has_local = any(o.axes_id == ax_id for o in scene_non_chrome) or any(
+                getattr(c.params, "axes_id", None) == ax_id for c in sc.constructions
+            )
+            has_later = any(
+                (o.kind not in non_chrome_kinds and o.axes_id == ax_id)
+                for later_sc in plan.scenes[idx:]
+                for o in later_sc.objects
+            )
+            if not (has_local or has_later):
+                issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon referencing axes_id={ax_id!r}.")
+        live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if st_v in ("declared", "visible")}
+        if require_claims and "axes" in live_stage_kinds and not scene_non_chrome and not any(o.kind in ("matrix", "table", "bar_chart", "graph_network") for o in sc.objects):
+            if not any(o.axes_id for o in scene_non_chrome) and not scene_axes_ids:
+                issues.append(f"{where}: empty axes stage (declare curves, vectors, polygons, or trajectories alongside axes).")
 
         for obj in sc.objects:
             if not obj.persist and state.get(obj.id) in ("declared", "visible"):
@@ -520,14 +567,16 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
     if require_claims and total_claims == 0:
         issues.append("Mathematical plan must include at least one StructuredClaim in scenes[].claims.")
 
+    unclaimed_non_constructive = sum(1 for sc in plan.scenes if not sc.claims and not sc.constructions)
+    explicit_ai_reviewed = sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "ai_reviewed")
     coverage = {
         "deterministically_verified": len(verified_claims),
         "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path")),
         "source_supported": sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "source_supported"),
-        "ai_reviewed": sum(1 for sc in plan.scenes if not sc.claims),
-        "unsupported": len(unsupported_claims),
+        "ai_reviewed": explicit_ai_reviewed,
+        "unsupported": len(unsupported_claims) + (unclaimed_non_constructive if require_claims else 0),
         "failed": len(failed_claims),
-        "human_review_required": 1 if (failed_claims or unsupported_claims) else 0,
+        "human_review_required": 1 if (failed_claims or unsupported_claims or (require_claims and unclaimed_non_constructive > 0)) else 0,
     }
     return {
         "issues": issues,

@@ -61,6 +61,8 @@ class VisualReviewNote(BaseModel):
         "caption",
         "math_grounding",
         "visual_variety",
+        "motion",
+        "contrast",
         "audio",
     ]
     finding: str
@@ -93,6 +95,8 @@ class VideoReviewReport(BaseModel):
     layout_safe_zone_ok: bool = True
     audio_sync_ok: bool = True
     visual_variety_ok: bool = True
+    category_statuses: dict[str, str] = Field(default_factory=dict)
+    contact_sheet_path: str = ""
     verification_summary: VerificationCoverageSummary = Field(default_factory=VerificationCoverageSummary)
     notes: list[VisualReviewNote] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
@@ -121,6 +125,7 @@ def storyboard_from_v3_plan(
     format_name: str = "widescreen_hd",
     look_name: str = "midnight_studio",
     beat_durations: dict[str, float] | None = None,
+    audio_timeline: object | None = None,
     script: ScriptIR | None = None,
 ) -> Storyboard:
     """Compile a validated VideoPlanV3 into a structured renderer-independent Storyboard."""
@@ -131,6 +136,11 @@ def storyboard_from_v3_plan(
     if script is not None:
         for b in script.beats:
             script_by_scene.setdefault(b.scene_id, b)
+
+    tl_beats: dict[str, object] = {}
+    if audio_timeline is not None:
+        for b in getattr(audio_timeline, "beats", []):
+            tl_beats[getattr(b, "id", "")] = b
 
     shots: list[StoryboardShot] = []
     t_cursor = 0.0
@@ -143,13 +153,21 @@ def storyboard_from_v3_plan(
         spoken = beat_ref.spoken_text if beat_ref else scene.narration
         caption = (beat_ref.displayed_caption if beat_ref and beat_ref.displayed_caption else spoken).strip()
 
-        if beat_durations and sid in beat_durations:
+        tl_b = tl_beats.get(sid)
+        if tl_b is not None:
+            t_start = float(getattr(tl_b, "start_time", t_cursor))
+            t_end = float(getattr(tl_b, "end_time", t_start + 2.0))
+            dur = max(0.3, t_end - t_start)
+        elif beat_durations and sid in beat_durations:
             dur = max(0.5, float(beat_durations[sid]))
+            t_start, t_end = t_cursor, t_cursor + dur
         elif beat_ref and beat_ref.estimated_duration_s > 0:
             dur = float(beat_ref.estimated_duration_s)
+            t_start, t_end = t_cursor, t_cursor + dur
         else:
             words = max(4, len(spoken.split()))
-            dur = round(max(2.5, words / 2.6 + 0.4), 2)
+            dur = round(max(2.5, words / 2.1 + 0.35), 2)
+            t_start, t_end = t_cursor, t_cursor + dur
 
         objs = getattr(scene, "objects", [])
         obj_ids = [f"{o.id}:{o.kind}" for o in objs]
@@ -197,8 +215,8 @@ def storyboard_from_v3_plan(
                 transition_from_prev=trans_in,
                 transition_to_next="cut",
                 camera_movement=camera,
-                start_s=round(t_cursor, 3),
-                end_s=round(t_cursor + dur, 3),
+                start_s=round(t_start, 3),
+                end_s=round(t_end, 3),
                 duration_s=round(dur, 3),
                 speaker=speaker,
                 spoken_line=spoken,
@@ -208,7 +226,7 @@ def storyboard_from_v3_plan(
                 verification_status=ver_status,
             )
         )
-        t_cursor += dur
+        t_cursor = max(t_end, t_cursor + dur)
         persistent_carry |= curr_persist
 
     for idx in range(len(shots) - 1):
@@ -283,6 +301,12 @@ def export_review_md(report: VideoReviewReport, out_path: Path | None = None) ->
         lines.append("## Measured Metrics")
         lines.extend(f"- {m}" for m in report.metrics)
         lines.append("")
+    if report.category_statuses:
+        lines.append("## 10-Category Honest QA Status")
+        lines.extend(f"- `{k}`: **{v}**" for k, v in report.category_statuses.items())
+        lines.append("")
+    if report.contact_sheet_path:
+        lines.append(f"- **Contact Sheet:** `{report.contact_sheet_path}`\n")
     if report.notes:
         lines.append("## Findings")
         for n in report.notes:

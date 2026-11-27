@@ -1,0 +1,37 @@
+{
+  "Inter-Variable.ttf": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf",
+    "bytes": 876576,
+    "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031"
+  },
+  "Inter-OFL.txt": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt",
+    "bytes": 4377,
+    "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57"
+  },
+  "SourceSans3-Variable.ttf": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/sourcesans3/SourceSans3%5Bwght%5D.ttf",
+    "bytes": 646340,
+    "sha256": "042fe2cc0b933e328410d7acbd0aa6a1873dca5aef81875f4bc214b08825c7b9"
+  },
+  "SourceSans3-OFL.txt": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/sourcesans3/OFL.txt",
+    "bytes": 4579,
+    "sha256": "09746787287a289323b0ec3cff4d1a4a801331b82b7207c1e186f5d26619a392"
+  },
+  "STIXTwoText-Variable.ttf": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/stixtwotext/STIXTwoText%5Bwght%5D.ttf",
+    "bytes": 418956,
+    "sha256": "7962b8b7811e6a896c9a91a0bccbb5241047770eb24d4997c5cb5fe21d5c0df2"
+  },
+  "STIXTwo-OFL.txt": {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/stixtwotext/OFL.txt",
+    "bytes": 4520,
+    "sha256": "62c0967a997b9691326d35b1f90baf085a557327b711618bc4161325ce1bb1b2"
+  },
+  "STIX2Math.otf": {
+    "url": "https://raw.githubusercontent.com/stipub/stixfonts/master/archive/STIXv2.0.2/OTF/STIX2Math.otf",
+    "bytes": 808220,
+    "sha256": "56cc42241cccc86d6d570134aa918fe8ac714f4b340d9916282fcc53c592d546"
+  }
+}

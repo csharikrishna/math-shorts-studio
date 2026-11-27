@@ -57,9 +57,17 @@ EventOp = Literal[
 CompositionKind = Literal[
     "auto",
     "centered_focus",
+    "diagram_with_text",
     "side_by_side_comparison",
     "stacked_comparison",
     "main_with_equation_panel",
+    "geometric_proof",
+    "math_simulation",
+    "annotated_chart",
+    "matrix_transform",
+    "data_visualization",
+    "chapter_intro",
+    "concept_summary",
     "step_by_step_sequence",
     "grid_of_multiple_examples",
     "spotlight_zoom",
@@ -206,6 +214,7 @@ ClaimRuleKind = Literal[
     "convergence_assumptions",
     "definite_integral_value",
     "eigenvalue_determinant",
+    "eigenvalue_stability_regime",
     "ode_equilibrium",
     "markov_stochastic_invariant",
 ]
@@ -233,6 +242,9 @@ class StructuredClaim(BaseModel):
     dx_expr: Optional[str] = None
     dy_expr: Optional[str] = None
     matrix_2x2: Optional[list[list[float]]] = None
+    expected_regime: Optional[
+        Literal["stable_node", "unstable_node", "saddle", "stable_spiral", "unstable_spiral", "center", "degenerate"]
+    ] = None
     verification_level: Literal[
         "deterministically_verified",
         "numerically_tested",

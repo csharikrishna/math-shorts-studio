@@ -352,6 +352,11 @@ STORYTELLING & DURATION RULES:
   * Polygon-ONLY claims (`right_triangle`, `square`, `congruent_triangles`, `area_conservation`, `partition_of`, `nonzero_area`) MUST ONLY reference `kind="polygon"` object_ids (NEVER `particle_system`, `matrix`, `circle`, or `axes`).
   * `point_on_function` requires exact `coords = [x, f(x)]`; if introducing phase-plane trajectories or ODE equilibria, prefer `ode_phase_trajectory` + `ode_equilibrium` (`dx_expr`, `dy_expr`, `x_val`, `expected_value=0.0`).
   * `eigenvalue_determinant` requires `matrix_2x2` + exact determinant `expected_value = a*d - b*c`.
+  * `eigenvalue_stability_regime` requires `matrix_2x2` + exact `expected_regime`: asymptotically stable iff ALL `Re(λ) < 0`; unstable iff ANY `Re(λ) > 0` (distinguish `saddle` where eigenvalues have opposite signs from `unstable_node`/`unstable_spiral` where ALL `Re(λ) > 0`; `Re(λ) = 0` is a linear center and non-hyperbolic for nonlinear systems).
+  * NEVER emit a bare `axes`-only empty scene — every `axes` MUST have at least one plotted trajectory, curve, vector, polygon, or point with `axes_id="<axes_id>"` (NEVER attach equations/annotations/matrices to `axes_id`).
+  * NEVER apply `op="rotate"` to non-geometric objects (`matrix`, `table`, `equation`, `annotation`, `axes`, `bar_chart`).
+  * Set `card=true` ONLY on one pivotal equation per chapter (leave `card=false` by default for airy editorial typography).
+  * For `markov_chain_evolution`, `transition_matrix` MUST be ROW-stochastic (each row sums to 1.0; if using a PageRank column-stochastic matrix, transpose it so every row sums to 1.0).
   * `stationary_point`, `local_minimum`, `derivative_equality`, `function_equivalence`, `polynomial_degree`, `coefficient_correctness`, `definite_integral_value`, `probability_normalization`, `conditional_probability`, `distribution_stats`, `convergence_assumptions`, `markov_stochastic_invariant`.
 Ensure mathematical accuracy: formulas, degrees, plotted expressions, and numerical examples must agree.
 """
@@ -436,12 +441,13 @@ def create_v3_plan(
         (art_dir / "DESIGN.md").write_text(export_design_md(design), encoding="utf-8")
 
     min_words = max(45, int(target_duration_s * 1.9))
+    max_words = max(min_words + 20, int(target_duration_s * 2.28))
     req = (
         f"{system_prompt}\n\nTopic/Concept: {label}\nAudience: {audience}\n"
         f"Format aspect: {aspect} ({format_name}), Narration mode: {narration_mode}, Look: {look_name}.\n"
-        f"Target duration: {target_duration_s:.0f}s (~{int(target_duration_s * 2.5)} total spoken words across scenes, minimum {min_words} words).\n"
+        f"Target duration: {target_duration_s:.0f}s (TARGET WORD BUDGET: {min_words}-{max_words} total spoken words; do NOT exceed {max_words} words).\n"
         f"{creative_context}\n"
-        "Generate a complete VideoPlanV3 JSON with deterministic constructions, varied compositions, and verifiable claims."
+        "Generate a complete VideoPlanV3 JSON preserving beat IDs (`scene_id`), `speaker`, spoken text, deterministic constructions, varied compositions, and verifiable claims."
     )
     plan, resp = director.provider.generate_structured(req, VideoPlanV3, system=system_prompt, temperature=0.45)
     director._log(f"{resp.provider}/{resp.model}: V3 plan generated in {resp.latency_s:.1f}s (tokens: {resp.prompt_tokens}+{resp.completion_tokens})")
@@ -455,6 +461,8 @@ def create_v3_plan(
         total_words = sum(len(parse_script(s.narration)[0].split()) for s in plan.scenes)
         if total_words < min_words:
             issues.append(f"Narration too short for {target_duration_s:.0f}s target ({total_words} words < {min_words}); expand explanations of WHY each step works.")
+        elif total_words > max_words:
+            issues.append(f"Narration exceeds target duration envelope ({total_words} words > {max_words}); tighten phrasing slightly without losing math rigor.")
         if not issues:
             break
         repair_log.append({"round": round_idx, "issues": issues})
@@ -473,10 +481,10 @@ def create_v3_plan(
 
     plan = materialize_constructions(plan)
     if active_script is not None:
-        beats_by_sc = {b.scene_id: b for b in getattr(active_script, "beats", [])}
-        for sc in plan.scenes:
-            if sc.scene_id in beats_by_sc and not sc.speaker:
-                sc.speaker = beats_by_sc[sc.scene_id].speaker
+        from studio.creative.script_ir import export_script_md, lock_script_to_plan
+
+        active_script = lock_script_to_plan(plan, active_script, stage="editorial_repair")  # type: ignore[arg-type]
+        (art_dir / "SCRIPT.md").write_text(export_script_md(active_script), encoding="utf-8")  # type: ignore[arg-type]
 
     sb = storyboard_from_v3_plan(plan, format_name=format_name, look_name=look_name, script=active_script)  # type: ignore[arg-type]
     export_storyboard_md(sb, art_dir / "STORYBOARD.md")

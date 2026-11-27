@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import Any, Callable, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 ComponentCategory = Literal[
     "math_operation",
@@ -18,17 +18,42 @@ BackendSupport = Literal["both", "manimgx", "hyperframes"]
 
 
 class ComponentSpec(BaseModel):
-    """Self-describing reusable capability exposed dynamically to planning agents."""
+    """Self-describing executable capability contract exposed to planning agents and renderers."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
     category: ComponentCategory
     description: str
+    version: str = "3.7.0"
+    input_model: str = "dict"
+    output_model: str = "dict"
     inputs_schema: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
     supported_backends: BackendSupport = "both"
+    backend_support: dict[str, bool] = Field(default_factory=lambda: {"manimgx": True, "hyperframes": True})
+    supported_ops: list[str] = Field(default_factory=list)
+    layout_constraints: list[str] = Field(default_factory=list)
     aspect_support: list[str] = Field(default_factory=lambda: ["16:9", "9:16"])
+    implemented: bool = True
     math_grounding: str = ""
     example_use_case: str = ""
+    # Non-serialized runtime hooks binding specs to genuine computation/verification functions
+    compute_fn: Optional[Callable[..., Any]] = Field(default=None, exclude=True)
+    validate_fn: Optional[Callable[..., list[str]]] = Field(default=None, exclude=True)
+    test_fn: Optional[Callable[[], bool]] = Field(default=None, exclude=True)
+
+    def execute(self, **kwargs: Any) -> Any:
+        if self.compute_fn is None:
+            raise NotImplementedError(f"ComponentSpec {self.name!r} has no bound compute_fn")
+        return self.compute_fn(**kwargs)
+
+    def verify_contract(self) -> bool:
+        if not self.implemented:
+            return False
+        if self.test_fn is not None:
+            return bool(self.test_fn())
+        return True
 
 
 class ComponentRegistry:
@@ -92,7 +117,8 @@ class ComponentRegistry:
             filtered = [
                 s
                 for s in specs
-                if (backend is None or s.supported_backends in ("both", backend))
+                if s.implemented
+                and (backend is None or s.supported_backends in ("both", backend))
                 and (aspect is None or aspect in s.aspect_support)
             ]
             if not filtered:

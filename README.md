@@ -32,12 +32,18 @@ The Gemini key is read from `GEMINI_API_KEY` (or `gemini_api`) in the environmen
 | `--prompt` | An explicit concept to script and stage. |
 | `--plan PATH` | Render a saved `ShortPlan` JSON. AI runs save theirs to `plans/`. |
 | `--model` | Gemini model. Default: `$GEMINI_MODEL`, then `gemini-3.5-flash-lite` → `3.1-flash-lite` → `3.5-flash` → `3.8-flash`. Lite models come first because they answer in seconds while the flagship models are often overloaded. Gemini 2.x/1.5 return 404 for new API keys. |
-| `--format` | `shorts_hd` (1080×1920@60), `shorts_fast` (720×1280@30), `widescreen_hd` (1920×1080@60). |
-| `--tts` | `kokoro` (default local 82M neural TTS; falls back to `edge` if unavailable) or `edge`. |
-| `--voice`, `--rate`, `--pitch` | edge-tts voice and prosody, e.g. `--rate="-4%" --pitch="-2Hz"`. |
+| `--format` | `shorts_hd` (1080×1920@60), `shorts_fast` (720×1280@30), `widescreen_hd` (1920×1080@60), `widescreen_fast` (1280×720@30). |
+| `--theme` | `light`, `dark`, `midnight_studio`, `obsidian_chalk`, `cartesian_stone`, `editorial_paper` (`--look-theme` alias; WCAG AA validated). |
+| `--caption-style` | `editorial`, `kinetic`, `minimal`, `dialogue`, `accessible`, `off` (unified `CaptionIR` across ASS/SRT/VTT, ManimGX, and HyperFrames). |
+| `--backend` | `manimgx` (default GPU engine), `hyperframes` (offline Chromium CDP SVG/DOM renderer), or `hybrid` (scene-level automatic router). |
+| `--longform --duration N` | Generate cohesive chaptered documentary (`N` seconds) with continuity bridges, narrative artifacts (`STORYLINES.md`, `SCRIPT.md`, `STORYBOARD.md`, `REVIEW.md`), and contact-sheet visual QA. |
+| `--derive-short` | Recompose a standalone native 9:16 portrait Short cleanly from `--longform`. |
+| `--tts` / `--no-edge-fallback` | `kokoro` (default offline 82M neural TTS) or `edge`; `--no-edge-fallback` disables network fallback strictly. |
+| `--voice`, `--rate`, `--pitch` | Voice ID and prosody, e.g. `--rate="-4%" --pitch="-2Hz"`. |
 | `--look` | `none`, `cinematic`, `warm`, `cool`: fast YUV-native color grade (GPU `h264_nvenc` accelerated when available). |
 | `--lut PATH` | A `.cube` LUT applied before the look. |
-| `--ui` | `minimal` (default: box-free `Segoe UI` outlined captions), `card` (frosted card + active pill), or `neon` (full-width dark dock + glowing top accent bar). |
+| `--ui` | Legacy UI alias mapped into `--caption-style` when `--caption-style` is omitted (`minimal` / `card` / `neon`). |
+| `--output-stem` | Override output MP4 stem name cleanly. |
 | `--allow-layout-warnings` | Do not fail on ManimGX layout QA problems (off by default). |
 
 ## How it works

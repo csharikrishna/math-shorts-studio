@@ -25,7 +25,8 @@ from studio.audio.bgm import generate_ambient_bgm
 from studio.audio.master import LOOKS, master_video
 from studio.audio.sfx import SfxLibrary
 from studio.audio.tts import build_voice_timeline
-from studio.config import FORMATS, THEMES
+from studio.config import CAPTION_STYLE_CHOICES, FORMATS, THEMES
+from studio.design.spec import resolve_look
 from studio.scene import Story3DScene, StoryScene, _StoryMixin
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -67,18 +68,22 @@ def run_pipeline(
     rate: str = "-4%",
     pitch: str = "-2Hz",
     tts_engine: str = "kokoro",
+    allow_edge_fallback: bool = True,
     strict_layout: bool = True,
     look: str = "none",
     ui: str = "minimal",
+    caption_style: str | None = None,
     lut_path: Path | None = None,
     output_stem: str | None = None,
 ) -> Path:
     if format_name not in FORMATS:
         raise ValueError(f"Unknown format '{format_name}'. Options: {list(FORMATS)}")
+    theme_name = resolve_look(theme_name).name
     if theme_name not in THEMES:
         raise ValueError(f"Unknown theme '{theme_name}'. Options: {list(THEMES)}")
 
     profile = FORMATS[format_name]
+    resolved_cap_style = caption_style or ("kinetic" if (profile.is_vertical and ui in ("card", "neon")) else ("editorial" if not profile.is_vertical else "minimal"))
     script_path = script_path.resolve()
     resolved_name, scene_cls = _load_scene_class(script_path, scene_name)
     stem = output_stem or resolved_name
@@ -97,20 +102,24 @@ def run_pipeline(
     jobs.upsert_job(job_id, stem, "tts", "running")
 
     print(f"[1/5] Synthesizing beat-synced TTS ({len(scene_cls.BEATS)} beats, engine={tts_engine}, rate={rate})...")
-    from studio.creative.dialogue import DIALOGUE_PROFILES
+    from studio.creative.dialogue import resolve_speaker_voices
 
-    sp_voices: dict[str, tuple[str, str]] = {}
-    for prof in DIALOGUE_PROFILES.values():
-        for sp in prof.speakers:
-            sp_voices[sp.role] = (sp.kokoro_voice, sp.edge_voice)
+    sp_voices = resolve_speaker_voices(voice_override=voice if voice != "en-US-AndrewNeural" else None)
     timeline = build_voice_timeline(
-        scene_cls.BEATS, build_dir=build_dir, voice=voice, rate=rate, pitch=pitch, engine=tts_engine, speaker_voices=sp_voices
+        scene_cls.BEATS,
+        build_dir=build_dir,
+        voice=voice,
+        rate=rate,
+        pitch=pitch,
+        engine=tts_engine,
+        allow_edge_fallback=allow_edge_fallback,
+        speaker_voices=sp_voices,
     )
     mt = MasterTimeline(audio=timeline)
     tl_issues = mt.validate()
     if tl_issues:
         raise RuntimeError(f"Timeline validation failed: {tl_issues}")
-    mt.export_subtitles(build_dir, stem)
+    mt.export_subtitles(build_dir, stem, caption_style=resolved_cap_style, format_name=format_name, look_name=theme_name)
     jobs.upsert_job(job_id, stem, "tts", "done", {"duration_s": timeline.total_duration})
     print(f"      -> Timeline duration: {timeline.total_duration:.2f}s")
 
@@ -125,6 +134,7 @@ def run_pipeline(
     env["STUDIO_FORMAT"] = format_name
     env["STUDIO_THEME"] = theme_name
     env["STUDIO_UI"] = ui
+    env["STUDIO_CAPTION_STYLE"] = resolved_cap_style
     env["STUDIO_BUILD_DIR"] = str(build_dir)
     env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
 
@@ -233,7 +243,7 @@ def main() -> None:
     parser.add_argument("--allow-paid", action="store_true", help="Disable strict free-only model enforcement")
     parser.add_argument("--model", type=str, default=None, help="AI model override")
     parser.add_argument("--format", type=str, default="shorts_hd", choices=list(FORMATS))
-    parser.add_argument("--theme", type=str, default="midnight_studio", choices=list(THEMES))
+    parser.add_argument("--theme", type=str, default="midnight_studio", choices=[*list(THEMES), "editorial_light", "cinematic_dark"])
     parser.add_argument("--voice", type=str, default="en-US-AndrewNeural")
     parser.add_argument("--rate", type=str, default="-4%")
     parser.add_argument("--pitch", type=str, default="-2Hz", help="edge-tts pitch offset, e.g. -2Hz for a warmer read")
@@ -243,7 +253,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=300.0, help="Target duration in seconds for --longform (e.g. 300, 600, 1200)")
     parser.add_argument("--audience", type=str, default="general", choices=["school", "beginner", "undergraduate", "advanced", "general"])
     parser.add_argument("--look", type=str, default="none", choices=list(LOOKS), help="Cinematic grade + vignette + grain")
-    parser.add_argument("--backend", type=str, default="manimgx", choices=["manimgx", "hyperframes"], help="Video render backend (default: manimgx GPU)")
+    parser.add_argument("--backend", type=str, default="manimgx", choices=["manimgx", "hyperframes", "hybrid"], help="Video render backend (default: manimgx GPU; hybrid routes per scene)")
     parser.add_argument(
         "--narration-mode",
         type=str,
@@ -254,14 +264,34 @@ def main() -> None:
     parser.add_argument("--derive-short", action="store_true", help="Derive a native recomposed 9:16 Short when running --longform")
     parser.add_argument("--benchmark-backends", action="store_true", help="Render both ManimGX and HyperFrames for --plan comparison")
     parser.add_argument("--no-creative-director", action="store_true", help="Skip separate CreativeDirector brief/script stages")
-    parser.add_argument("--ui", type=str, default="minimal", choices=["minimal", "card", "neon"], help="minimal: box-free outlined captions; card: frosted-glass pill; neon: fullwidth gradient bar with glow")
+    parser.add_argument("--ui", type=str, default="minimal", choices=["minimal", "card", "neon"], help="Legacy UI style preset")
+    parser.add_argument(
+        "--caption-style",
+        type=str,
+        default=None,
+        choices=CAPTION_STYLE_CHOICES,
+        help="Unified caption style preset (default: editorial for widescreen, minimal/kinetic for Shorts)",
+    )
     parser.add_argument("--lut", type=Path, default=None, help="Optional .cube LUT applied before the look")
     parser.add_argument("--allow-layout-warnings", action="store_true")
+    parser.add_argument("--output-stem", type=str, default=None, help="Optional custom output file stem")
     args = parser.parse_args()
 
+    theme_resolved = resolve_look(args.theme).name
     common = dict(
-        format_name=args.format, theme_name=args.theme, voice=args.voice, rate=args.rate, pitch=args.pitch,
-        tts_engine=args.tts, strict_layout=not args.allow_layout_warnings, look=args.look, lut_path=args.lut, ui=args.ui,
+        format_name=args.format,
+        theme_name=theme_resolved,
+        voice=args.voice,
+        rate=args.rate,
+        pitch=args.pitch,
+        tts_engine=args.tts,
+        allow_edge_fallback=not args.no_edge_fallback,
+        strict_layout=not args.allow_layout_warnings,
+        look=args.look,
+        lut_path=args.lut,
+        ui=args.ui,
+        caption_style=args.caption_style,
+        output_stem=args.output_stem,
     )
 
     if args.benchmark_backends and args.plan:
@@ -299,12 +329,15 @@ def main() -> None:
             ch_plans,
             format_name="widescreen_hd" if args.format == "shorts_hd" else args.format,
             tts_engine=args.tts,
+            allow_edge_fallback=not args.no_edge_fallback,
             voice=args.voice,
             rate=args.rate,
+            pitch=args.pitch,
             ui=args.ui,
             look=args.look,
-            look_name=args.theme,
+            look_name=theme_resolved,
             backend=args.backend,
+            caption_style=args.caption_style,
             on_progress=lambda m: print(f"[longform] {m}", flush=True),
         )
         print(f"DONE! Long-form video ready: {res['output_mp4']} ({res['total_duration_s']}s)")
@@ -315,12 +348,15 @@ def main() -> None:
                 ch_plans,
                 format_name="shorts_hd",
                 tts_engine=args.tts,
+                allow_edge_fallback=not args.no_edge_fallback,
                 voice=args.voice,
                 rate=args.rate,
+                pitch=args.pitch,
                 ui=args.ui,
                 look=args.look,
-                look_name=args.theme,
+                look_name=theme_resolved,
                 backend=args.backend,
+                caption_style=args.caption_style,
             )
             print(f"DONE! Derived portrait Short ready: {s_res['output_mp4']} ({s_res['duration_s']}s)")
     elif args.topic or args.prompt or (args.ai and not args.plan):
@@ -360,23 +396,47 @@ def main() -> None:
                 free_only=not args.allow_paid,
             )
         print(f"      -> Plan saved: {plan_path}")
-        if args.backend == "hyperframes" and args.engine == "v3":
+        if args.backend in ("hyperframes", "hybrid") and args.engine == "v3":
             from studio.ai.v3_schema import VideoPlanV3
+            from studio.ai.world_model import materialize_constructions
             from studio.renderers import get_backend
 
-            p3 = VideoPlanV3.model_validate_json(plan_path.read_text(encoding="utf-8"))
-            r = get_backend("hyperframes").render(p3, slug=plan_path.stem, format_name=args.format, look_name=args.theme)
-            print(f"DONE! HyperFrames render ready: {r.video_path} ({r.duration_s}s)")
+            p3 = materialize_constructions(VideoPlanV3.model_validate_json(plan_path.read_text(encoding="utf-8")))
+            r = get_backend(args.backend).render(
+                p3,
+                slug=args.output_stem or plan_path.stem,
+                format_name=args.format,
+                look_name=theme_resolved,
+                caption_style=args.caption_style,
+                tts_engine=args.tts,
+                allow_edge_fallback=not args.no_edge_fallback,
+                voice=args.voice,
+                rate=args.rate,
+                pitch=args.pitch,
+            )
+            print(f"DONE! {args.backend.title()} render ready: {r.video_path} ({r.duration_s}s)")
         else:
             run_plan(plan_path, **common)
     elif args.plan:
-        if args.backend == "hyperframes":
+        if args.backend in ("hyperframes", "hybrid"):
             from studio.ai.v3_schema import VideoPlanV3
+            from studio.ai.world_model import materialize_constructions
             from studio.renderers import get_backend
 
-            p3 = VideoPlanV3.model_validate_json(args.plan.read_text(encoding="utf-8"))
-            r = get_backend("hyperframes").render(p3, slug=args.plan.stem, format_name=args.format, look_name=args.theme)
-            print(f"DONE! HyperFrames render ready: {r.video_path} ({r.duration_s}s)")
+            p3 = materialize_constructions(VideoPlanV3.model_validate_json(args.plan.read_text(encoding="utf-8")))
+            r = get_backend(args.backend).render(
+                p3,
+                slug=args.output_stem or args.plan.stem,
+                format_name=args.format,
+                look_name=theme_resolved,
+                caption_style=args.caption_style,
+                tts_engine=args.tts,
+                allow_edge_fallback=not args.no_edge_fallback,
+                voice=args.voice,
+                rate=args.rate,
+                pitch=args.pitch,
+            )
+            print(f"DONE! {args.backend.title()} render ready: {r.video_path} ({r.duration_s}s)")
         else:
             run_plan(args.plan, **common)
     elif args.script:

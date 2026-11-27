@@ -29,7 +29,7 @@ All runtime dependencies, models, voices, tools, and researched repositories use
 | Kokoro-82M (`am_michael`, `af_bella`, `bm_george`, `am_adam`, `af_heart`) | `hexgrad/Kokoro-82M` (cached locally after initial Hugging Face pull) | Apache-2.0 | None (100% offline CPU synthesis after cache) |
 | FFmpeg / FFprobe | Local Python Scripts install | GPL / LGPL (system tool invocation) | None (local CLI subprocess) |
 | Google Chrome / Edge | System browser binary (`chrome.exe` / `msedge.exe`) | Chromium BSD + Google Chrome ToS (executed unmodified as external browser binary) | None (offline loopback capture; external hosts blocked) |
-| Typography | Local system sans/serif/mono fonts (`Segoe UI`, `Inter`, `Georgia`, `Consolas`) | OS system fonts / CSS generic fallbacks | None (no paid font licenses or CDN font scraping during render) |
+| Typography | Local pinned SIL OFL-1.1 fonts in `assets/fonts/` (`Inter`, `Source Sans 3`, `STIX Two Text`, `STIX Two Math`) | SIL OFL-1.1 | None (100% offline bundled fonts; zero CDN scraping) |
 | BGM & SFX | Procedural NumPy synthesis (`studio/audio/bgm.py`, `sfx.py`) | Project original code | None |
 
 ## 3. Researched Upstream Repositories (External Workspace Only)
@@ -41,3 +41,14 @@ All runtime dependencies, models, voices, tools, and researched repositories use
 | `motion-canvas/motion-canvas` | `7b91435c301d530351dcf5ebb91dd139c002e405` | MIT | Easing, spring physics & flow combinator math reimplemented cleanly. |
 | `3b1b/manim` | `fafa083a4fb274bba9cabde0b6e2f50ba6da0622` | MIT | Mathematical mobject & transform-matching architecture adapted over `manimgx`. |
 | `3b1b/videos` | `31f8ffe785e860477a6051fde983c02c7d165bc2` | CC-BY-NC-SA-4.0 | **Educational study reference only.** Zero code, scripts, or assets copied into `math-shorts-studio`. |
+
+## 4. Pinned Offline Typography Assets (`assets/fonts/`)
+
+Verified via `studio.design.fonts.verify_pinned_fonts()` against `assets/fonts/FONT_MANIFEST.json`:
+
+| Asset | Family / Role | License | Size (Bytes) | SHA-256 |
+| --- | --- | --- | --- | --- |
+| `Inter-Variable.ttf` (+ `Inter-OFL.txt`) | `Inter` (Display / UI) | SIL OFL-1.1 | `876,576` | `29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031` |
+| `SourceSans3-Variable.ttf` (+ `SourceSans3-OFL.txt`) | `Source Sans 3` (Body / Captions) | SIL OFL-1.1 | `646,340` | `042fe2cc0b933e328410d7acbd0aa6a1873dca5aef81875f4bc214b08825c7b9` |
+| `STIXTwoText-Variable.ttf` (+ `STIXTwo-OFL.txt`) | `STIX Two Text` (Editorial Serif) | SIL OFL-1.1 | `418,956` | `7962b8b7811e6a896c9a91a0bccbb5241047770eb24d4997c5cb5fe21d5c0df2` |
+| `STIX2Math.otf` (+ `STIXTwo-OFL.txt`) | `STIX Two Math` (Mathematical Symbols) | SIL OFL-1.1 | `808,220` | `56cc42241cccc86d6d570134aa918fe8ac714f4b340d9916282fcc53c592d546` |

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from studio.ai.env import PROJECT_ROOT
 from studio.config import FORMATS
+from studio.design.spec import resolve_look
 from studio.renderers.base import BackendRenderResult, RenderBackend
 
 if TYPE_CHECKING:
@@ -35,6 +36,12 @@ class ManimGXBackend(RenderBackend):
         out_path: Path | None = None,
         build_dir: Path | None = None,
         subtitle_ass: Path | None = None,
+        caption_style: str | None = None,
+        tts_engine: str = "kokoro",
+        allow_edge_fallback: bool = True,
+        voice: str = "en-US-AndrewNeural",
+        rate: str = "-4%",
+        pitch: str = "-2Hz",
     ) -> BackendRenderResult:
         from studio.pipeline import run_plan
 
@@ -44,10 +51,17 @@ class ManimGXBackend(RenderBackend):
         plan_file = bdir / f"{slug}.json"
         plan_file.write_text(json.dumps(plan.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
 
+        resolved_theme = resolve_look(look_name).name
         final_mp4 = run_plan(
             plan_file,
             format_name=format_name,
-            theme_name=look_name if look_name in ("midnight_studio", "obsidian_chalk", "cartesian_stone", "editorial_paper") else "midnight_studio",
+            theme_name=resolved_theme,
+            caption_style=caption_style,
+            tts_engine=tts_engine,
+            allow_edge_fallback=allow_edge_fallback,
+            voice=voice,
+            rate=rate,
+            pitch=pitch,
             strict_layout=False,
         )
         if out_path is not None and out_path.resolve() != final_mp4.resolve():
