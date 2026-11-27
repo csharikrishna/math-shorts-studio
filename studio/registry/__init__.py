@@ -22,33 +22,32 @@ def get_default_registry() -> ComponentRegistry:
 
 
 def capabilities_prompt_summary(*, backend: str | None = None, aspect: str | None = None, compact: bool = True) -> str:
-    return get_default_registry().capabilities_prompt_summary(backend=backend, aspect=aspect, compact=compact)
+    return get_default_registry().capabilities_prompt_summary(backend=backend, aspect=aspect, compact=compact, certified_only=True)
 
 
 def backend_capability_matrix() -> dict[str, dict[str, bool]]:
-    """Return authoritative per-backend support matrix generated strictly from registered implemented specs."""
+    """Return authoritative per-backend support matrix generated strictly from certified implemented specs."""
     reg = get_default_registry()
-    return {
-        f"{spec.category}:{spec.name}": {
-            "manimgx": bool(spec.implemented and spec.supported_backends in ("both", "manimgx") and spec.backend_support.get("manimgx", True)),
-            "hyperframes": bool(spec.implemented and spec.supported_backends in ("both", "hyperframes") and spec.backend_support.get("hyperframes", True)),
+    matrix: dict[str, dict[str, bool]] = {}
+    for spec in reg.all_specs():
+        certified = bool(spec.implemented and not spec.certification_errors())
+        matrix[f"{spec.category}:{spec.name}"] = {
+            "manimgx": bool(certified and spec.supported_backends in ("both", "manimgx") and spec.backend_support.get("manimgx", True)),
+            "hyperframes": bool(certified and spec.supported_backends in ("both", "hyperframes") and spec.backend_support.get("hyperframes", True)),
         }
-        for spec in reg.all_specs()
-    }
+    return matrix
 
 
-def verify_registry_contracts() -> list[str]:
-    """Run executable contract self-checks across all registered components."""
+def verify_registry_contracts(registry: ComponentRegistry | None = None) -> list[str]:
+    """Run enforceable contract certification checks across all registered components."""
+    reg = registry or get_default_registry()
     failures: list[str] = []
-    for spec in get_default_registry().all_specs():
+    for spec in reg.all_specs():
         if not spec.implemented:
             continue
-        if spec.test_fn is not None:
-            try:
-                if not spec.test_fn():
-                    failures.append(f"{spec.category}:{spec.name} contract test_fn returned False")
-            except Exception as exc:  # noqa: BLE001
-                failures.append(f"{spec.category}:{spec.name} contract raised {type(exc).__name__}: {exc}")
+        errs = spec.certification_errors()
+        for msg in errs:
+            failures.append(f"{spec.category}:{spec.name} {msg}")
     return failures
 
 

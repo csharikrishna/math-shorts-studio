@@ -69,6 +69,15 @@ class VisualReviewNote(BaseModel):
     fix: str = ""
 
 
+ProductionState = Literal[
+    "draft",
+    "rendered",
+    "review_required",
+    "rejected",
+    "publication_approved",
+]
+
+
 class VerificationCoverageSummary(BaseModel):
     """Explicit claim-verification coverage classification across a production."""
 
@@ -88,7 +97,8 @@ class VideoReviewReport(BaseModel):
     title: str = ""
     format_name: str = "widescreen_hd"
     backend: str = "manimgx"
-    approved: bool = True
+    production_state: ProductionState = "draft"
+    approved: bool = False
     overall_score: float = 100.0
     script_clarity_ok: bool = True
     math_grounding_ok: bool = True
@@ -284,7 +294,7 @@ def export_review_md(report: VideoReviewReport, out_path: Path | None = None) ->
         "",
         f"- **Topic:** {report.topic}",
         f"- **Format / Backend:** `{report.format_name}` / `{report.backend}`",
-        f"- **Approved:** `{report.approved}` (Overall Score: **{report.overall_score:.1f}/100**)",
+        f"- **Production State:** `{report.production_state}` | **Approved:** `{report.approved}` (Overall Score: **{report.overall_score:.1f}/100**)",
         f"- **Checks:** Clarity={report.script_clarity_ok} | Math={report.math_grounding_ok} | Layout={report.layout_safe_zone_ok} | AudioSync={report.audio_sync_ok} | VisualVariety={report.visual_variety_ok}",
         "",
         "## Claim Verification Coverage",

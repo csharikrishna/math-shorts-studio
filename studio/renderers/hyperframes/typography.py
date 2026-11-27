@@ -58,6 +58,9 @@ def _pretty_math_label(tex: str) -> str:
         (r"\int", "∫"),
         (r"\cdot", "·"),
         (r"\times", "×"),
+        (r"\omega", "ω"),
+        (r"\phi", "φ"),
+        (r"\psi", "ψ"),
         (r"\approx", "≈"),
         (r"\le", "≤"),
         (r"\ge", "≥"),
@@ -67,8 +70,8 @@ def _pretty_math_label(tex: str) -> str:
         (r"\Rightarrow", "⇒"),
         (r"\rightarrow", "→"),
         (r"\to", "→"),
-        (r"\in", "∈"),
         (r"\infty", "∞"),
+        (r"\in", "∈"),
         (r"\sqrt", "√"),
     ]
     for k, v in repls:

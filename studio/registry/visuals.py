@@ -1,181 +1,111 @@
-"""Reusable visual component catalog shared across ManimGX and HyperFrames backends."""
+"""Reusable visual component catalog with typed contracts across ManimGX & HyperFrames."""
 
 from __future__ import annotations
+
+import math
+from typing import Any
+from pydantic import BaseModel, Field
 
 from studio.registry.base import ComponentRegistry, ComponentSpec
 
 
+class VisualObjectInput(BaseModel):
+    id: str
+    kind: str
+    coords: list[float] | None = None
+    vertices: list[list[float]] = Field(default_factory=list)
+    values: list[float] = Field(default_factory=list)
+
+
+class VisualObjectOutput(BaseModel):
+    rendered_id: str
+    bounds_px: tuple[float, float, float, float] | None = None
+
+
+def _finite_seq(seq: Any) -> bool:
+    return isinstance(seq, (list, tuple)) and all(math.isfinite(float(x)) for x in seq)
+
+
+def _val_visual(data: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    kind = str(data.get("kind", "")).strip()
+    oid = str(data.get("id", "")).strip()
+    if not oid:
+        errs.append("visual object id required")
+    if kind == "polygon":
+        verts = data.get("vertices") or []
+        if len(verts) < 3:
+            errs.append("polygon requires >= 3 vertices")
+    elif kind == "bar_chart":
+        vals = data.get("values") or []
+        if not vals or not _finite_seq(vals):
+            errs.append("bar_chart requires non-empty finite values")
+    elif kind == "matrix":
+        rows = data.get("matrix_rows") or data.get("rows") or []
+        if not rows:
+            errs.append("matrix requires non-empty rows")
+    return errs
+
+
+def _test_visual_kind(kind: str) -> bool:
+    if kind == "polygon":
+        return len(_val_visual({"id": "p", "kind": "polygon", "vertices": [[0, 0], [1, 0], [0, 1]]})) == 0 and bool(_val_visual({"id": "p", "kind": "polygon", "vertices": [[0, 0]]}))
+    if kind == "bar_chart":
+        return len(_val_visual({"id": "b", "kind": "bar_chart", "values": [0.5, 0.5]})) == 0 and bool(_val_visual({"id": "b", "kind": "bar_chart", "values": []}))
+    if kind == "matrix":
+        return len(_val_visual({"id": "m", "kind": "matrix", "matrix_rows": [["1", "0"]]})) == 0 and bool(_val_visual({"id": "m", "kind": "matrix", "matrix_rows": []}))
+    return len(_val_visual({"id": f"ok_{kind}", "kind": kind})) == 0 and bool(_val_visual({"id": "", "kind": kind}))
+
+
+_DEFS: list[tuple[str, str, list[str], str, str, dict[str, Any], list[str]]] = [
+    ("axes", "2D Cartesian or phase-plane coordinate grid with deterministic scale mapping.", ["object_id", "x_range", "y_range"], "Uniform linear mapping", "Calculus graphs, ODE phase portraits, Bayes likelihood planes.", {"min_stage_w_ratio": 0.30, "equal_aspect_optional": True}, ["create", "zoom", "focus"]),
+    ("function_plot", "Smooth discontinuity-aware curve y=f(x) bound to a parent axes system.", ["object_id", "expr", "axes_id"], "Finite jump-clipped segments via plot_clipped_segments", "Taylor polynomials, density curves, activation functions.", {"requires_axes": True}, ["create", "draw", "transform", "morph", "highlight"]),
+    ("parametric_curve", "Parametric trajectory (x(t), y(t)) including circles, spirals, epicycles, and orbits.", ["object_id", "expr", "t_range", "axes_id"], "Bounded parametric sweep clipped to axes", "Euler unit circle, phase orbits, cycloids.", {"requires_axes": True}, ["create", "draw", "trace", "animate_param"]),
+    ("bar_chart", "Ordered discrete column distribution or frequency histogram with ticks.", ["object_id", "values", "bar_labels"], "Non-negative proportional bar normalization", "PMF distributions, convolution sums, singular value spectra.", {"max_bars": 40}, ["create", "reveal", "iterate_states", "highlight"]),
+    ("equation", "Inline/callout LaTeX mathematical expression synchronized with visual state.", ["object_id", "tex", "card"], "Validated TeX expression inside reserved equation strip", "Formula derivations, term-by-term MatchingTex transforms.", {"band": "equation_box"}, ["create", "reveal", "transform", "morph", "highlight"]),
+    ("vector", "Directed arrow representing displacement, gradient, eigenvector, or velocity.", ["object_id", "coords", "end_coords", "axes_id"], "Euclidean vector norm & direction preserving origin", "Eigenvector invariance A*v=lambda*v, gradient steps.", {"requires_axes_optional": True}, ["create", "draw", "move", "scale", "rotate", "highlight"]),
+    ("polygon", "Closed non-self-intersecting polygonal region with verified area and congruence.", ["object_id", "vertices", "axes_id"], "Shoelace area & orientation invariant", "Pythagorean tilings, transformed unit squares, Riemann bars.", {"equal_aspect": True}, ["create", "draw", "move", "rotate", "scale", "duplicate", "transform"]),
+    ("matrix", "Structured bracketed 2D numeric/symbolic matrix array.", ["object_id", "matrix_rows", "panel_slot"], "Exact 2D grid spacing without bracket overlap", "Markov transition matrices, Jacobian matrices, linear operators.", {"min_gap_px": 20}, ["create", "reveal", "highlight", "iterate_states"]),
+    ("table", "Multi-column comparison or iteration table with structured row layout.", ["object_id", "table_headers", "table_rows"], "Row/column bounded tabular alignment", "Step-by-step iterations, truth tables, error comparisons.", {"max_rows": 12}, ["create", "reveal", "highlight", "sequence"]),
+    ("data_series", "Connected or scatter trajectory plot for empirical runs and convergence.", ["object_id", "points_list", "axes_id"], "Finite polyline clipping across axes bounds", "Loss curves, random walks, RK4 phase orbits.", {"requires_axes_optional": True}, ["create", "draw", "trace", "highlight"]),
+    ("graph_network", "Node-and-directed/weighted-edge diagram for Markov chains and graphs.", ["object_id", "points_list", "edge_pairs", "node_labels"], "Node/edge index bounds verification", "Markov state graphs, Huffman trees, Bayes networks.", {"max_nodes": 16}, ["create", "reveal", "highlight", "sequence"]),
+    ("probability_region", "Proportional area tile encoding prior/conditional/posterior probability mass.", ["object_id", "vertices", "axes_id"], "Area ratios equal conditional probabilities", "Bayes partitions, joint probability geometry.", {"equal_aspect": True}, ["create", "highlight", "transform"]),
+    ("particle_system", "Deterministic sample ensemble (Monte Carlo drops, phase-space walkers).", ["object_id", "points_list", "axes_id"], "Bounded finite sample coordinates", "Sampling convergence, phase-space flow ensembles.", {"max_particles": 300}, ["create", "animate_param", "iterate_states"]),
+    ("waveform", "Time- or frequency-domain oscillating curve supporting harmonic sums.", ["object_id", "expr", "x_range", "axes_id"], "Trigonometric superpositions & Nyquist-safe sampling", "Fourier partial sums, damped resonance, signal filtering.", {"requires_axes": True}, ["create", "draw", "transform", "morph"]),
+    ("point", "Tracked mathematical point (extremum, fixed point, eigenstate, probe dot).", ["object_id", "coords", "axes_id"], "Parametric updater or stationary coordinate anchor", "Local minima, moving phase dots, fixed points.", {"requires_axes_optional": True}, ["create", "move", "trace", "animate_param", "highlight"]),
+    ("line", "Geometric segment, tangent line, asymptote, or eigenvector span ray.", ["object_id", "coords", "end_coords", "axes_id"], "Euclidean chord / tangent construction", "Eigenvector spans, tangent/secant lines.", {"requires_axes_optional": True}, ["create", "draw", "move", "rotate", "highlight"]),
+    ("circle", "Circle, unit circle, or orbital locus bound cleanly to axes space.", ["object_id", "coords", "radius", "axes_id"], "Positive finite radius mapped via axes unit scale", "Complex unit circle, Gershgorin disks.", {"equal_aspect": True}, ["create", "draw", "scale", "highlight"]),
+    ("number_line", "1D oriented number axis with tick marks and numeric labels.", ["object_id", "x_range"], "Uniform tick intervals across domain", "1D eigenvalues, random walks, root brackets.", {"orientation": "horizontal"}, ["create", "highlight"]),
+    ("annotation", "Concise callout badge placed cleanly outside obstacle bounding boxes.", ["object_id", "text", "coords"], "Collision-free SafeZone obstacle resolution", "Calling out eigenvalues, saddle points, stability regimes.", {"gap_px": 20}, ["create", "reveal", "highlight", "remove"]),
+    ("angle_arc", "Measured angular wedge tracking continuous rotation or phase angle.", ["object_id", "coords", "radius", "param_name"], "Positive arc radius + continuous ValueTracker sweep", "Phase angle tracking, complex multiplication rotation.", {"manimgx_specialized": True}, ["create", "animate_param", "highlight"]),
+    ("projection", "Dashed orthogonal drop-line projecting an active point onto an axis.", ["object_id", "expr", "param_name", "axes_id"], "Exact cos/sin projection coupling", "Real vs imaginary components, subspace projections.", {"manimgx_specialized": True}, ["create", "animate_param", "parallel"]),
+]
+
+
 VISUAL_OBJECT_SPECS: list[ComponentSpec] = [
     ComponentSpec(
-        name="axes",
+        name=name,
         category="visual_object",
-        description="2D Cartesian or phase-plane coordinate grid with deterministic scale mapping to screen bounds.",
-        inputs_schema=["object_id", "x_range: [xmin,xmax,step]", "y_range: [ymin,ymax,step]", "origin_offset"],
-        outputs=["coord_frame"],
-        example_use_case="Calculus graphs, ODE phase portraits, Bayes likelihood planes.",
-    ),
-    ComponentSpec(
-        name="function_plot",
-        category="visual_object",
-        description="Smooth discontinuity-aware curve y=f(x) bound to a parent axes coordinate system.",
-        inputs_schema=["object_id", "expr", "x_range", "parent_id: axes"],
-        outputs=["curve_path"],
-        math_grounding="Finite-sample clamping and jump-splitting via plot_clipped_segments",
-        example_use_case="Taylor polynomials, activation functions, density curves, wave envelopes.",
-    ),
-    ComponentSpec(
-        name="parametric_curve",
-        category="visual_object",
-        description="Parametric trajectory (x(t), y(t)) including circles, spirals, epicycles, and ODE phase orbits.",
-        inputs_schema=["object_id", "parametric_x", "parametric_y", "t_range", "parent_id"],
-        outputs=["parametric_path"],
-        example_use_case="Euler's formula in the complex plane, phase-space trajectories, cycloids.",
-    ),
-    ComponentSpec(
-        name="bar_chart",
-        category="visual_object",
-        description="Ordered discrete column distribution or empirical frequency histogram with value ticks.",
-        inputs_schema=["object_id", "categories/x_values", "values", "bar_color"],
-        outputs=["bars_group"],
-        example_use_case="Probability mass functions, convolution counts, eigenmode energy spectra.",
-    ),
-    ComponentSpec(
-        name="equation",
-        category="visual_object",
-        description="Inline/callout LaTeX mathematical expression synchronized with visual state rather than static boilerplate.",
-        inputs_schema=["object_id", "latex/expr", "position", "color"],
-        outputs=["tex_mobject_or_svg"],
-        example_use_case="Dynamic formula reveals, term-by-term highlighting, transformation equations.",
-    ),
-    ComponentSpec(
-        name="vector",
-        category="visual_object",
-        description="Directed arrow representing displacement, gradient, eigenvector, force, or velocity field element.",
-        inputs_schema=["object_id", "start", "end", "parent_id", "label"],
-        outputs=["arrow_object"],
-        example_use_case="Eigenvector invariance A*v = lambda*v, gradient steps, torque/momentum vectors.",
-    ),
-    ComponentSpec(
-        name="polygon",
-        category="visual_object",
-        description="Closed polygonal region verified non-self-intersecting with deterministic area and congruence metrics.",
-        inputs_schema=["object_id", "vertices", "fill_opacity", "stroke_width", "parent_id"],
-        outputs=["polygon_region"],
-        example_use_case="Area-conserving geometric proofs, transformed unit squares, Venn/Bayes probability tiles.",
-    ),
-    ComponentSpec(
-        name="matrix",
-        category="visual_object",
-        description="Structured bracketed 2D numeric/symbolic array supporting row/column highlighting and determinant callouts.",
-        inputs_schema=["object_id", "rows: list[list[str|float]]", "position", "highlight_cells"],
-        outputs=["matrix_grid"],
-        example_use_case="Markov transition matrices, Jacobian matrices, linear transformation operators.",
-    ),
-    ComponentSpec(
-        name="table",
-        category="visual_object",
-        description="Multi-column structured comparison or iteration log table with row-by-row step highlighting.",
-        inputs_schema=["object_id", "headers", "rows", "position"],
-        outputs=["data_table"],
-        example_use_case="Truth tables, step-by-step Newton/GD iterates, algorithm DP tables, empirical stats.",
-    ),
-    ComponentSpec(
-        name="data_series",
-        category="visual_object",
-        description="Scatter or connected time/iteration series plot for empirical trajectories, loss curves, and Monte Carlo runs.",
-        inputs_schema=["object_id", "points_list: [(x,y),...]", "connect: bool", "parent_id"],
-        outputs=["series_plot"],
-        example_use_case="Loss vs epoch curves, simulated random walk paths, convergence error plots.",
-    ),
-    ComponentSpec(
-        name="graph_network",
-        category="visual_object",
-        description="Node-and-directed/weighted-edge diagram for Markov chains, neural layers, trees, and state machines.",
-        inputs_schema=["object_id", "nodes: [{id,x,y,label}]", "edges: [{src,dst,weight}]"],
-        outputs=["network_diagram"],
-        example_use_case="PageRank web graphs, Markov transitions, BFS/Dijkstra exploration, Bayes nets.",
-    ),
-    ComponentSpec(
-        name="probability_region",
-        category="visual_object",
-        description="Proportional unit-square or partitioned area tile encoding prior/conditional/posterior probability mass.",
-        inputs_schema=["object_id", "region_bounds", "partitions", "parent_id"],
-        outputs=["prob_tiles"],
-        math_grounding="Area ratios equal exact conditional and marginal probabilities",
-        example_use_case="Bayes false-positive intuition, joint vs marginal probability partitions.",
-    ),
-    ComponentSpec(
-        name="particle_system",
-        category="visual_object",
-        description="Deterministic sample ensemble (Monte Carlo drops, phase-space particles, diffusion walkers).",
-        inputs_schema=["object_id", "sample_coords: [(x,y),...]", "color_by", "parent_id"],
-        outputs=["ensemble_dots"],
-        example_use_case="Sampling convergence, phase-space contraction under eigenvalues, diffusion.",
-    ),
-    ComponentSpec(
-        name="waveform",
-        category="visual_object",
-        description="Time- or frequency-domain oscillating signal curve with envelope and harmonic overlay support.",
-        inputs_schema=["object_id", "samples_or_expr", "domain_range", "parent_id"],
-        outputs=["waveform_path"],
-        example_use_case="Fourier partial sums, damped resonance, acoustic interference, Quantum wavepackets.",
-    ),
-    ComponentSpec(
-        name="point",
-        category="visual_object",
-        description="Tracked mathematical dot (extremum, fixed point, eigenstate, live cursor along a curve).",
-        inputs_schema=["object_id", "coords", "parent_id", "color", "label"],
-        outputs=["dot_marker"],
-        example_use_case="Tracking fixed points or live tangent contact points.",
-    ),
-    ComponentSpec(
-        name="line",
-        category="visual_object",
-        description="Geometric segment, tangent line, asymptote, or eigenvector span ray.",
-        inputs_schema=["object_id", "start", "end", "parent_id", "label"],
-        outputs=["line_segment"],
-        example_use_case="Eigenvector eigenlines, tangent/secant lines, separating hyperplanes.",
-    ),
-    ComponentSpec(
-        name="circle",
-        category="visual_object",
-        description="Circle, unit circle, or orbital locus bound cleanly to coordinate space.",
-        inputs_schema=["object_id", "coords: [cx,cy]", "radius", "parent_id"],
-        outputs=["circle_shape"],
-        example_use_case="Complex unit circle, Mohr/Gershgorin disks, epicycle wheels.",
-    ),
-    ComponentSpec(
-        name="number_line",
-        category="visual_object",
-        description="1D oriented number axis with tick marks and interval/value pointers.",
-        inputs_schema=["object_id", "x_range", "position"],
-        outputs=["number_line"],
-        example_use_case="1D eigenvalues, root bisection, probability thresholds.",
-    ),
-    ComponentSpec(
-        name="annotation",
-        category="visual_object",
-        description="Concise floating badge or callout pointer attached near an active mathematical element.",
-        inputs_schema=["object_id", "text", "target_or_pos"],
-        outputs=["callout"],
-        example_use_case="Explaining a critical eigenmode, inflection point, or step takeaway.",
-    ),
-    ComponentSpec(
-        name="angle_arc",
-        category="visual_object",
-        description="Measured angular wedge between two rays or phase angle arc on unit circle.",
-        inputs_schema=["object_id", "coords: center", "start_angle", "end_angle", "radius"],
-        outputs=["arc_marker"],
-        example_use_case="Phase shift, complex multiplication rotation angle, orthogonal right-angle square.",
-    ),
-    ComponentSpec(
-        name="projection",
-        category="visual_object",
-        description="Dashed orthogonal drop-line projecting an active point onto an axis or subspace.",
-        inputs_schema=["object_id", "source_id/coords", "axis: x|y"],
-        outputs=["dashed_projection"],
-        example_use_case="Real vs imaginary components cos(theta), sin(theta), subspace projections.",
-    ),
+        description=desc,
+        input_model="VisualObjectInput",
+        output_model="VisualObjectOutput",
+        input_schema_model=VisualObjectInput,
+        output_schema_model=VisualObjectOutput,
+        inputs_schema=inputs,
+        outputs=[f"{name}_render_node"],
+        render_implementations={
+            "manimgx": f"scenes.v3_scene.V3Scene._build_object[{name}]",
+            "hyperframes": f"studio.renderers.hyperframes.components.compile_scene_object_element[{name}]",
+        },
+        supported_ops=ops,
+        layout_requirements=layout_req,
+        resource_constraints={"max_points": 600, "fps_safe": True},
+        math_grounding=ground,
+        example_use_case=eg,
+        validate_fn=_val_visual,
+        test_fn=(lambda k=name: _test_visual_kind(k)),
+    )
+    for name, desc, inputs, ground, eg, layout_req, ops in _DEFS
 ]
 
 

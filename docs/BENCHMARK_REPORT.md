@@ -70,3 +70,20 @@ Measured after the V3.7 upgrades (pinned offline OFL fonts, WCAG-validated unifi
 - **Pass 1 (`--theme light --caption-style editorial`, cold Kokoro TTS + GPU + NVENC):** **`25.524 s`** (`-15.4 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `layout: no problems`).
 - **Pass 2 (`--theme dark --caption-style minimal`, warm Kokoro voice-segment reuse + GPU + NVENC):** **`6.864 s`** (**`3.72x` speedup**; `-15.4 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `layout: no problems`).
 - **Dependency Cache Verification (`ArtifactCache`):** `tts` stage lookup remained `(True, "hit")`, while `captions` / `chapter_assembly` keys cleanly returned `(False, "miss:dependency_or_payload_changed")` on theme/caption mutation.
+
+---
+
+## 6. V3.8 Unseen-Topic Documentary, Portrait Short, Cross-Theme/Backend Samples & Scene Preview Benchmarks
+
+Measured after V3.8 implementation on local Windows hardware (**NVIDIA GeForce GTX 1650 `4096 MiB` (`h264_nvenc`), Local Kokoro-82M CPU TTS, free Gemini API**) on an unseen topic with zero hardcoded topic logic (`"Fourier Analysis, Spectral Decomposition, and Signal Filtering"`):
+
+| Deliverable / Configuration | Output Artifact | Duration & Pacing | Media, Loudness & Silence QA | Scene-Aware Frame & Honest QA Review |
+| --- | --- | --- | --- | --- |
+| **Unseen Documentary (`light`, `editorial`, `manimgx`)** | `output/LF_fourier_analysis_spectral_decomposition_and_sign_widescreen_hd.mp4` (`18.55 MB`, `8` chapters, `53` scenes, `16` object kinds, `7` compositions) | `460.52 s` (`7m 40.5s` vs `500.0 s`, `-7.9%`) | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-1.5 dBFS`, `drift=0.00 s`, `0` silences `>1.2 s` | `24` scene-aware frames: `median_stage_w=68.8%`, `edge_clips=0`, `empty_mids=0`; `REVIEW.md`: **`publication_approved` (`100.0/100`)**, `det_verified=52`, `source_supported=1`, `unsupported=0`, `failed=0`, `cues=12` (`tts_word_boundary=86`) |
+| **Derived Native `9:16` Portrait Short (`light`, `kinetic`, `manimgx`)** | `output/SHORT_fourier_analysis_spectral_decomposition_and_sign_shorts_hd.mp4` (`2.3 MB`, `5` scenes from climax `c3` via `SceneRuntimeState`) | `41.90 s` (`-19.0%` vs `51.7 s`) | `1080x1920 @ 60.00 fps`, `48000 Hz`, `-15.1 LUFS`, `-2.8 dBFS`, `drift=0.00 s` | `17` scene-aware frames: `median_stage_w=72.2%`, `edge_clips=0`, `empty_mids=0`; `REVIEW.md`: **`publication_approved` (`94.0/100`)**, `det_verified=5`, `unsupported=0`, `cues=19` (`tts_word_boundary=106`) |
+| **Dual-Theme `HyperFrames` Sample (`midnight_studio`, `editorial`, `c3`)** | `output/SAMPLE_fourier_analysis_spectral_decomposition_and_sign_midnight_hf_widescreen_hd.mp4` (`3.09 MB`) | `73.10 s` | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.3 LUFS`, `-2.8 dBFS`, `drift=0.00 s`, `0` silences `>1.2 s` | `frames=11`, `median_stage_w=45.5%`, `edge_clips=0`, `empty_mids=0` (`passed`) |
+| **Dual-Backend `Hybrid` Sample (`light`, `editorial`, `c2`)** | `output/SAMPLE_fourier_analysis_spectral_decomposition_and_sign_light_hybrid_widescreen_hd.mp4` (`2.16 MB`) | `53.30 s` | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.3 LUFS`, `-2.4 dBFS`, `drift=0.00 s`, `0` silences `>1.2 s` | `frames=9`, `median_stage_w=36.8%`, `edge_clips=0`, `empty_mids=0` (`passed`) |
+| **Isolated Single-Scene Preview (`studio/preview.py`, `midnight_studio`, `hyperframes`)** | `preview_single/scene_2_widescreen_hd_midnight_studio_editorial.mp4` + `preview_workbench/index.html` | Rendered in **`10.19 s`** (`3` carried `SceneRuntimeState` objects) | `1920x1080 @ 60.00 fps` | `REVIEW.md`: **`publication_approved` (`100.0/100`)** |
+
+### Strict Publication-Gate Verification on V3.7 Markov Chains Baseline
+- Re-auditing the retained V3.7 `Markov Chains` plan (`c1..c6`) under V3.8 `audit_educational_quality()` honestly downgraded its stale V3.7 approval (`90.0/100, approved=True`) to **`review_required` (`13.0/100, approved=False`)** because `unsupported=10` and `human_review_required=5`.

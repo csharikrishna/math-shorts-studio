@@ -84,12 +84,36 @@ class GeminiProvider(LLMProvider):
     def generate_structured(
         self, prompt: str, schema: Type[T], *, system: str = "", model: str | None = None, temperature: float = 0.6
     ) -> tuple[T, LLMResponse]:
-        cfg = types.GenerateContentConfig(
-            system_instruction=system or None,
-            response_mime_type="application/json",
-            response_schema=schema,
-            temperature=temperature,
-        )
+        import json as _json
+
+        raw_schema = schema.model_json_schema()
+
+        def _strip_unsupported(node: object) -> object:
+            if isinstance(node, dict):
+                node.pop("additionalProperties", None)
+                for val in node.values():
+                    _strip_unsupported(val)
+            elif isinstance(node, list):
+                for item in node:
+                    _strip_unsupported(item)
+            return node
+
+        has_ap = "additionalProperties" in _json.dumps(raw_schema)
+        if has_ap:
+            cleaned = _strip_unsupported(raw_schema)
+            cfg = types.GenerateContentConfig(
+                system_instruction=system or None,
+                response_mime_type="application/json",
+                response_json_schema=cleaned,
+                temperature=temperature,
+            )
+        else:
+            cfg = types.GenerateContentConfig(
+                system_instruction=system or None,
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=temperature,
+            )
         resp, used_model, dt = self._call_with_fallback(prompt, cfg, model)
         raw = getattr(resp, "text", "") or ""
         parsed = schema.model_validate_json(raw)

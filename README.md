@@ -1,6 +1,6 @@
 # Math Shorts Studio
 
-An autonomous math Shorts engine: **topic → Gemini creative director → validated beat plan → ManimGX GPU render → word-synced kinetic captions → procedural stereo sound design → cinematic FFmpeg master**, in 9:16 or 16:9.
+An autonomous educational mathematics video engine (**V3.8**): **ConceptAnalysis -> CreativeBrief -> authoritative locked `ScriptIR` -> deterministic computational math & geometry -> ManimGX GPU / HyperFrames Chromium CDP / Hybrid rendering -> single-source `CaptionIR` (`editorial`/`kinetic`/`minimal`/`dialogue`/`accessible`/`off`) -> EBU R128 mastering -> scene-aware QA publication gates**, in `9:16` Shorts or `16:9` documentaries.
 
 ## Quick start
 
@@ -12,8 +12,12 @@ uv sync --extra kokoro                    # optional local Kokoro-82M voice (tor
 uv run python -m studio.pipeline --topic "Why 0.999... equals 1" --format shorts_hd --ai
 uv run python -m studio.pipeline --topic "Chaos Theory" --look cinematic
 
-# An explicit concept
-uv run python -m studio.pipeline --prompt "Fourier series sharpening into a square wave"
+# Cohesive 8-10 minute long-form documentary (light/dark, editorial captions) + derived 9:16 Short
+uv run python -m studio.pipeline --longform --topic "Fourier Analysis, Spectral Decomposition, and Signal Filtering" --duration 500 --theme light --caption-style editorial --derive-short --ai
+
+# Lightweight local scene-preview workbench & fast single-scene render (127.0.0.1 loopback)
+uv run python -m studio.preview --source build/longform_<slug> --look light --serve
+uv run python -m studio.preview --source build/longform_<slug> --scene scene_2 --look midnight_studio --backend hyperframes
 
 # Re-render a saved plan (no Gemini call), or a hand-written scene
 uv run python -m studio.pipeline --plan plans/zero_point_nine.json --look cinematic

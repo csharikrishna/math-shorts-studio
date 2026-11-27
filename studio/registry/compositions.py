@@ -2,91 +2,69 @@
 
 from __future__ import annotations
 
+from typing import Any
+from pydantic import BaseModel
+
 from studio.registry.base import ComponentRegistry, ComponentSpec
+
+
+class CompositionInput(BaseModel):
+    composition: str
+    aspect_label: str = "16:9"
+
+
+class CompositionOutput(BaseModel):
+    resolved_composition: str
+
+
+def _val_comp(data: dict[str, Any]) -> list[str]:
+    comp = str(data.get("composition", "")).strip()
+    if not comp:
+        return ["composition name required"]
+    return []
+
+
+def _test_comp(comp_name: str, aspect: str) -> bool:
+    adapted = adapt_composition_for_aspect(comp_name, aspect)
+    return bool(adapted) and len(_val_comp({"composition": comp_name, "aspect_label": aspect})) == 0
+
+
+_COMP_DEFS: list[tuple[str, str, list[str], list[str], str, list[str]]] = [
+    ("centered_focus", "Single dominant geometric construction, phase plane, or network occupying center stage cleanly.", ["primary_object_ids"], ["16:9", "9:16"], "Opening intuition hook or climactic visual proof.", ["centered_focus"]),
+    ("side_by_side_comparison", "Dual horizontal comparison (before vs after, wrong vs right intuition, cause vs effect).", ["left_ids", "right_ids"], ["16:9"], "16:9 landscape comparison of eigenvector vs non-eigenvector or prior vs posterior.", ["side_by_side_comparison"]),
+    ("stacked_comparison", "Portrait-native vertical split placing reference view above and transformed/resulting view below.", ["top_ids", "bottom_ids"], ["9:16"], "Recomposed 9:16 portrait Short equivalent of side_by_side_comparison.", ["stacked_comparison"]),
+    ("main_with_equation_panel", "Primary visual apparatus alongside a synchronized symbolic/equation strip.", ["main_visual_ids", "equation_ids"], ["16:9", "9:16"], "Connecting geometric matrix stretch to det(A - lambda*I) = 0.", ["main_with_equation_panel"]),
+    ("step_by_step_sequence", "Guided progressive derivation where each beat updates one focused mathematical step in place.", ["sequence_event_ids"], ["16:9", "9:16"], "Algorithm step-through, Bayesian update, Riemann refinement.", ["step_by_step_sequence"]),
+    ("grid_of_multiple_examples", "Compact comparison grid illustrating contrasting regimes (e.g. stable, saddle, spiral).", ["cell_groups"], ["16:9", "9:16"], "Classification of 2x2 dynamical fixed points or distributions.", ["grid_of_multiple_examples"]),
+    ("spotlight_zoom", "Zoomed camera push magnifying local structure while keeping context.", ["focus_target_id", "zoom_factor"], ["16:9", "9:16"], "Local linearity of smooth manifolds, narrow posterior peak.", ["spotlight_zoom"]),
+    ("annotated_overlay", "Persistent mathematical state enriched with concise directional labels and projections.", ["persistent_ids", "annotation_ids"], ["16:9", "9:16"], "Labeling eigenvalues and invariant lines over an existing construction.", ["annotated_overlay"]),
+    ("timeline_progression", "Chronological progression across iterations combining discrete table/bar updates and phase state.", ["iteration_visual_id"], ["16:9", "9:16"], "Markov convergence A^k * p_0 -> pi* or Euler integration steps.", ["timeline_progression"]),
+]
 
 
 COMPOSITION_SPECS: list[ComponentSpec] = [
     ComponentSpec(
-        name="centered_focus",
+        name=name,
         category="composition_template",
-        description="Single dominant geometric construction, phase plane, or network occupying center stage with clean margins.",
-        inputs_schema=["primary_object_ids", "optional_title"],
+        description=desc,
+        input_model="CompositionInput",
+        output_model="CompositionOutput",
+        input_schema_model=CompositionInput,
+        output_schema_model=CompositionOutput,
+        inputs_schema=inputs,
         outputs=["safe_frame_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Opening intuition hook or climactic visual proof.",
-    ),
-    ComponentSpec(
-        name="side_by_side_comparison",
-        category="composition_template",
-        description="Dual horizontal comparison (before vs after, wrong vs right intuition, cause vs effect).",
-        inputs_schema=["left_ids", "right_ids"],
-        outputs=["dual_column_layout"],
-        aspect_support=["16:9"],
-        example_use_case="16:9 landscape comparison of eigenvector vs non-eigenvector or prior vs posterior.",
-    ),
-    ComponentSpec(
-        name="stacked_comparison",
-        category="composition_template",
-        description="Portrait-native vertical split placing reference view above and transformed/resulting view below.",
-        inputs_schema=["top_ids", "bottom_ids"],
-        outputs=["dual_row_layout"],
-        aspect_support=["9:16"],
-        example_use_case="Recomposed 9:16 portrait Short equivalent of side_by_side_comparison (never squashed horizontally).",
-    ),
-    ComponentSpec(
-        name="main_with_equation_panel",
-        category="composition_template",
-        description="Primary visual apparatus alongside a synchronized symbolic/equation strip (side strip in 16:9, upper-right/lower-stage in 9:16).",
-        inputs_schema=["main_visual_ids", "equation_ids"],
-        outputs=["split_visual_symbolic_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Connecting geometric matrix stretch to det(A - lambda*I) = 0.",
-    ),
-    ComponentSpec(
-        name="step_by_step_sequence",
-        category="composition_template",
-        description="Guided progressive derivation where each beat adds or updates one focused mathematical step in place.",
-        inputs_schema=["sequence_event_ids"],
-        outputs=["progressive_derivation_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Algorithm step-through, Bayesian evidence update, Riemann refinement.",
-    ),
-    ComponentSpec(
-        name="grid_of_multiple_examples",
-        category="composition_template",
-        description="2x2 or 1x3 compact comparison grid illustrating contrasting regimes (e.g. stable, saddle, spiral).",
-        inputs_schema=["cell_groups"],
-        outputs=["grid_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Classification of 2x2 dynamical fixed points or distributions.",
-    ),
-    ComponentSpec(
-        name="spotlight_zoom",
-        category="composition_template",
-        description="Zoomed inset or camera push magnifying local structure while keeping global context cue.",
-        inputs_schema=["focus_target_id", "zoom_factor"],
-        outputs=["zoomed_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Local linearity of smooth manifolds, narrow posterior peak.",
-    ),
-    ComponentSpec(
-        name="annotated_overlay",
-        category="composition_template",
-        description="Existing persistent mathematical state enriched with concise directional labels and projections.",
-        inputs_schema=["persistent_ids", "annotation_ids"],
-        outputs=["annotated_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Labeling eigenvalues and invariant lines over an already constructed transformation.",
-    ),
-    ComponentSpec(
-        name="timeline_progression",
-        category="composition_template",
-        description="Chronological progression across iterations t=0..N combining discrete table/bar updates and phase state.",
-        inputs_schema=["iteration_visual_id", "timeline_axis_id"],
-        outputs=["temporal_layout"],
-        aspect_support=["16:9", "9:16"],
-        example_use_case="Markov convergence A^k * p_0 -> pi* or Euler integration steps.",
-    ),
+        aspect_support=aspects,
+        render_implementations={
+            "manimgx": "studio.layout.solver.resolve_composition_layout",
+            "hyperframes": "studio.layout.solver.resolve_composition_layout",
+        },
+        supported_ops=ops,
+        layout_requirements={"aspect_support": aspects},
+        example_use_case=eg,
+        validate_fn=_val_comp,
+        test_fn=(lambda n=name, a=aspects[0]: _test_comp(n, a)),
+    )
+    for name, desc, inputs, aspects, eg, ops in _COMP_DEFS
 ]
 
 

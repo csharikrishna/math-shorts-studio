@@ -27,6 +27,19 @@ NarrationMode = Literal[
     "technical_instructor",
 ]
 
+EXPLANATION_STRATEGY_GUIDES: dict[ExplanationStrategyKind, str] = {
+    "concrete_then_abstract": "Open with a tangible numerical or physical case, surface what breaks or surprises, then distill the general symbolic formula with every symbol defined when first spoken.",
+    "visual_proof": "Construct geometric or invariant relationships on screen step by step so visual equality makes the theorem self-evident before writing the final algebraic summary.",
+    "thought_experiment": "Pose a clean paradox or prediction challenge, test intuition against actual visual behavior, then isolate the mathematical law explaining it.",
+    "simulation": "Run concrete step-by-step iterations or trajectories first, inspect patterns empirically, then generalize to limiting/steady-state theory.",
+    "problem_solution": "Frame a concrete obstacle, attempt the naive approach cleanly, show why it fails, then derive the exact mathematical tool that resolves it.",
+    "misconception_correction": "State a plausible false belief clearly, construct a counterexample visually on screen, and replace the misconception with exact invariants.",
+    "comparison": "Contrast two regimes side-by-side (e.g. stable vs unstable, prior vs posterior, discrete vs continuous) so differences anchor memory.",
+    "progressive_construction": "Start with one minimal element and compose complexity one layer at a time while preserving object continuity.",
+    "cause_and_effect": "Change one mathematical parameter continuously and explain how each structural invariant responds in lockstep.",
+    "question_and_answer": "Advance every concept by answering a crisp motivating question raised by the preceding visual observation.",
+}
+
 SpeakerRole = Literal["narrator", "educator", "learner", "host_a", "host_b"]
 
 

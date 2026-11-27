@@ -587,8 +587,9 @@ class CaptionCard:
         start: float,
         speech_end: float,
         speaker: str = "narrator",
+        precompiled_cues: list | None = None,
     ) -> None:
-        """Bind a beat using CaptionIR single source of truth across captions & subtitles."""
+        """Bind a beat using precompiled CaptionIR cues (single source of truth across outputs)."""
         from studio.audio.tts import SyncedBeat
         from studio.captions.layout import chunk_caption_cues
 
@@ -630,26 +631,29 @@ class CaptionCard:
                 d = span * (len(tok) + 1) / total
                 timed.append((tok, cur, cur + d, False))
                 cur += d
-        beat = SyncedBeat(
-            id="_live",
-            narration=narration,
-            caption=narration,
-            audio_path="",
-            start_time=start,
-            end_time=speech_end,
-            speech_duration=max(0.1, speech_end - start),
-            total_duration=max(0.1, speech_end - start),
-            words=[list(w) for w in timed],
-            marks={},
-            speaker=self._speaker,
-        )
-        is_port = self.layout.frame_h > self.layout.frame_w
-        max_chars = self.preset.portrait_max_chars if is_port else self.preset.landscape_max_chars
-        cues = chunk_caption_cues([beat], max_chars_per_line=max_chars, max_lines=self.preset.max_lines)
-        if cues:
-            self.set_segments(cues, start)
+        if precompiled_cues:
+            self.set_segments(list(precompiled_cues), start)
         else:
-            self.set_words(timed, start)
+            beat = SyncedBeat(
+                id="_live",
+                narration=narration,
+                caption=narration,
+                audio_path="",
+                start_time=start,
+                end_time=speech_end,
+                speech_duration=max(0.1, speech_end - start),
+                total_duration=max(0.1, speech_end - start),
+                words=[list(w) for w in timed],
+                marks={},
+                speaker=self._speaker,
+            )
+            is_port = self.layout.frame_h > self.layout.frame_w
+            max_chars = self.preset.portrait_max_chars if is_port else self.preset.landscape_max_chars
+            cues = chunk_caption_cues([beat], max_chars_per_line=max_chars, max_lines=self.preset.max_lines)
+            if cues:
+                self.set_segments(cues, start)
+            else:
+                self.set_words(timed, start)
         self._tick(scene_time())
 
     # -- per-frame drive ------------------------------------------------------

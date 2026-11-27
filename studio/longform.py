@@ -22,13 +22,22 @@ from studio.ai.world_model import materialize_constructions
 from studio.audio.tts import AudioTimeline, find_ffmpeg
 from studio.creative.dialogue import clean_spoken_text, format_dialogue_instructions, resolve_speaker_voices
 from studio.creative.director import CreativeDirector
-from studio.creative.script_ir import NarrationBeatIR, ScriptIR, export_script_md, lock_script_to_plan
+from studio.creative.script_ir import (
+    NarrationBeatIR,
+    ScriptIR,
+    approve_script_ir,
+    commit_script_revision,
+    export_script_md,
+    lock_script_to_plan,
+    sync_beat_anchors,
+    validate_script_ir,
+)
 from studio.design.spec import default_design_spec, export_design_md, resolve_look
 from studio.pipeline import PROJECT_ROOT, run_plan
 from studio.qa.engine import audit_educational_quality, verify_audio_loudness, verify_longform_bundle, verify_media_streams
 from studio.registry import capabilities_prompt_summary
 from studio.registry.compositions import adapt_composition_for_aspect
-from studio.storage.cache import ArtifactCache, JobStore
+from studio.storage.cache import ArtifactCache, JobStore, compute_dependency_fingerprints, validate_sidecar_bundle
 from studio.storyboard import export_review_md, export_storyboard_md, storyboard_from_v3_plan
 from studio.timeline import _fmt_srt_ts
 
@@ -85,20 +94,8 @@ def _allocate_chapter_budgets(chapters: list[ChapterSpec], total_duration_s: flo
 
 
 def _source_code_digest() -> str:
-    h = hashlib.sha256()
-    for rel in (
-        "scenes/v3_scene.py",
-        "studio/ai/world_model.py",
-        "studio/layout/components.py",
-        "studio/layout/solver.py",
-        "studio/audio/bgm.py",
-        "studio/audio/master.py",
-        "studio/audio/sfx.py",
-    ):
-        p = PROJECT_ROOT / rel
-        if p.exists():
-            h.update(p.read_bytes())
-    return h.hexdigest()[:12]
+    fps = compute_dependency_fingerprints(PROJECT_ROOT)
+    return JobStore.content_hash(fps)
 
 
 def chapter_cache_key(
@@ -113,8 +110,13 @@ def chapter_cache_key(
     look_name: str = "midnight_studio",
     caption_style: str = "editorial",
     pitch: str = "-2Hz",
+    backend: str = "manimgx",
 ) -> str:
-    """Compute content-addressed cache key covering plan, math model, audio, theme, captions, and code."""
+    """Compute dependency-aware cache key across math, script, captions, TTS, layout, backend, and audio mastering."""
+    fps = compute_dependency_fingerprints(PROJECT_ROOT)
+    backend_fp = fps["hyperframes_backend"] if backend == "hyperframes" else (
+        f"{fps['manimgx_backend']}+{fps['hyperframes_backend']}" if backend == "hybrid" else fps["manimgx_backend"]
+    )
     return JobStore.content_hash(
         {
             "plan": plan.model_dump(),
@@ -127,7 +129,18 @@ def chapter_cache_key(
             "look": look,
             "look_name": look_name,
             "caption_style": caption_style,
-            "src_digest": _source_code_digest(),
+            "backend": backend,
+            "deps": {
+                "math": f"{fps['math_compute']}:{fps['math_validate']}",
+                "captions": fps["captions"],
+                "tts_voice": fps["tts_voice"],
+                "fonts": fps["fonts"],
+                "design_tokens": fps["design_tokens"],
+                "components": fps["components"],
+                "layout_solver": fps["layout_solver"],
+                "audio_master": fps["audio_master"],
+                "backend_impl": backend_fp,
+            },
         }
     )
 
@@ -201,7 +214,7 @@ def create_longform_plan(
     ch_system = f"{V3_STYLE_GUIDE}\n\n{dlg_rules}\n\n{registry_caps}"
 
     req_sig = JobStore.content_hash(
-        {"topic": topic, "dur": target_duration_s, "aud": audience, "mode": narration_mode, "n": n_chapters, "v": "v37"}
+        {"topic": topic, "dur": target_duration_s, "aud": audience, "mode": narration_mode, "n": n_chapters, "v": "v38"}
     )
     # Run CreativeDirector upfront for STORYLINES.md + central question + strategy + misconceptions
     brief_cache = logs_dir / f"brief_{req_sig}.json"
@@ -266,78 +279,201 @@ def create_longform_plan(
 
     from studio.audio.tts import parse_script
 
+    # --- STAGE 2: Authoritative Script-First Generation (ScriptIR BEFORE Scene Plans) ---
+    script_cache_file = logs_dir / f"script_{req_sig}_approved.json"
+    if script_cache_file.exists():
+        doc_script = ScriptIR.model_validate_json(script_cache_file.read_text(encoding="utf-8"))
+        gen_log.append({"stage": "script_ir_cache_hit", "beats": len(doc_script.beats)})
+    else:
+        cdir = CreativeDirector(model=model, provider_name=provider_name, free_only=free_only)
+        ch_beat_lists: list[list[NarrationBeatIR]] = [None] * len(lf_plan.chapters)  # type: ignore[list-item]
+
+        def _draft_ch_script(idx: int, ch: ChapterSpec) -> tuple[int, list[NarrationBeatIR]]:
+            ch_target_s = float(ch.target_duration_s or per_ch_s)
+            ch_min_words = max(55, int(ch_target_s * 1.85))
+            ch_max_words = max(ch_min_words + 25, int(ch_target_s * 2.28))
+            prev_fallback = (
+                f"Previous Chapter ({lf_plan.chapters[idx - 2].title}): {lf_plan.chapters[idx - 2].summary}"
+                if idx >= 2
+                else "Opening of documentary: pose the concrete central puzzle before introducing formulas."
+            )
+            node_ctx = "; ".join(f"{node_map[nid].title}: {[c.statement for c in node_map[nid].claims]}" for nid in ch.node_ids if nid in node_map)
+            bridge = bridge_map.get(ch.chapter_id)
+            bridge_ctx = (
+                f"Previous Summary: {bridge.prev_chapter_summary or prev_fallback}\n"
+                f"Established Definitions: {bridge.established_definitions}\n"
+                f"Unresolved Question Entering Chapter: {bridge.unresolved_questions}\n"
+                f"Next Chapter Transition: {bridge.next_transition}\n"
+                if bridge
+                else f"Previous Summary: {prev_fallback}\n"
+            )
+            n_beats = max(4, min(8, round(ch_target_s / 13.0)))
+            s_prompt = (
+                f"Authoritative Script-First Beat Sequence (NO rendering code) for Chapter {idx}/{len(lf_plan.chapters)}:\n"
+                f"TOPIC: {topic}\nCENTRAL QUESTION: {brief.concept.central_question or outline.central_question}\n"
+                f"STRATEGY: {brief.selected_strategy} | MODE: {narration_mode} | AUDIENCE: {audience}\n"
+                f"CHAPTER: {ch.chapter_id} — {ch.title}\nSUMMARY: {ch.summary}\n{bridge_ctx}"
+                f"KNOWLEDGE NODES: {node_ctx}\nVARIABLES: {json.dumps(lf_plan.continuity.defined_variables)}\n"
+                f"TARGET: {n_beats} beats totaling {ch_min_words}-{ch_max_words} spoken words (~{ch_target_s:.0f}s).\n"
+                "RULES:\n"
+                f"- Use beat_id='{ch.chapter_id}__s1'..'s{n_beats}' and scene_id='scene_1'..'scene_{n_beats}'.\n"
+                "- Pure speakable English (NO LaTeX macros, NO underscore identifiers like x_dot; write 'x dot').\n"
+                "- Concrete example before formulas; define symbols when first introduced (`symbols_introduced`).\n"
+                "- Connect naturally from previous beat without cliches or repeated opening stems.\n"
+                "- Populate visual_intent, educational_purpose, mathematical_claims, and anchor_marks cleanly."
+            )
+            ch_ir, s_resp = cdir.provider.generate_structured(s_prompt, ScriptIR, temperature=0.4)
+            with log_lock:
+                gen_log.append({"stage": f"script_{ch.chapter_id}", "model": s_resp.model, "latency_s": s_resp.latency_s})
+            seen_sids: set[str] = set()
+            for bi, b in enumerate(ch_ir.beats, 1):
+                b.chapter_id = ch.chapter_id
+                cand_sid = (b.scene_id or f"scene_{bi}").strip()
+                if cand_sid in seen_sids:
+                    cand_sid = f"scene_{bi}"
+                seen_sids.add(cand_sid)
+                b.scene_id = cand_sid
+                b.beat_id = f"{ch.chapter_id}__{b.scene_id}"
+                b.spoken_text = clean_spoken_text(b.spoken_text)
+                b.estimated_duration_s = round(max(2.5, len(parse_script(b.spoken_text)[0].split()) / KOKORO_EFFECTIVE_WPS + 0.35), 2)
+            # Editorial review & automatic repair of this chapter's ScriptIR BEFORE freezing
+            rep = cdir.review_script(ch_ir, use_llm=False)
+            if not rep.approved:
+                ch_ir = cdir.repair_script(ch_ir, rep, target_duration_s=ch_target_s)
+                seen_sids.clear()
+                for bi, b in enumerate(ch_ir.beats, 1):
+                    b.chapter_id = ch.chapter_id
+                    cand_sid = (b.scene_id or f"scene_{bi}").strip()
+                    if cand_sid in seen_sids:
+                        cand_sid = f"scene_{bi}"
+                    seen_sids.add(cand_sid)
+                    b.scene_id = cand_sid
+                    b.beat_id = f"{ch.chapter_id}__{b.scene_id}"
+                    b.spoken_text = clean_spoken_text(b.spoken_text)
+            return idx, ch_ir.beats
+
+        log_lock = threading.Lock()
+        script_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "3"))))
+        with ThreadPoolExecutor(max_workers=script_workers) as pool:
+            sfuts = [pool.submit(_draft_ch_script, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
+            for fut in as_completed(sfuts):
+                s_idx, s_beats = fut.result()
+                ch_beat_lists[s_idx - 1] = s_beats
+
+        all_beats = [b for bl in ch_beat_lists if bl for b in bl]
+        doc_script = ScriptIR(
+            topic=lf_plan.topic,
+            title=lf_plan.topic,
+            audience=audience,
+            narration_mode=narration_mode if narration_mode in ("single_educator", "conversational_explainer", "socratic", "discussion", "documentary", "technical_instructor") else "documentary",  # type: ignore[arg-type]
+            strategy=brief.selected_strategy,
+            central_question=brief.concept.central_question,
+            concept_analysis=brief.concept,
+            beats=all_beats,
+        )
+        commit_script_revision(doc_script, stage="initial", notes="Assembled chapter-ordered ScriptIR before visual scene planning", approve=False)
+        rep_global = cdir.review_script(doc_script, use_llm=False)
+        if not rep_global.approved:
+            doc_script = cdir.repair_script(doc_script, rep_global, target_duration_s=target_duration_s)
+            for bi, b in enumerate(doc_script.beats, 1):
+                if not b.chapter_id:
+                    b.chapter_id = b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "ch_1"
+                b.beat_id = f"{b.chapter_id}__{b.scene_id}"
+                b.spoken_text = clean_spoken_text(b.spoken_text)
+        approve_script_ir(doc_script, notes="Global ScriptIR approved prior to scene compilation")
+        script_cache_file.write_text(doc_script.model_dump_json(indent=2), encoding="utf-8")
+
+    (lf_dir / "SCRIPT.md").write_text(export_script_md(doc_script), encoding="utf-8")
+    _atomic_write_json(lf_dir / "script_ir_approved.json", doc_script.model_dump())
+
+    beats_by_chapter: dict[str, list[NarrationBeatIR]] = {}
+    for b in doc_script.beats:
+        cid = b.chapter_id or (b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "")
+        beats_by_chapter.setdefault(cid, []).append(b)
+
     log_lock = threading.Lock()
     ordered_plans: list[VideoPlanV3 | None] = [None] * len(lf_plan.chapters)
 
-    def _script_chapter(idx: int, ch: ChapterSpec) -> tuple[int, VideoPlanV3]:
+    def _compile_chapter_from_script(idx: int, ch: ChapterSpec) -> tuple[int, VideoPlanV3]:
+        ch_beats = beats_by_chapter.get(ch.chapter_id, [])
+        ch_script = ScriptIR(
+            topic=doc_script.topic,
+            title=ch.title,
+            audience=doc_script.audience,
+            narration_mode=doc_script.narration_mode,
+            strategy=doc_script.strategy,
+            central_question=doc_script.central_question,
+            concept_analysis=doc_script.concept_analysis,
+            beats=[b.model_copy(deep=True) for b in ch_beats],
+            revisions=list(doc_script.revisions),
+            approved_revision=doc_script.approved_revision,
+            locked=doc_script.locked,
+        )
         ch_target_s = float(ch.target_duration_s or per_ch_s)
-        ch_min_words = max(55, int(ch_target_s * 1.85))
-        ch_max_words = max(ch_min_words + 25, int(ch_target_s * 2.28))
         ch_cache_file = logs_dir / f"ch_{req_sig}_{ch.chapter_id}_valid.json"
         if ch_cache_file.exists():
             cached_cp = VideoPlanV3.model_validate_json(ch_cache_file.read_text(encoding="utf-8"))
-            if not validate_v3_plan(cached_cp, require_claims=True):
-                if on_progress:
-                    on_progress(f"reusing cached chapter {idx}/{len(lf_plan.chapters)}: {ch.title}")
-                return idx, cached_cp
+            from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
+
+            cached_det = _v3_det(cached_cp, require_claims=True)
+            cached_cov = cached_det.get("verification_coverage", {}) if isinstance(cached_det, dict) else {}
+            if not cached_det.get("issues") and int(cached_cov.get("unsupported", 0)) == 0:
+                try:
+                    if ch_beats:
+                        lock_script_to_plan(cached_cp, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
+                    if on_progress:
+                        on_progress(f"reusing cached chapter {idx}/{len(lf_plan.chapters)}: {ch.title}")
+                    return idx, cached_cp
+                except ValueError:
+                    pass
         if on_progress:
-            on_progress(f"scripting chapter {idx}/{len(lf_plan.chapters)}: {ch.title} (~{ch_target_s:.0f}s)")
-        prev_fallback = (
-            f"Previous Chapter ({lf_plan.chapters[idx - 2].title}): {lf_plan.chapters[idx - 2].summary}"
-            if idx >= 2
-            else "Opening of documentary: establish the concrete central paradox cleanly."
-        )
+            on_progress(f"compiling visuals from approved script {idx}/{len(lf_plan.chapters)}: {ch.title} (~{ch_target_s:.0f}s)")
         node_ctx = "; ".join(f"{node_map[nid].title}: {[c.statement for c in node_map[nid].claims]}" for nid in ch.node_ids if nid in node_map)
-        bridge = bridge_map.get(ch.chapter_id)
-        bridge_ctx = (
-            f"Previous Summary: {bridge.prev_chapter_summary or prev_fallback}\n"
-            f"Established Definitions: {bridge.established_definitions}\n"
-            f"Unresolved Question Entering Chapter: {bridge.unresolved_questions}\n"
-            f"Next Chapter Transition: {bridge.next_transition}\n"
-            if bridge
-            else f"Previous Summary: {prev_fallback}\n"
+        locked_spec_lines = "\n".join(
+            f"- scene_id='{b.scene_id}' | speaker='{b.speaker}' | visual_intent='{b.visual_intent}' | claims={b.mathematical_claims} | spoken_text={json.dumps(b.spoken_text)}"
+            for b in ch_beats
         )
         ch_prompt = (
             f"{ch_system}\n\n"
-            f"Overall Topic: {topic}\n"
-            f"Central Question: {brief.concept.central_question or outline.central_question}\n"
-            f"Selected Strategy: {brief.selected_strategy}\n"
-            f"Chapter {idx}/{len(lf_plan.chapters)}: {ch.title}\n"
-            f"Summary: {ch.summary}\n"
-            f"{bridge_ctx}"
-            f"Knowledge context: {node_ctx}\n"
+            f"Compile an exact VideoPlanV3 VISUAL PLAN bound 1-to-1 to the APPROVED ScriptIR beats below.\n"
+            f"Overall Topic: {topic}\nChapter {idx}/{len(lf_plan.chapters)}: {ch.title}\n"
+            f"Summary: {ch.summary}\nKnowledge context: {node_ctx}\n"
             f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
-            f"Narration mode: {narration_mode}. Target duration: {ch_target_s:.0f}s "
-            f"(STRICT WORD BUDGET: {ch_min_words}-{ch_max_words} spoken words across 5-9 crisp scenes; do NOT exceed {ch_max_words} words).\n"
-            "Write a deep, natural, cliche-free self-contained VideoPlanV3 for this chapter using deterministic constructions, varied compositions, and verifiable claims."
+            "APPROVED BEATS (preserve exact `scene_id`, `speaker`, and `narration` verbatim; add deterministic constructions, visual objects, meaningful motion events, and verified StructuredClaim objects):\n"
+            "CLAIM & CONSTRUCTION RULES:\n"
+            "- NEVER attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to `axes`, `parametric_curve`, `function_plot`, `point`, or `vector`.\n"
+            "- For curves, waves, winding paths, spectra, and calculus/physics scenes use `function_equivalence`, `point_on_function`, `derivative_equality`, `definite_integral_value`, `coefficient_correctness`, or verified constructions (`fourier_series_partial_sum`, `continuous_fourier_spectrum`, `parametric_trajectory`, `riemann_sum`).\n"
+            f"{locked_spec_lines}"
         )
         ch_plan = None
         issues: list[str] = []
         for _attempt in range(2):
-            ch_plan, ch_resp = director.provider.generate_structured(ch_prompt, VideoPlanV3, system=ch_system, temperature=0.45)
+            ch_plan, ch_resp = director.provider.generate_structured(ch_prompt, VideoPlanV3, system=ch_system, temperature=0.35)
             with log_lock:
                 gen_log.append({"stage": f"chapter_{ch.chapter_id}", "model": ch_resp.model, "latency_s": ch_resp.latency_s})
+            if ch_beats:
+                lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
             for r_idx in range(1, MAX_REPAIRS + 1):
-                issues = validate_v3_plan(ch_plan, require_claims=True)
-                w_cnt = sum(len(parse_script(s.narration)[0].split()) for s in ch_plan.scenes)
-                if w_cnt < ch_min_words:
-                    issues.append(f"Chapter narration too thin ({w_cnt} words < {ch_min_words} minimum for ~{ch_target_s:.0f}s); expand intuitive reasoning and step-by-step explanations.")
-                elif w_cnt > ch_max_words:
-                    issues.append(f"Chapter narration too long ({w_cnt} words > {ch_max_words} ceiling for ~{ch_target_s:.0f}s); tighten prose crisply without cutting mathematical facts.")
+                from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
+
+                det_r = _v3_det(ch_plan, require_claims=True)
+                issues = list(det_r.get("issues", []))
+                for u_msg in det_r.get("unclaimed_math_scenes", []):
+                    issues.append(str(u_msg))
                 if not issues:
                     break
                 fix_prompt = (
-                    "Fix EVERY listed VideoPlanV3 validation issue strictly:\n- "
+                    "Fix EVERY listed VideoPlanV3 validation issue strictly WITHOUT altering scene_id or spoken narration:\n- "
                     + "\n- ".join(issues)
                     + "\nRULES WHEN FIXING:\n"
-                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons like `particle_system` or `axes`; remove or switch claim kind (e.g. `ode_equilibrium`, `eigenvalue_determinant`, `eigenvalue_stability_regime`).\n"
-                    "- If `point_on_function` reports a computed `f(x)=...` value, either update `coords[1]` to that exact value or replace with `ode_equilibrium` / remove misclassified phase point claim.\n"
-                    "- If `parametric_curve requires 'X(t); Y(t)'`, set `expr='X(t); Y(t)'` explicitly (or remove the duplicate `parametric_curve` when an `ode_phase_trajectory` ConstructionOp already creates the trajectory `data_series`).\n"
-                    "- Do NOT list an already-declared `axes` ID inside `constructions[].output_ids`; put it in `params.axes_id` instead.\n"
-                    "- For `markov_chain_evolution`, `transition_matrix` MUST be ROW-stochastic (each row sums strictly to 1.0; transpose if column-stochastic).\n"
+                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons.\n"
+                    "- For `markov_stochastic_invariant`, reference a `matrix` or `bar_chart` in `object_ids` whose entries verify row sums = 1.0 and invariant stationary distribution.\n"
+                    "- Ensure every narrative mathematical claim has a matching verified StructuredClaim or ConstructionOp.\n"
                     f"\nCurrent JSON:\n{ch_plan.model_dump_json()}"
                 )
-                ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.3)
+                ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.25)
+                if ch_beats:
+                    lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
                 with log_lock:
                     gen_log.append({"stage": f"chapter_{ch.chapter_id}_repair_{r_idx}", "issues": issues})
             issues = validate_v3_plan(ch_plan, require_claims=True)
@@ -348,14 +484,17 @@ def create_longform_plan(
             _atomic_write_json(logs_dir / f"failed_{ch.chapter_id}.json", ch_plan.model_dump() if ch_plan else {})
             raise RuntimeError(f"Chapter {ch.chapter_id} failed validation after repairs: {issues}")
         mat = materialize_constructions(ch_plan)
-        for s_item in mat.scenes:
-            s_item.narration = clean_spoken_text(s_item.narration)
+        if ch_beats:
+            lock_script_to_plan(mat, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
+        post_issues = validate_v3_plan(mat, require_claims=True)
+        if post_issues:
+            raise RuntimeError(f"Post-script-lock validation failed in {ch.chapter_id}: {post_issues}")
         ch_cache_file.write_text(mat.model_dump_json(indent=2), encoding="utf-8")
         return idx, mat
 
     llm_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "3"))))
     with ThreadPoolExecutor(max_workers=llm_workers) as pool:
-        futs = [pool.submit(_script_chapter, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
+        futs = [pool.submit(_compile_chapter_from_script, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
         for fut in as_completed(futs):
             c_idx, mat = fut.result()
             ordered_plans[c_idx - 1] = mat
@@ -367,70 +506,120 @@ def create_longform_plan(
     # Calibrated duration check using true Kokoro effective WPS (~2.08 wps including beat pauses)
     est_s = sum(len(parse_script(s.narration)[0].split()) for cp in chapter_plans for s in cp.scenes) / KOKORO_EFFECTIVE_WPS + len(chapter_plans) * 1.2
     extra_idx = 1
+    base_chapter_count = len(lf_plan.chapters)
     while est_s < target_duration_s * 0.90 and extra_idx <= 4:
         ext_id = f"ext_{extra_idx}"
         ext_title = f"Deep Dive {extra_idx}: Case Studies & Edge Regimes in {topic}"
         ext_target_s = min(90.0, max(45.0, target_duration_s - est_s))
-        ext_min_words = max(90, int(ext_target_s * 1.85))
-        ext_max_words = max(ext_min_words + 25, int(ext_target_s * 2.25))
+        ext_min_words = max(75, int(ext_target_s * 1.65))
+        ext_max_words = max(ext_min_words + 30, int(ext_target_s * 2.25))
         if on_progress:
             on_progress(f"extending duration ({est_s:.0f}s < 90% of {target_duration_s:.0f}s): {ext_title}")
-        ext_prompt = (
-            f"{ch_system}\n\n"
-            f"Overall Topic: {topic}\nContinuation Chapter: {ext_title}\n"
-            f"Previous Chapter Context: {prev_summary}\n"
-            f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
-            f"Target duration: {ext_target_s:.0f}s ({ext_min_words}-{ext_max_words} spoken words across 5-8 scenes).\n"
-            "Write a complete VideoPlanV3 deepening intuition through contrasting concrete regimes, deterministic constructions, and verifiable claims."
-        )
-        ch_plan, ch_resp = director.provider.generate_structured(ext_prompt, VideoPlanV3, system=ch_system, temperature=0.45)
-        for r_idx in range(1, MAX_REPAIRS + 1):
-            issues = validate_v3_plan(ch_plan, require_claims=True)
-            w_cnt = sum(len(parse_script(s.narration)[0].split()) for s in ch_plan.scenes)
-            if w_cnt < ext_min_words:
-                issues.append(f"Narration too brief ({w_cnt} words < {ext_min_words}); add step-by-step analysis.")
-            elif w_cnt > ext_max_words:
-                issues.append(f"Narration too long ({w_cnt} words > {ext_max_words}); tighten phrasing.")
-            if not issues:
-                break
-            fix_prompt = "Fix these VideoPlanV3 issues:\n- " + "\n- ".join(issues) + f"\n\nCurrent JSON:\n{ch_plan.model_dump_json()}"
-            ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.3)
-        if not validate_v3_plan(ch_plan, require_claims=True):
-            lf_plan.chapters.append(ChapterSpec(chapter_id=ext_id, title=ext_title, node_ids=[], target_duration_s=ext_target_s))
-            mat = materialize_constructions(ch_plan)
-            chapter_plans.append(mat)
-            est_s += sum(len(parse_script(s.narration)[0].split()) for s in mat.scenes) / KOKORO_EFFECTIVE_WPS + 1.2
-            prev_summary = ext_title
-        extra_idx += 1
+        ext_cache_file = logs_dir / f"ch_{req_sig}_{ext_id}_valid.json"
+        mat = None
+        if ext_cache_file.exists():
+            try:
+                cand_ext = VideoPlanV3.model_validate_json(ext_cache_file.read_text(encoding="utf-8"))
+                from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
 
-    # Export canonical unified ScriptIR & SCRIPT.md capturing every locked beat ID & chapter link
-    all_beats: list[NarrationBeatIR] = []
-    for ch_obj, cp in zip(lf_plan.chapters, chapter_plans):
-        for s_item in cp.scenes:
-            clean_sp = parse_script(s_item.narration)[0]
-            all_beats.append(
-                NarrationBeatIR(
-                    beat_id=f"{ch_obj.chapter_id}__{s_item.scene_id}",
+                c_det = _v3_det(cand_ext, require_claims=True)
+                if not c_det.get("issues") and not c_det.get("unclaimed_math_scenes"):
+                    if all(len(parse_script(s.narration)[0].split()) <= 45 for s in cand_ext.scenes):
+                        mat = cand_ext
+            except Exception:
+                mat = None
+
+        if mat is None:
+            ext_prompt = (
+                f"{ch_system}\n\n"
+                f"Overall Topic: {topic}\nContinuation Chapter: {ext_title}\n"
+                f"Previous Chapter Context: {prev_summary}\n"
+                f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
+                f"Target duration: {ext_target_s:.0f}s ({ext_min_words}-{ext_max_words} spoken words across 6-8 concise scenes; EVERY single scene narration MUST be <= 40 words).\n"
+                "Write a complete VideoPlanV3 deepening intuition through contrasting concrete regimes, deterministic constructions, and verifiable claims."
+            )
+            ch_plan, _ch_resp = director.provider.generate_structured(ext_prompt, VideoPlanV3, system=ch_system, temperature=0.4)
+            ext_issues: list[str] = []
+            for r_idx in range(1, MAX_REPAIRS + 1):
+                from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
+
+                det_e = _v3_det(ch_plan, require_claims=True)
+                ext_issues = list(det_e.get("issues", []))
+                for u_msg in det_e.get("unclaimed_math_scenes", []):
+                    ext_issues.append(str(u_msg))
+                for s_chk in ch_plan.scenes:
+                    wc_s = len(parse_script(s_chk.narration)[0].split())
+                    if wc_s > 45:
+                        ext_issues.append(f"scene {s_chk.scene_id}: narration {wc_s} words exceeds 45-word documentary turn limit; split or tighten.")
+                w_cnt = sum(len(parse_script(s.narration)[0].split()) for s in ch_plan.scenes)
+                if w_cnt < ext_min_words:
+                    ext_issues.append(f"Narration too brief ({w_cnt} words < {ext_min_words}); add another concise scene.")
+                elif w_cnt > ext_max_words:
+                    ext_issues.append(f"Narration too long ({w_cnt} words > {ext_max_words}); tighten phrasing.")
+                if not ext_issues:
+                    break
+                fix_prompt = "Fix EVERY listed VideoPlanV3 issue:\n- " + "\n- ".join(ext_issues) + f"\n\nCurrent JSON:\n{ch_plan.model_dump_json()}"
+                ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.25)
+            # Final re-check after loop
+            from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
+
+            det_final = _v3_det(ch_plan, require_claims=True)
+            ext_ok = (
+                not det_final.get("issues")
+                and not det_final.get("unclaimed_math_scenes")
+                and all(len(parse_script(s.narration)[0].split()) <= 48 for s in ch_plan.scenes)
+            )
+            if ext_ok:
+                mat = materialize_constructions(ch_plan)
+                ext_cache_file.write_text(mat.model_dump_json(indent=2), encoding="utf-8")
+
+        if mat is not None:
+            lf_plan.chapters.append(ChapterSpec(chapter_id=ext_id, title=ext_title, node_ids=[], target_duration_s=ext_target_s))
+            doc_script.locked = False
+            for s_item in mat.scenes:
+                s_item.narration = clean_spoken_text(s_item.narration)
+                nb = NarrationBeatIR(
+                    beat_id=f"{ext_id}__{s_item.scene_id}",
+                    chapter_id=ext_id,
                     scene_id=s_item.scene_id,
                     speaker=s_item.speaker if s_item.speaker in ("narrator", "educator", "learner", "host_a", "host_b") else "narrator",  # type: ignore[arg-type]
                     spoken_text=s_item.narration,
                     educational_purpose=s_item.purpose,
                     mathematical_claims=[c.statement or c.kind for c in s_item.claims],
                     visual_intent=", ".join(f"{o.id}:{o.kind}" for o in s_item.objects[:5]),
-                    estimated_duration_s=round(max(2.5, len(clean_sp.split()) / KOKORO_EFFECTIVE_WPS + 0.35), 2),
+                    estimated_duration_s=round(max(2.5, len(parse_script(s_item.narration)[0].split()) / KOKORO_EFFECTIVE_WPS + 0.35), 2),
                 )
-            )
-    doc_script = ScriptIR(
-        topic=lf_plan.topic,
-        title=lf_plan.topic,
-        audience=audience,
-        narration_mode=narration_mode if narration_mode in ("single_educator", "conversational_explainer", "socratic", "discussion", "documentary", "technical_instructor") else "documentary",  # type: ignore[arg-type]
-        strategy=brief.selected_strategy,
-        central_question=brief.concept.central_question,
-        concept_analysis=brief.concept,
-        beats=all_beats,
-    )
+                sync_beat_anchors(nb)
+                doc_script.beats.append(nb)
+            chapter_plans.append(mat)
+            est_s += sum(len(parse_script(s.narration)[0].split()) for s in mat.scenes) / KOKORO_EFFECTIVE_WPS + 1.2
+            prev_summary = ext_title
+        extra_idx += 1
+
+    if len(chapter_plans) > base_chapter_count:
+        cdir_ext = CreativeDirector(model=model, provider_name=provider_name, free_only=free_only)
+        rep_ext = cdir_ext.review_script(doc_script, use_llm=False)
+        if not rep_ext.approved:
+            doc_script = cdir_ext.repair_script(doc_script, rep_ext, target_duration_s=target_duration_s)
+            for b in doc_script.beats:
+                if not b.chapter_id:
+                    b.chapter_id = b.beat_id.split("__", 1)[0] if "__" in b.beat_id else "c1"
+                b.beat_id = f"{b.chapter_id}__{b.scene_id}"
+                b.spoken_text = clean_spoken_text(b.spoken_text)
+        approve_script_ir(doc_script, notes="Re-approved ScriptIR after duration extension chapters")
+        for cp_ext, ch_spec in zip(chapter_plans, lf_plan.chapters):
+            sub_beats = [b for b in doc_script.beats if b.chapter_id == ch_spec.chapter_id]
+            if sub_beats:
+                sub_ir = ScriptIR(
+                    topic=doc_script.topic,
+                    title=ch_spec.title,
+                    audience=doc_script.audience,
+                    narration_mode=doc_script.narration_mode,
+                    beats=sub_beats,
+                )
+                lock_script_to_plan(cp_ext, sub_ir, stage="approved", restore_locked_spoken_text=True, strict_ids=False)
     (lf_dir / "SCRIPT.md").write_text(export_script_md(doc_script), encoding="utf-8")
+    _atomic_write_json(lf_dir / "script_ir_approved.json", doc_script.model_dump())
 
     _atomic_write_json(logs_dir / "generation_log.json", gen_log)
     return lf_plan, chapter_plans
@@ -502,7 +691,12 @@ def build_longform_video(
             ch_plan_path = lf_dir / f"{slug}_{ch.chapter_id}.json"
             ch_plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
 
-            math_key = ArtifactCache.compute_stage_key("math_model", plan.model_dump(), upstream_keys={"knowledge": know_key})
+            fps_map = compute_dependency_fingerprints(PROJECT_ROOT)
+            math_key = ArtifactCache.compute_stage_key(
+                "math_model",
+                {"plan": plan.model_dump(), "math_fp": f"{fps_map['math_compute']}:{fps_map['math_validate']}"},
+                upstream_keys={"knowledge": know_key},
+            )
             ckey = chapter_cache_key(
                 plan,
                 format_name=format_name,
@@ -514,7 +708,8 @@ def build_longform_video(
                 look=look,
                 look_name=resolved_look,
                 caption_style=resolved_cap,
-            ) + f"_{backend}"
+                backend=backend,
+            )
             upstream = {"knowledge": know_key, "math_model": math_key, "design": design_key}
             stage_hit, stage_key, stage_path, _reason = acache.lookup(
                 "chapter_assembly",
@@ -531,12 +726,14 @@ def build_longform_video(
             )
             srt_p = ch_build / f"{ch_stem}.srt"
             txt_p = ch_build / f"{ch_stem}_transcript.txt"
+            cap_ir_p = ch_build / "caption_ir.json"
             slots_srt[idx] = srt_p
             slots_txt[idx] = txt_p
             slots_bdir[idx] = ch_build
 
-            # Enforce strict SHA-256 + upstream dependency verification (never bypass via raw JobStore lookup)
-            cached = stage_path if stage_hit else None
+            # Enforce strict SHA-256 + sidecar bundle + stream verification
+            sidecars_ok, _sc_msg = validate_sidecar_bundle([srt_p, txt_p, cap_ir_p]) if stage_hit else (False, "miss")
+            cached = stage_path if (stage_hit and sidecars_ok) else None
             if cached and verify_media_streams(cached).passed:
                 mp4 = cached
                 if on_progress:
@@ -747,9 +944,23 @@ def build_longform_video(
     if not bundle_chk.passed:
         raise RuntimeError(f"Long-form final bundle QA failed: {bundle_chk.detail}")
 
+    approved_script_p = lf_dir / "script_ir_approved.json"
+    if not approved_script_p.exists():
+        # Check chapter build/script outputs or longform dir
+        cand_p = PROJECT_ROOT / "build" / f"longform_{slug}" / "script_ir_approved.json"
+        if cand_p.exists():
+            approved_script_p = cand_p
+    doc_script = None
+    if approved_script_p.exists():
+        try:
+            doc_script = ScriptIR.model_validate_json(approved_script_p.read_text(encoding="utf-8"))
+        except Exception:
+            doc_script = None
+    first_cap_ir = (chapter_builds[0] / "caption_ir.json") if chapter_builds and (chapter_builds[0] / "caption_ir.json").exists() else None
     loud = verify_audio_loudness(final_mp4)
     streams = verify_media_streams(final_mp4)
-    target_sum = sum(float(c.target_duration_s or 0.0) for c in longform_plan.chapters) or None
+    base_target = sum(float(c.target_duration_s or 0.0) for c in longform_plan.chapters if not str(c.chapter_id).startswith("ext_"))
+    target_sum = (base_target if base_target > 0 else sum(float(c.target_duration_s or 0.0) for c in longform_plan.chapters)) or None
     rev_report = audit_educational_quality(
         topic=longform_plan.topic,
         title=longform_plan.topic,
@@ -758,9 +969,12 @@ def build_longform_video(
         backend=backend,
         video_path=final_mp4,
         contact_sheet_out=lf_dir / f"QA_CONTACT_SHEET_{resolved_look}.png",
+        script=doc_script,
         look_name=resolved_look,
         chapter_plans=list(chapter_plans),
         target_duration_s=target_sum,
+        caption_ir_path=first_cap_ir,
+        srt_path=srt_out,
     )
     export_review_md(rev_report, lf_dir / "REVIEW.md")  # type: ignore[arg-type]
 
@@ -776,6 +990,7 @@ def build_longform_video(
         "review_md": str(lf_dir / "REVIEW.md"),
         "design_md": str(lf_dir / "DESIGN.md"),
         "contact_sheet": str(getattr(rev_report, "contact_sheet_path", "")),
+        "production_state": str(getattr(rev_report, "production_state", "review_required")),
         "qa_review_approved": bool(getattr(rev_report, "approved", False)),
         "qa_review_score": float(getattr(rev_report, "overall_score", 0.0)),
         "cache_stats": cache_stats,
@@ -808,29 +1023,46 @@ def derive_recomposed_short(
     resolved_cap = caption_style or ("kinetic" if "shorts" in format_name else "editorial")
     if not chapter_plans:
         raise ValueError("Need at least one chapter plan to derive a recomposed Short.")
-    # Choose core mechanism chapter cleanly (prefer highest claims + constructions + animated events density)
-    if chapter_index is None:
-        _anim_ops = {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "iterate_states", "interpolate_values"}
-        scores = [
-            sum(
-                len(s.claims) * 3
-                + len(s.constructions) * 2
-                + sum(3 for e in s.events if e.op in _anim_ops)
-                for s in cp.scenes
-            )
-            for cp in chapter_plans
-        ]
-        chapter_index = int(max(range(len(chapter_plans)), key=lambda i: scores[i]))
+    # Choose highest-value contiguous 3..6-scene climax window (~75..115 words) with real motion ops & claims
+    _anim_ops = {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "iterate_states", "interpolate_values"}
+    from studio.renderers.scene_state import SceneRuntimeState, evaluate_plan_states, materialize_carry_objects
 
+    best_score = -10**9
+    best_win = (0, 0, min(4, len(chapter_plans[0].scenes)))
+    chap_indices = [chapter_index] if chapter_index is not None else list(range(len(chapter_plans)))
+    for c_idx in chap_indices:
+        cp = chapter_plans[c_idx]
+        is_ext = c_idx < len(longform_plan.chapters) and str(longform_plan.chapters[c_idx].chapter_id).startswith("ext_")
+        for s_start in range(len(cp.scenes)):
+            w_acc = 0
+            for s_end in range(s_start + 1, min(len(cp.scenes), s_start + 6) + 1):
+                w_acc += len(cp.scenes[s_end - 1].narration.split())
+                if w_acc > 120:
+                    break
+                win_scenes = cp.scenes[s_start:s_end]
+                has_anim = any(e.op in _anim_ops for sc in win_scenes for e in sc.events)
+                uniq_kinds = len({o.kind for sc in win_scenes for o in sc.objects})
+                claims_cnt = sum(len(sc.claims) for sc in win_scenes)
+                con_cnt = sum(len(sc.constructions) for sc in win_scenes)
+                sc_score = (
+                    (120 if has_anim else 0)
+                    + (45 if 75 <= w_acc <= 115 else (15 if 60 <= w_acc <= 120 else -30))
+                    + claims_cnt * 6
+                    + con_cnt * 4
+                    + uniq_kinds * 5
+                    - (25 if is_ext else 0)
+                )
+                if sc_score > best_score:
+                    best_score = sc_score
+                    best_win = (c_idx, s_start, s_end)
+
+    chapter_index, w_start, w_end = best_win
     src = chapter_plans[chapter_index].model_copy(deep=True)
-    # Trim/focus cleanly to <= 125 spoken words (~45-60s standalone Short) keeping object/axes closure
+    prior_state = evaluate_plan_states(src)[w_start - 1] if w_start > 0 else SceneRuntimeState()
     kept_scenes = []
     declared_ids: set[str] = set()
     word_budget = 0
-    for sc in src.scenes[:6]:
-        words_sc = len(sc.narration.split())
-        if kept_scenes and (word_budget + words_sc > 135 or len(kept_scenes) >= 4):
-            break
+    for idx_w, sc in enumerate(src.scenes[w_start:w_end]):
         sc_copy = sc.model_copy(deep=True)
         sc_copy.composition = adapt_composition_for_aspect(sc_copy.composition, "9:16")  # type: ignore[assignment]
         for o in sc_copy.objects:
@@ -839,17 +1071,26 @@ def derive_recomposed_short(
             elif o.panel_slot == "right":
                 o.panel_slot = "bottom"
             declared_ids.add(o.id)
+        if idx_w == 0 and w_start > 0:
+            needed = declared_ids | {o.axes_id for o in sc_copy.objects if o.axes_id} | {
+                e.target_id for e in sc_copy.events if e.target_id
+            } | {e.source_id for e in sc_copy.events if e.source_id}
+            carried = [o for o in materialize_carry_objects(prior_state, needed, include_visible_persistent=False) if o.id not in declared_ids]
+            for co in carried:
+                declared_ids.add(co.id)
+            sc_copy.objects = carried + list(sc_copy.objects)
         sc_copy.events = [e for e in sc_copy.events if e.target_id in declared_ids and (not e.source_id or e.source_id in declared_ids)]
         kept_scenes.append(sc_copy)
-        word_budget += words_sc
+        word_budget += len(sc_copy.narration.split())
 
+    short_target_s = round(max(28.0, min(58.0, word_budget / 2.20 + len(kept_scenes) * 0.25)), 1)
     short_plan = VideoPlanV3(
         schema_version="3.0",
         topic=f"{longform_plan.topic} — Key Insight",
         title=kept_scenes[0].purpose if kept_scenes else longform_plan.topic,
         audience=src.audience,
         strategy=src.strategy,
-        target_duration_s=55.0,
+        target_duration_s=short_target_s,
         scenes=kept_scenes,
     )
     short_dir = PROJECT_ROOT / "build" / f"short_from_{slug}"
@@ -903,6 +1144,15 @@ def derive_recomposed_short(
 
     loud = verify_audio_loudness(mp4)
     streams = verify_media_streams(mp4)
+    v3_short_bdir = PROJECT_ROOT / "build" / f"V3_{short_json.stem}_{format_name}"
+    short_cap_ir = next(
+        (p for p in (v3_short_bdir / "caption_ir.json", short_dir / "caption_ir.json") if p.exists()),
+        short_dir / "caption_ir.json",
+    )
+    short_srt = next(
+        (p for p in (v3_short_bdir / f"V3_{short_json.stem}.srt", mp4.with_suffix(".srt")) if p.exists()),
+        mp4.with_suffix(".srt"),
+    )
     rev = audit_educational_quality(
         topic=short_plan.topic,
         title=short_plan.title,
@@ -912,7 +1162,9 @@ def derive_recomposed_short(
         video_path=mp4,
         contact_sheet_out=short_dir / f"QA_CONTACT_SHEET_{resolved_look}.png",
         look_name=resolved_look,
-        target_duration_s=55.0,
+        target_duration_s=short_target_s,
+        caption_ir_path=short_cap_ir if short_cap_ir.exists() else None,
+        srt_path=short_srt if short_srt.exists() else None,
     )
     export_review_md(rev, short_dir / "REVIEW.md")  # type: ignore[arg-type]
     return {
@@ -921,6 +1173,9 @@ def derive_recomposed_short(
         "duration_s": _probe_duration(mp4),
         "storyboard_md": str(short_dir / "STORYBOARD.md"),
         "review_md": str(short_dir / "REVIEW.md"),
+        "production_state": str(getattr(rev, "production_state", "review_required")),
+        "qa_review_approved": bool(getattr(rev, "approved", False)),
+        "qa_review_score": float(getattr(rev, "overall_score", 0.0)),
         "qa_loudness": {"passed": loud.passed, "detail": loud.detail},
         "qa_streams": {"passed": streams.passed, "detail": streams.detail},
     }

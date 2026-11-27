@@ -26,6 +26,7 @@ def compile_plan_to_html(
     audio_timeline: AudioTimeline | None = None,
     *,
     caption_style: str | None = None,
+    caption_ir: Any | None = None,
 ) -> tuple[str, float]:
     """Compile VideoPlanV3 into standalone deterministic offline HTML5/SVG + Motion runtime."""
     plan = materialize_constructions(plan)
@@ -118,7 +119,7 @@ def compile_plan_to_html(
             cursor += dur
         t_total = max(0.5, cursor)
 
-    cap_ir, cap_style, cues_payload = build_hyperframes_captions(synced_beats, design, caption_style)
+    cap_ir, cap_style, cues_payload = build_hyperframes_captions(synced_beats, design, caption_style, caption_ir=caption_ir)
 
     axes_specs: dict[str, tuple[list[float], list[float], tuple[float, float, float, float]]] = {}
     elements_payload: list[dict[str, Any]] = []
@@ -206,6 +207,32 @@ def compile_plan_to_html(
                 ann_idx_local=ann_idx_local,
             )
             elements_payload.append(el)
+
+        # Compile state-changing transform events (move, rotate, scale, zoom) into keyframed pixel transforms
+        for ev in sc.events:
+            if ev.op not in ("move", "rotate", "scale", "zoom"):
+                continue
+            ev_t0 = float(marks_for_scene[ev.anchor_mark]) if (ev.anchor_mark and ev.anchor_mark in marks_for_scene) else (t_start + 0.35)
+            ev_t1 = round(ev_t0 + max(0.35, float(ev.duration_s or 0.9)), 4)
+            xr_e, yr_e, ax_e = axes_specs.get(getattr(ev, "axes_id", "") or "", (default_geom_xr, default_geom_yr, [stage_x, stage_y, stage_w, stage_h]))
+            dx_u = float(ev.shift[0]) if ev.shift and len(ev.shift) >= 1 else 0.0
+            dy_u = float(ev.shift[1]) if ev.shift and len(ev.shift) >= 2 else 0.0
+            sx_px = ax_e[2] / max(0.001, (xr_e[1] - xr_e[0]))
+            sy_px = ax_e[3] / max(0.001, (yr_e[1] - yr_e[0]))
+            tx_record = {
+                "t0": round(ev_t0, 4),
+                "t1": ev_t1,
+                "op": ev.op,
+                "dx_px": round(dx_u * sx_px, 2),
+                "dy_px": round(-dy_u * sy_px, 2),
+                "angle_deg": round(float(ev.angle_deg or 0.0), 3),
+                "scale": round(float(ev.scale_factor or (1.18 if ev.op == "zoom" else 1.0)), 4),
+            }
+            for el in elements_payload:
+                if el["hide_at"] <= t_start:
+                    continue
+                if ev.op == "zoom" or el["id"] == ev.target_id:
+                    el.setdefault("transforms", []).append(tx_record)
 
         if active_eq:
             latest_eq_id = active_eq[-1].id

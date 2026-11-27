@@ -1,4 +1,25 @@
-# Math Shorts Studio — Project Status (V3.7 Professional Filmmaking & Visual QA)
+# Math Shorts Studio — Project Status (V3.8 Professional Production & Reliability)
+
+## V3.8 Implemented & Verified
+- **Authoritative Script-First Generation & Revision Governance (`studio/longform.py`, `studio/creative/script_ir.py`, `studio/creative/dialogue.py`, `studio/creative/director.py`, `studio/providers/gemini.py`)**
+  - Ordered pipeline executes `ConceptAnalysis -> CreativeBrief -> Global ScriptIR -> Editorial Review -> Immutable SHA-256 Approved Revision -> Chapter Scene Compilation` with `strict_ids=True` (no positional beat fallback), separate conceptual `anchor_marks`/`anchor_token_offsets`, unpronounced identifier / cliché / boilerplate-stem guards, and sanitized Gemini JSON schema handling for `dict`-typed models.
+- **Enforceable Executable Registry & `SceneRuntimeState` Parity (`studio/registry/`, `studio/renderers/scene_state.py`, `studio/renderers/hybrid.py`, `studio/renderers/hyperframes/`, `scenes/v3_scene.py`)**
+  - Enforced typed Pydantic input/output contracts, executable `test_fn`, `validate_fn` / `compute_fn`, and backend render bindings across all registered components (`verify_registry_contracts() == []`); uncertified components fail audit and are excluded from planner prompts.
+  - Added renderer-independent `SceneRuntimeState` preserving transformed coordinates/rotations/scales/parameters and `removed_ids` across `ManimGX <-> HyperFrames`, keyframed HyperFrames `move`/`rotate`/`scale`/`zoom` transforms, `TransformMatchingTex` equation transitions, `eq_clearance` axis sizing, `_hidden_persisted` curve restoration across multi-axes scenes, and `\infty` / `\omega` Unicode typography fixes.
+- **Canonical Single-Source `CaptionIR`, Strict Publication Gates & Scene-Aware Frame QA (`studio/captions/`, `studio/timeline.py`, `studio/audio/tts.py`, `studio/qa/engine.py`, `studio/qa/frames.py`, `studio/ai/validate_v3.py`, `studio/ai/math_truth.py`)**
+  - Compiled `caption_ir.json` once from `AudioTimeline` with word-level `TimingProvenance` (`forced_aligned`, `tts_word_boundary`, `interpolated`, `estimated`) consumed identically by SRT, WebVTT, ASS, ManimGX, HyperFrames, and `studio/preview.py`.
+  - Separated `ProductionState` (`draft`, `rendered`, `review_required`, `rejected`, `publication_approved`) so unrendered plans or any `unsupported`/`human_review_required` claims or unverified caption sync/motion can never pass publication approval; verified real Markov row-stochastic & stationary `\pi P = \pi` invariants; and added `inspect_video_scene_aware()` sampling opening, scene start/mid/end, bookmarks, backend switches, and motion deltas with JSON sidecar reports.
+- **12-Layer Dependency Caching & Local Scene Preview Workbench (`studio/storage/cache.py`, `studio/preview.py`)**
+  - Implemented `compute_dependency_fingerprints()` + `validate_sidecar_bundle()`, plus an offline HTML/loopback (`127.0.0.1`) scene preview workbench (`python -m studio.preview --source ... [--scene ...] [--serve]`) supporting single-scene isolation via `SceneRuntimeState` (`10.19 s` vs full multi-minute render).
+- **V3.8 Unseen Documentary, Portrait Short & Regression Verification (`docs/BASELINE_V38_AUDIT.md`, `docs/BENCHMARK_REPORT.md`)**
+  - **Unseen Documentary (`"Fourier Analysis, Spectral Decomposition, and Signal Filtering"`, `light`, `editorial`):** `460.52 s` (`8` chapters, `53` scenes), `-15.2 LUFS`, `drift=0.00 s`, `0` dead-air silences, `0` empty midpoints/edge clips, `REVIEW.md` **`publication_approved` (`100.0/100`, `det_verified=52`, `unsupported=0`, `failed=0`)**.
+  - **Derived Native `9:16` Portrait Short (`shorts_hd`, `light`, `kinetic`):** `41.90 s` (`5` scenes from climax `c3`), `-15.1 LUFS`, `drift=0.00 s`, `0` empty midpoints/edge clips, `REVIEW.md` **`publication_approved` (`94.0/100`)**.
+  - **Dual-Theme/Backend Samples:** `midnight_studio` HyperFrames (`73.10 s`, `-15.3 LUFS`, `0` empty mids) and `light` Hybrid (`53.30 s`, `-15.3 LUFS`, `0` empty mids).
+  - **Test Suite:** **64 tests passing** (`tests/test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
+
+---
+
+# Prior Baseline: Math Shorts Studio — Project Status (V3.7 Professional Filmmaking & Visual QA)
 
 ## V3.7 Implemented & Verified
 - **Audit, Pinned Offline Typography & Unified WCAG Design (`docs/ARCHITECTURE_AUDIT.md`, `studio/design/fonts.py`, `studio/config.py`, `studio/design/spec.py`, `assets/fonts/`)**

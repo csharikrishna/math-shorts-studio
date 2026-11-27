@@ -52,6 +52,13 @@ class _StoryMixin:
         self.timeline: AudioTimeline | None = (
             AudioTimeline.load(timeline_path) if timeline_path.exists() else None
         )
+        caption_ir_path = build_dir / "caption_ir.json"
+        if caption_ir_path.exists():
+            from studio.captions import CaptionIR
+
+            self._caption_ir: CaptionIR | None = CaptionIR.model_validate_json(caption_ir_path.read_text(encoding="utf-8"))
+        else:
+            self._caption_ir = None
         self.caption_card: CaptionCard | None = None
         self._draft_cursor = 0.0
 
@@ -108,8 +115,9 @@ class _StoryMixin:
         target_dur = max(0.2, end - self.now())
 
         speaker = getattr(self.timeline.by_id(beat_id), "speaker", "narrator") if self.timeline is not None else "narrator"
+        pre_cues = [c for c in self._caption_ir.cues if c.beat_id == beat_id] if getattr(self, "_caption_ir", None) is not None else None
         if self.caption_card is not None:
-            self.caption_card.set_beat(words, narration, start, speech_end, speaker=speaker)
+            self.caption_card.set_beat(words, narration, start, speech_end, speaker=speaker, precompiled_cues=pre_cues)
         self.add_subcaption(caption_text, duration=max(0.1, end - start), offset=max(0.0, start - self.now()))  # type: ignore[attr-defined]
 
         if sfx is not None:

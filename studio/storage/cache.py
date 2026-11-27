@@ -197,3 +197,104 @@ class ArtifactCache:
     def close(self) -> None:
         if self._owns_store:
             self.store.close()
+
+
+DEPENDENCY_GROUPS: dict[str, tuple[str, ...]] = {
+    "script_gen": (
+        "studio/creative/director.py",
+        "studio/creative/script_ir.py",
+        "studio/creative/dialogue.py",
+        "studio/creative/models.py",
+        "studio/ai/director.py",
+    ),
+    "math_compute": (
+        "studio/ai/world_model.py",
+        "studio/ai/math_truth.py",
+        "studio/ai/expr.py",
+    ),
+    "math_validate": (
+        "studio/ai/validate_v3.py",
+        "studio/ai/v3_schema.py",
+    ),
+    "captions": (
+        "studio/captions/model.py",
+        "studio/captions/layout.py",
+        "studio/captions/ass.py",
+        "studio/timeline.py",
+    ),
+    "tts_voice": (
+        "studio/audio/tts.py",
+        "studio/audio/pronounce.py",
+    ),
+    "design_tokens": (
+        "studio/design/spec.py",
+        "studio/config.py",
+    ),
+    "fonts": (
+        "studio/design/fonts.py",
+    ),
+    "components": (
+        "studio/registry/__init__.py",
+        "studio/registry/base.py",
+        "studio/registry/math_ops.py",
+        "studio/registry/visuals.py",
+        "studio/registry/animations.py",
+        "studio/registry/compositions.py",
+    ),
+    "manimgx_backend": (
+        "studio/renderers/manimgx_backend.py",
+        "scenes/v3_scene.py",
+        "studio/layout/components.py",
+        "studio/scene.py",
+    ),
+    "hyperframes_backend": (
+        "studio/renderers/hyperframes_backend.py",
+        "studio/renderers/hyperframes/compiler.py",
+        "studio/renderers/hyperframes/components.py",
+        "studio/renderers/hyperframes/runtime.py",
+        "studio/renderers/hyperframes/captions.py",
+    ),
+    "layout_solver": (
+        "studio/layout/solver.py",
+    ),
+    "audio_master": (
+        "studio/audio/bgm.py",
+        "studio/audio/sfx.py",
+        "studio/audio/master.py",
+    ),
+}
+
+
+def compute_dependency_fingerprints(project_root: Path | None = None) -> dict[str, str]:
+    """Compute per-subsystem SHA-256 digests so theme/caption edits reuse math & TTS cleanly."""
+    root = project_root or Path(__file__).resolve().parent.parent.parent
+    out: dict[str, str] = {}
+    for group, rel_paths in DEPENDENCY_GROUPS.items():
+        h = hashlib.sha256()
+        for rel in rel_paths:
+            p = root / rel
+            if p.exists():
+                h.update(rel.encode("utf-8"))
+                h.update(p.read_bytes())
+        if group == "fonts":
+            font_dir = root / "assets" / "fonts"
+            if font_dir.exists():
+                for fp in sorted(font_dir.glob("*")):
+                    if fp.is_file():
+                        h.update(fp.name.encode("utf-8"))
+                        h.update(fp.read_bytes())
+        out[group] = h.hexdigest()[:12]
+    return out
+
+
+def validate_sidecar_bundle(sidecars: list[Path]) -> tuple[bool, str]:
+    """Verify sidecar artifacts (JSON/SRT/VTT/ASS/TXT) exist, are non-empty, and parse cleanly."""
+    for sp in sidecars:
+        if not sp.exists() or sp.stat().st_size == 0:
+            return False, f"missing_or_empty_sidecar:{sp.name}"
+        if sp.suffix.lower() == ".json":
+            try:
+                json.loads(sp.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                return False, f"corrupt_json_sidecar:{sp.name}:{exc}"
+    return True, "sidecars_valid"

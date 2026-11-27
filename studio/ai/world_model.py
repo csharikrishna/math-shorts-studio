@@ -533,6 +533,17 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                 stat = mk["stationary"]  # type: ignore[assignment]
                 if oid not in existing_ids:
                     lbls = [f"S{i}" for i in range(len(stat))]  # type: ignore[arg-type]
-                    sc.objects.append(SceneObject(id=oid, kind="bar_chart", persist=c.persist, color_role=c.color_role, values=stat, bar_labels=lbls, label=c.label or "stationary_dist"))  # type: ignore[arg-type]
+                    sc.objects.append(
+                        SceneObject(
+                            id=oid,
+                            kind="bar_chart",
+                            persist=c.persist,
+                            color_role=c.color_role,
+                            values=stat,  # type: ignore[arg-type]
+                            bar_labels=lbls,
+                            points_list=list(mk["states"]),  # type: ignore[arg-type]
+                            label=c.label or "stationary_dist",
+                        )
+                    )
                     existing_ids.add(oid)
     return out

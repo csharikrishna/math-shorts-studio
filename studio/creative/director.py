@@ -9,6 +9,7 @@ from studio.creative.dialogue import clean_spoken_text, format_dialogue_instruct
 from studio.creative.models import (
     ConceptAnalysis,
     CreativeBrief,
+    EXPLANATION_STRATEGY_GUIDES,
     EditorialIssue,
     EditorialReviewReport,
     NarrationMode,
@@ -17,6 +18,8 @@ from studio.creative.models import (
 from studio.creative.script_ir import (
     ScriptIR,
     ScriptRevision,
+    approve_script_ir,
+    commit_script_revision,
     export_script_md,
     validate_script_ir,
 )
@@ -104,40 +107,47 @@ class CreativeDirector:
         target_words = max(60, int(target_duration_s * 2.5))
         n_beats = max(4, min(14, round(target_duration_s / 8.5))) if target_duration_s <= 120 else max(8, min(20, round(target_duration_s / 14.0)))
 
+        strat_guide = EXPLANATION_STRATEGY_GUIDES.get(brief.selected_strategy, "")
         prompt = (
             f"Draft a ScriptIR JSON for:\n"
             f"TOPIC: {brief.concept.topic}\n"
             f"CENTRAL QUESTION: {brief.concept.central_question}\n"
-            f"SELECTED STRATEGY: {brief.selected_strategy}\n"
+            f"SELECTED STRATEGY: {brief.selected_strategy} — {strat_guide}\n"
             f"STORYLINE ARC: {selected.beat_arc if selected else ''}\n"
             f"OPENING 2s: {selected.opening_two_seconds if selected else ''}\n"
+            f"REAL-WORLD / CONCRETE EXAMPLES: {'; '.join(brief.concept.real_world_examples)}\n"
             f"MISCONCEPTIONS TO RESOLVE: {'; '.join(brief.concept.common_misconceptions)}\n"
             f"{dlg_rules}\n\n"
             f"TARGET: ~{target_duration_s:.0f}s ({n_beats} beats, ~{target_words} total words, minimum {min_words} words).\n"
-            "STRICT SCRIPT RULES:\n"
-            "- Write pure speakable English in `spoken_text` (NO raw LaTeX like \\frac or \\alpha; write 'x squared', 'lambda').\n"
+            "STRICT PEDAGOGICAL & SCRIPT RULES:\n"
+            "- Write pure speakable English in `spoken_text` (NO raw LaTeX like \\frac or \\alpha and NO code tokens like x_dot; write 'x dot', 'x squared', 'lambda').\n"
+            "- Open with a concrete example or visual paradox before introducing abstract formulas; define every symbol the moment it first appears (`symbols_introduced`).\n"
+            "- Connect each beat smoothly with natural `transition_from_prev` reasoning (never repeat opening stems or dramatic hype).\n"
             "- Use 1-2 *asterisk* emphasis words and place `<bookmark mark='m1'/>` right before key visual trigger words.\n"
             "- Every mark listed in `anchor_marks` MUST appear verbatim as `<bookmark mark='...'/>` in `spoken_text`.\n"
-            "- Populate `visual_intent`, `educational_purpose`, `mathematical_claims`, and `latex_refs` cleanly.\n"
+            "- Populate `visual_intent`, `educational_purpose`, `mathematical_claims`, `latex_refs`, and `beat_id` cleanly.\n"
             "- Populate `revisions` as empty list (tracked automatically).\n\n"
             f"{caps}"
         )
         script, _ = self.provider.generate_structured(prompt, ScriptIR, system=BRIEF_SYSTEM, temperature=0.45)
-        for b in script.beats:
+        for idx, b in enumerate(script.beats, 1):
             b.spoken_text = clean_spoken_text(b.spoken_text)
+            if not b.beat_id:
+                b.beat_id = f"b_{idx}"
+            if not b.scene_id:
+                b.scene_id = f"scene_{idx}"
         script.concept_analysis = brief.concept
         script.narration_mode = brief.narration_mode
         script.strategy = brief.selected_strategy
         script.audience = brief.audience
         script.central_question = brief.concept.central_question
-        script.revisions = [
-            ScriptRevision(
-                revision=1,
-                stage="initial",
-                notes="Initial ScriptIR generated from CreativeBrief",
-                beats=[b.model_copy(deep=True) for b in script.beats],
-            )
-        ]
+        script.revisions = []
+        commit_script_revision(
+            script,
+            stage="initial",
+            notes="Initial ScriptIR generated from CreativeBrief",
+            approve=False,
+        )
         return script
 
     def review_script(self, script: ScriptIR, *, use_llm: bool = False) -> EditorialReviewReport:
@@ -230,6 +240,9 @@ class CreativeDirector:
                 break
             script = self.repair_script(script, review, target_duration_s=target_duration_s)
             review = self.review_script(script, use_llm=False)
+
+        if review.approved and not validate_script_ir(script):
+            approve_script_ir(script, notes=review.summary or "Editorial review passed")
 
         if artifact_dir is not None:
             artifact_dir.mkdir(parents=True, exist_ok=True)

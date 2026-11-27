@@ -110,14 +110,42 @@ BANNED_CLICHES: tuple[str, ...] = (
     "let's dive right in",
     "without further ado",
     "treacherous mountain range",
+    "beautifully illustrating",
 )
 
 _SCRATCHPAD_RE = re.compile(r"```(?:scratchpad|plaintext)?.*?```|\[(?:pause|chuckle|laughs?|sighs?|music).*?\]", re.I | re.S)
+_RAW_IDENT_RE = re.compile(r"\b[a-zA-Z]+_[a-zA-Z0-9_]+\b")
 
 
 def detect_banned_cliches(text: str) -> list[str]:
     low = text.lower()
     return [phrase for phrase in BANNED_CLICHES if phrase in low]
+
+
+def detect_unpronounced_identifiers(text: str) -> list[str]:
+    """Detect raw code/underscore tokens like x_dot or mat_a in spoken prose (excluding bookmarks)."""
+    from studio.audio.tts import BOOKMARK_RE
+
+    stripped = BOOKMARK_RE.sub(" ", text)
+    return sorted(set(_RAW_IDENT_RE.findall(stripped)))
+
+
+def detect_narrative_anti_patterns(beats: list[object]) -> list[str]:
+    """Check sequence of beats for repeated formulaic phrasing or abrupt transition overuse."""
+    issues: list[str] = []
+    seen_openings: list[str] = []
+    for idx, b in enumerate(beats, 1):
+        txt = (b if isinstance(b, str) else str(getattr(b, "spoken_text", "") or getattr(b, "narration", ""))).strip()
+        words = txt.lower().split()
+        if len(words) >= 5:
+            stem = " ".join(words[:5])
+            if stem in seen_openings:
+                issues.append(f"beat {idx}: repeats identical 5-word opening stem {stem!r}; vary natural transitions.")
+            seen_openings.append(stem)
+        raw_ids = detect_unpronounced_identifiers(txt)
+        if raw_ids:
+            issues.append(f"beat {idx}: contains raw code/underscore identifier(s) {raw_ids} in spoken text; write speakable words (e.g. 'x dot').")
+    return issues
 
 
 def clean_spoken_text(text: str) -> str:

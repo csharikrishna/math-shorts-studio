@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import manimgx as m
@@ -167,8 +168,13 @@ class V3Scene(StoryScene):
             has_new_apparatus = any(o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network") for o in sc.objects)
 
             main_anims: list[m.Animation] = []
-            # Restore any hidden persisted axes before computing zones/obstacles
-            for ref_id in list(referenced_ids):
+            # Restore any hidden persisted objects (and their parent axes if needed) before computing zones/obstacles
+            restore_queue = list(referenced_ids)
+            for rid in list(restore_queue):
+                sp = self._obj_specs.get(rid)
+                if sp and sp.axes_id and sp.axes_id not in restore_queue:
+                    restore_queue.insert(0, sp.axes_id)
+            for ref_id in restore_queue:
                 if ref_id in self._hidden_persisted and ref_id not in self.registry:
                     restored_mob = self._hidden_persisted.pop(ref_id)
                     self.registry[ref_id] = restored_mob
@@ -193,8 +199,8 @@ class V3Scene(StoryScene):
                         self._live_unaxed_polys.discard(lid)
                         if lkind == "axes":
                             retire_axes.add(lid)
-                            if lid in self._obj_specs and self._obj_specs[lid].persist:
-                                self._hidden_persisted[lid] = old_mob
+                        if lid in self._obj_specs and self._obj_specs[lid].persist:
+                            self._hidden_persisted[lid] = old_mob
                         main_anims.append(m.FadeOut(old_mob))
                 if retire_axes:
                     for lid in list(self.registry.keys()):
@@ -394,6 +400,24 @@ class V3Scene(StoryScene):
             if new_ann_ids:
                 self._active_ann_id = new_ann_ids[-1]
 
+            # Record renderer object bounding metadata per scene for scene-aware QA
+            b_dir_env = os.environ.get("STUDIO_BUILD_DIR")
+            if b_dir_env:
+                meta_map = getattr(self, "_scene_meta_log", {})
+                meta_map[sc.scene_id] = [
+                    {
+                        "id": oid,
+                        "kind": self.obj_kinds.get(oid, "generic"),
+                        "box": [round(b.x, 1), round(b.y, 1), round(b.w, 1), round(b.h, 1)],
+                    }
+                    for oid, b in self._obj_boxes.items()
+                ]
+                self._scene_meta_log = meta_map
+                if idx == len(V3_PLAN.scenes) - 1:
+                    (Path(b_dir_env) / "scene_frame_metadata.json").write_text(
+                        json.dumps(meta_map, indent=2), encoding="utf-8"
+                    )
+
             to_drop = [self.registry.pop(o.id) for o in sc.objects if not o.persist and o.id in self.registry]
             for o in sc.objects:
                 if not o.persist:
@@ -477,9 +501,22 @@ class V3Scene(StoryScene):
             if not ev.source_id or ev.source_id not in self.registry:
                 raise RuntimeError(f"{ev.op} source_id {ev.source_id!r} not found in registry.")
             src = self.registry[ev.source_id]
-            if self.obj_kinds.get(ev.source_id) != self.obj_kinds.get(ev.target_id):
-                # Cross-kind visual morph (e.g. matrix -> polygon) should highlight source and reveal target without erasing source
+            src_kind = self.obj_kinds.get(ev.source_id)
+            dst_kind = self.obj_kinds.get(ev.target_id)
+            if src_kind != dst_kind:
+                # Cross-kind visual morph (e.g. matrix -> polygon) highlights source and reveals target cleanly
                 return m.AnimationGroup(m.Indicate(src, scale_factor=1.06), m.FadeIn(mob))
+            if src_kind == "equation" and isinstance(src, m.MathTex) and isinstance(mob, m.MathTex):
+                self.registry[ev.target_id] = mob
+                self.registry.pop(ev.source_id, None)
+                try:
+                    return m.TransformMatchingTex(src, mob)
+                except Exception:
+                    return m.ReplacementTransform(src, mob)
+            if src_kind == "equation" and isinstance(src, m.VGroup) and isinstance(mob, m.VGroup) and len(src) >= 2 and len(mob) >= 2 and isinstance(src[1], m.MathTex) and isinstance(mob[1], m.MathTex):
+                self.registry[ev.target_id] = mob
+                self.registry.pop(ev.source_id, None)
+                return m.AnimationGroup(m.Transform(src[0], mob[0]), m.TransformMatchingTex(src[1], mob[1]))
             self.registry[ev.target_id] = src
             if ev.source_id in self._live_unaxed_polys:
                 self._live_unaxed_polys.discard(ev.source_id)
@@ -503,8 +540,13 @@ class V3Scene(StoryScene):
         if ev.op == "scale" and ev.scale_factor:
             return mob.animate.scale(ev.scale_factor)
         if ev.op == "zoom":
-            sf = min(float(ev.scale_factor or 1.18), max(1.02, (self.layout.safe_w * 0.90) / max(float(mob.width), 1e-3)))
-            return m.AnimationGroup(mob.animate.scale(sf), m.Circumscribe(mob, color=self.theme.accent_primary))
+            sf = min(float(ev.scale_factor or 1.24), max(1.04, (self.layout.safe_w * 0.88) / max(float(mob.width), 1e-3)))
+            # Camera-like reframing on target assembly + dim/brighten emphasis bounded to stage
+            shift_to_center = (self.layout.stage_center - mob.get_center()) * 0.35
+            return m.AnimationGroup(
+                mob.animate.shift(shift_to_center).scale(sf),
+                m.Indicate(mob, scale_factor=1.04, color=self.theme.accent_primary),
+            )
         if ev.op == "rotate" and ev.angle_deg:
             # Never turn a matrix, table, equation, annotation, axes, or bar_chart diagonally sideways
             if self.obj_kinds.get(ev.target_id, "") in ("matrix", "table", "equation", "axes", "annotation", "bar_chart"):
@@ -539,6 +581,25 @@ class V3Scene(StoryScene):
             if tracker is not None and ev.param_values:
                 tracker.set_value(float(ev.param_values[0]))
                 return m.Succession(*(tracker.animate.set_value(float(v)) for v in ev.param_values[1:]))
+            step_states = getattr(mob, "_step_bar_states", None)
+            if step_states and isinstance(mob, m.VGroup):
+                bars_only = [sub for sub in mob if isinstance(sub, m.Rectangle)]
+                if bars_only and len(step_states) >= 2:
+                    anims_seq: list[m.Animation] = []
+                    base_bottom = min(float(b.get_bottom()[1]) for b in bars_only)
+                    max_bh = getattr(mob, "_bar_max_h", 2.0)
+                    for st_vals in step_states[1:]:
+                        mx_v = max([abs(v) for v in st_vals] + [1e-6])
+                        st_anims = []
+                        for b_rect, val in zip(bars_only, st_vals):
+                            new_h = max(0.03, abs(float(val)) / mx_v * max_bh)
+                            new_rect = b_rect.copy().stretch_to_fit_height(new_h)
+                            new_rect.move_to(np.array([b_rect.get_center()[0], base_bottom + new_h * 0.5, 0.0]))
+                            st_anims.append(m.Transform(b_rect, new_rect))
+                        anims_seq.append(m.AnimationGroup(*st_anims))
+                    return m.Succession(*anims_seq)
+            if self.obj_kinds.get(ev.target_id) == "data_series" and isinstance(mob, m.VMobject):
+                return m.Create(mob)
             if isinstance(mob, m.VGroup) and len(mob) > 1:
                 return m.LaggedStart(*(m.Indicate(sub, scale_factor=1.06) for sub in mob), lag_ratio=0.14)
             if isinstance(mob, m.VMobject):
@@ -605,14 +666,16 @@ class V3Scene(StoryScene):
             )
             cx, cy, x_len, y_len = px_box_to_manim(pbox, zones, L.frame_w, L.frame_h)
             axis_col = T.text_muted if not getattr(T, "is_light", False) else T.text_primary
+            eq_clearance = 0.88 if zones.equation_box.h > 0 else 0.94
+            y_shift = -0.10 if zones.equation_box.h > 0 else 0.0
             ax = m.Axes(
                 x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
                 y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
-                x_length=x_len,
-                y_length=y_len,
+                x_length=x_len * 0.94,
+                y_length=y_len * eq_clearance,
                 axis_config={"color": axis_col, "stroke_width": 2.1, "include_tip": True},
                 tips=True,
-            ).move_to(np.array([cx, cy, 0.0]))
+            ).move_to(np.array([cx, cy + y_shift, 0.0]))
             self.axes_ranges[obj.id] = (xr, yr)
             self._obj_boxes[obj.id] = pbox
             self._scene_obstacles.append(pbox)
@@ -870,19 +933,25 @@ class V3Scene(StoryScene):
                     bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
                     grp.add(bar)
                 if i < len(obj.bar_labels) and obj.bar_labels[i] and (i % lbl_step == 0 or (i == n - 1 and (n - 1) % lbl_step >= max(2, lbl_step // 2))):
-                    lbl = m.Text(obj.bar_labels[i], font_size=24, font=CAPTION_FONT, color=T.text_muted, **_FONT_KWARGS)
+                    from studio.renderers.hyperframes.typography import _pretty_math_label
+
+                    lbl_str = _pretty_math_label(obj.bar_labels[i]) if "\\" in obj.bar_labels[i] or "_" in obj.bar_labels[i] else obj.bar_labels[i]
+                    lbl = m.Text(lbl_str, font_size=26, font=CAPTION_FONT, color=T.text_muted, **_FONT_KWARGS)
                     fit_mobject(lbl, max_width=w * lbl_step * 0.85, min_height=L.min_text_h)
                     x_pos = -0.5 * chart_w + (i + 0.5) * w
                     lbl.move_to(np.array([x_pos, base_y - 0.34, 0.0]))
                     grp.add(lbl)
             grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
             pbox = self._manim_to_px_box(grp, role="bar_chart")
-            placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=12.0)[0]
+            placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=18.0)[0]
             px_cx, px_cy, _, _ = px_box_to_manim(placed_box, self._cur_zones, L.frame_w, L.frame_h)
             grp.move_to(np.array([px_cx, px_cy, 0.0]))
             self._obj_boxes[obj.id] = placed_box
             self._scene_obstacles.append(placed_box)
             grp._is_bar_chart = True  # type: ignore[attr-defined]
+            grp._bar_max_h = max_h  # type: ignore[attr-defined]
+            if obj.points_list and len(obj.points_list) >= 2:
+                grp._step_bar_states = obj.points_list  # type: ignore[attr-defined]
             return grp
 
         if obj.kind == "angle_arc":

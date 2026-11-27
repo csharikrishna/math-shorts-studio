@@ -132,6 +132,10 @@ class MasterTimeline:
         txt_path = out_dir / f"{stem}_transcript.txt"
         words_path = out_dir / f"{stem}_words.json"
         captions_path = out_dir / f"{stem}_captions.json"
+        caption_ir_path = out_dir / f"{stem}_caption_ir.json"
+        canonical_ir_path = out_dir / "caption_ir.json"
+
+        import hashlib as _hashlib
 
         ir = build_caption_ir(
             self.audio.beats,
@@ -139,6 +143,11 @@ class MasterTimeline:
             width_px=prof.pixel_width,
             height_px=prof.pixel_height,
         )
+        tl_payload = json.dumps([asdict(b) for b in self.audio.beats], sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ir.source_timeline_hash = _hashlib.sha256(tl_payload).hexdigest()[:16]
+        ir_json = ir.model_dump_json(indent=2)
+        caption_ir_path.write_text(ir_json, encoding="utf-8")
+        canonical_ir_path.write_text(ir_json, encoding="utf-8")
         segments = [
             CaptionSegment(
                 beat_id=c.beat_id,
@@ -195,4 +204,5 @@ class MasterTimeline:
             "transcript": txt_path,
             "words": words_path,
             "captions": captions_path,
+            "caption_ir": caption_ir_path,
         }

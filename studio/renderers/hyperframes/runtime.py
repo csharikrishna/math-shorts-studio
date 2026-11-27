@@ -159,40 +159,60 @@ def build_runtime_js(payload_json: str) -> str:
       if (t < el.show_at || t >= el.hide_at) continue;
       const p = clamp01(easeOutExpo((t - el.show_at) / enterDur));
       const [bx, by, bw, bh] = el.box;
+      let tx = 0, ty = 0, rot = 0, scF = 1;
+      if (el.transforms && el.transforms.length) {{
+        for (const tr of el.transforms) {{
+          if (t < tr.t0) continue;
+          const tp = clamp01(easeInOutCubic((t - tr.t0) / Math.max(0.15, tr.t1 - tr.t0)));
+          tx += (tr.dx_px || 0) * tp;
+          ty += (tr.dy_px || 0) * tp;
+          rot += -(tr.angle_deg || 0) * tp;
+          if (tr.op === "scale" || tr.op === "zoom") {{
+            scF *= 1 + ((tr.scale || 1) - 1) * tp;
+          }}
+        }}
+      }}
+      const cxEl = bx + bw * 0.5;
+      const cyEl = by + bh * 0.5;
+      const hasTx = Math.abs(tx) > 0.05 || Math.abs(ty) > 0.05 || Math.abs(rot) > 0.05 || Math.abs(scF - 1) > 0.002;
+      const svgTarget = hasTx
+        ? svgEl("g", {{ transform: `translate(${{tx.toFixed(2)}},${{ty.toFixed(2)}}) translate(${{cxEl.toFixed(1)}},${{cyEl.toFixed(1)}}) rotate(${{rot.toFixed(2)}}) scale(${{scF.toFixed(4)}}) translate(${{(-cxEl).toFixed(1)}},${{(-cyEl).toFixed(1)}})` }})
+        : layers;
+      if (hasTx) layers.appendChild(svgTarget);
 
       if (el.kind === "axes" && el.axes) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         g.appendChild(svgEl("rect", {{ x: bx, y: by, width: bw, height: bh, fill: DATA.look.surface, "fill-opacity": 0.22, stroke: DATA.look.grid_line, "stroke-width": 1, rx: 10 }}));
         g.appendChild(svgEl("line", {{ x1: bx, y1: el.axes.oy, x2: bx + bw, y2: el.axes.oy, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
         g.appendChild(svgEl("line", {{ x1: el.axes.ox, y1: by + bh, x2: el.axes.ox, y2: by, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
-        layers.appendChild(g);
+        svgTarget.appendChild(g);
       }} else if ((el.kind === "function_plot" || el.kind === "parametric_curve" || el.kind === "waveform" || el.kind === "data_series") && el.polyline && el.polyline.length > 1) {{
         const nVis = Math.max(2, Math.floor(el.polyline.length * p));
         const ptsStr = el.polyline.slice(0, nVis).map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
-        layers.appendChild(svgEl("polyline", {{
+        svgTarget.appendChild(svgEl("polyline", {{
           points: ptsStr, fill: "none", stroke: el.color, "stroke-width": 4, "stroke-linecap": "round", "stroke-linejoin": "round",
           "data-hf-elem": el.id
         }}));
       }} else if ((el.kind === "polygon" || el.kind === "probability_region") && el.polygon && el.polygon.length >= 3) {{
         const ptsStr = el.polygon.map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
-        layers.appendChild(svgEl("polygon", {{
+        svgTarget.appendChild(svgEl("polygon", {{
           points: ptsStr, fill: el.color, "fill-opacity": 0.30 * p, stroke: el.color, "stroke-width": 3, opacity: p, "data-hf-elem": el.id
         }}));
       }} else if (el.kind === "circle" && el.circle) {{
-        layers.appendChild(svgEl("circle", {{
+        svgTarget.appendChild(svgEl("circle", {{
           cx: el.circle.cx, cy: el.circle.cy, r: el.circle.r * p, fill: "none", stroke: el.color, "stroke-width": 3.2, opacity: p, "data-hf-elem": el.id
         }}));
       }} else if (el.kind === "point" && el.point) {{
         const pt = el.orbit && el.orbit.length > 1
           ? el.orbit[Math.min(el.orbit.length - 1, Math.floor((el.orbit.length - 1) * easeInOutCubic((t - el.show_at) / Math.max(0.5, el.hide_at - el.show_at))))]
           : el.point;
-        layers.appendChild(svgEl("circle", {{ cx: pt[0], cy: pt[1], r: 8 * springEval(t - el.show_at, enterDur, 0.72, 180), fill: el.color, "data-hf-elem": el.id }}));
+        svgTarget.appendChild(svgEl("circle", {{ cx: pt[0], cy: pt[1], r: 8 * springEval(t - el.show_at, enterDur, 0.72, 180), fill: el.color, "data-hf-elem": el.id }}));
       }} else if ((el.kind === "vector" || el.kind === "line") && el.segment) {{
         const x2 = el.segment.x1 + (el.segment.x2 - el.segment.x1) * p;
         const y2 = el.segment.y1 + (el.segment.y2 - el.segment.y1) * p;
         const attrs = {{ x1: el.segment.x1, y1: el.segment.y1, x2: x2, y2: y2, stroke: el.color, "stroke-width": 3.5, "data-hf-elem": el.id }};
         if (el.segment.arrow) attrs["marker-end"] = "url(#hf-arrow)";
-        layers.appendChild(svgEl("line", attrs));
+        svgTarget.appendChild(svgEl("line", attrs));
       }} else if (el.kind === "bar_chart" && el.bars) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         const n = el.bars.length;
@@ -209,7 +229,7 @@ def build_runtime_js(payload_json: str) -> str:
             g.appendChild(txt);
           }}
         }});
-        layers.appendChild(g);
+        svgTarget.appendChild(g);
       }} else if (el.kind === "graph_network" && el.network) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         const ns = el.network.nodes || [];
@@ -225,13 +245,13 @@ def build_runtime_js(payload_json: str) -> str:
           lbl.textContent = (el.network.labels && el.network.labels[idx]) ? el.network.labels[idx] : `S${{idx}}`;
           g.appendChild(lbl);
         }});
-        layers.appendChild(g);
+        svgTarget.appendChild(g);
       }} else if (el.kind === "particle_system" && el.particles) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         for (const pt of el.particles) {{
           g.appendChild(svgEl("circle", {{ cx: pt[0], cy: pt[1], r: 4.5, fill: el.color }}));
         }}
-        layers.appendChild(g);
+        svgTarget.appendChild(g);
       }} else if (el.kind === "number_line" && el.number_line) {{
         const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
         const cy = by + bh * 0.65;
@@ -244,7 +264,7 @@ def build_runtime_js(payload_json: str) -> str:
           lbl.textContent = (x0 + ((x1 - x0) * i) / 4).toFixed(1).replace(/\\.0$/, "");
           g.appendChild(lbl);
         }}
-        layers.appendChild(g);
+        svgTarget.appendChild(g);
       }} else if (el.kind === "equation") {{
         const card = document.createElement("div");
         card.className = "hf-eq-card";
@@ -295,7 +315,7 @@ def build_runtime_js(payload_json: str) -> str:
       }} else if (el.kind === "annotation" && el.text_pos) {{
         const txt = svgEl("text", {{ x: el.text_pos[0], y: el.text_pos[1], fill: el.color, "font-size": DATA.typo.body_px, "font-weight": "700", "text-anchor": "middle", opacity: p, "data-hf-elem": el.id }});
         txt.textContent = el.text || el.label;
-        layers.appendChild(txt);
+        svgTarget.appendChild(txt);
       }}
     }}
   }}

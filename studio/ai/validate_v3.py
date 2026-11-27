@@ -17,9 +17,12 @@ from studio.ai.math_truth import (
     is_local_minimum,
     is_stationary_point,
     matrix_transform_and_eigen,
+    is_row_stochastic_matrix,
     symbolic_derivative,
     verify_eigenvalue_stability_regime,
+    verify_graph_stochastic_weights,
     verify_polynomial_degree,
+    verify_stationary_distribution,
 )
 from studio.ai.schema import BOOKMARK_RE
 from studio.ai.v3_schema import SceneObject, VideoPlanV3
@@ -519,11 +522,53 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                         issues.append(msg); failed_claims.append(msg)
 
             elif cl.kind == "markov_stochastic_invariant":
-                if not cl.statement.strip():
-                    msg = f"{where} claim markov_stochastic_invariant: statement must describe stochastic matrix invariant."
+                mats = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind == "matrix"]
+                bars = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind == "bar_chart"]
+                graphs = [live_objs[oid] for oid in cl.object_ids if live_objs[oid].kind == "graph_network"]
+                mk_con = next((c for c in sc.constructions if c.op == "markov_chain_evolution" and c.params.transition_matrix), None)
+                checked_any = False
+                mk_failed = False
+
+                for mat_obj in mats:
+                    try:
+                        p_mat = [[float(cell) for cell in row] for row in mat_obj.matrix_rows]
+                    except ValueError:
+                        p_mat = []
+                    if p_mat:
+                        ok_m, m_msg = is_row_stochastic_matrix(p_mat, tol=max(cl.tolerance, 2e-2))
+                        checked_any = True
+                        if not ok_m:
+                            msg = f"{where} claim markov_stochastic_invariant ({mat_obj.id}): {m_msg}."
+                            issues.append(msg); failed_claims.append(msg); mk_failed = True
+                for bar_obj in bars:
+                    checked_any = True
+                    if mk_con and mk_con.params.transition_matrix and bar_obj.values:
+                        ok_s, s_msg = verify_stationary_distribution(mk_con.params.transition_matrix, bar_obj.values, tol=max(cl.tolerance, 2e-2))
+                        if not ok_s:
+                            msg = f"{where} claim markov_stochastic_invariant ({bar_obj.id}): {s_msg}."
+                            issues.append(msg); failed_claims.append(msg); mk_failed = True
+                    elif abs(sum(bar_obj.values) - 1.0) > max(cl.tolerance, 2e-2) or any(v < -1e-6 for v in bar_obj.values):
+                        msg = f"{where} claim markov_stochastic_invariant ({bar_obj.id}): distribution sum={sum(bar_obj.values):.4f} != 1.0."
+                        issues.append(msg); failed_claims.append(msg); mk_failed = True
+                for g_obj in graphs:
+                    checked_any = True
+                    ok_g, g_msg = verify_graph_stochastic_weights(len(g_obj.points_list), g_obj.edge_pairs, tol=max(cl.tolerance, 5e-2))
+                    if not ok_g:
+                        msg = f"{where} claim markov_stochastic_invariant ({g_obj.id}): {g_msg}."
+                        issues.append(msg); failed_claims.append(msg); mk_failed = True
+
+                if not checked_any and mk_con and mk_con.params.transition_matrix:
+                    ok_m, m_msg = is_row_stochastic_matrix(mk_con.params.transition_matrix, tol=max(cl.tolerance, 2e-2))
+                    checked_any = True
+                    if not ok_m:
+                        msg = f"{where} claim markov_stochastic_invariant: {m_msg}."
+                        issues.append(msg); failed_claims.append(msg); mk_failed = True
+
+                if not checked_any:
+                    msg = f"{where} claim markov_stochastic_invariant: no verifiable stochastic matrix, distribution bar_chart, or weighted graph linked in object_ids."
                     issues.append(msg); unsupported_claims.append(msg)
-                else:
-                    verified_claims.append(f"{where}: markov_stochastic_invariant")
+                elif not mk_failed:
+                    verified_claims.append(f"{where}: markov_stochastic_invariant({cl.object_ids})")
 
         # Supplementary narration-to-visual consistency checks
         low_narr = sc.narration.lower()
@@ -553,8 +598,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                 for later_sc in plan.scenes[idx:]
                 for o in later_sc.objects
             )
-            if not (has_local or has_later):
-                issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon referencing axes_id={ax_id!r}.")
+            if not (has_local or (not require_claims and has_later)):
+                issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon in this scene.")
         live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if st_v in ("declared", "visible")}
         if require_claims and "axes" in live_stage_kinds and not scene_non_chrome and not any(o.kind in ("matrix", "table", "bar_chart", "graph_network") for o in sc.objects):
             if not any(o.axes_id for o in scene_non_chrome) and not scene_axes_ids:
@@ -567,11 +612,48 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
     if require_claims and total_claims == 0:
         issues.append("Mathematical plan must include at least one StructuredClaim in scenes[].claims.")
 
-    unclaimed_non_constructive = sum(1 for sc in plan.scenes if not sc.claims and not sc.constructions)
+    # Generalized narration-to-claim coverage audit (catch unbacked math assertions even when scenes omit StructuredClaim)
+    _MAT_OBLIGATION_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (r"\b(?:rows?\s+sum\s+to\s+one|row[- ]stochastic|probabilities?\s+sum\s+to\s+(?:1|one)|stationary\s+(?:distribution|equilibrium))\b", ("markov_stochastic_invariant", "probability_normalization", "markov_chain_evolution")),
+        (r"\b(?:determinant\s+(?:of|equals|is))\b", ("eigenvalue_determinant", "eigen_decomposition_2x2")),
+        (r"\b(?:eigenvalues?\s+(?:have|with)\s+(?:negative|positive|zero)\s+real|asymptotically\s+stable)\b", ("eigenvalue_stability_regime", "eigen_decomposition_2x2", "ode_phase_trajectory")),
+        (r"\b(?:derivative\s+(?:of|equals|is))\b", ("derivative_equality", "stationary_point", "local_minimum", "gradient_descent_path")),
+        (r"\b(?:posterior\s+probability|given\s+evidence)\b", ("conditional_probability", "bayes_area_model")),
+        (r"\b(?:area\s+(?:conserved|equals|conservation)|pythagorean)\b", ("area_conservation", "area_equality", "pythagorean_dissection", "right_triangle")),
+    )
+    narration_gaps: list[str] = []
+    if require_claims:
+        for sc in plan.scenes:
+            cl_kinds = {c.kind for c in sc.claims}
+            con_ops = {c.op for c in sc.constructions}
+            backed = cl_kinds | con_ops
+            low_n = sc.narration.lower()
+            for pat, accepted in _MAT_OBLIGATION_PATTERNS:
+                if re.search(pat, low_n) and not (backed & set(accepted)):
+                    msg = f"scene {sc.scene_id}: narration asserts mathematical rule ({pat[:40]}...) without backed claim/construction {accepted[:2]}"
+                    narration_gaps.append(msg)
+                    unsupported_claims.append(msg)
+
+    # Conceptual visual hooks (e.g. number-line intuition with no equations/matrices/claims text) are allowed ONLY if non-assertive
+    unclaimed_math_scenes = 0
+    unclaimed_math_msgs: list[str] = []
+    for sc in plan.scenes:
+        if sc.claims or sc.constructions:
+            continue
+        formal_ids = [o.id for o in sc.objects if o.kind in ("matrix", "equation", "function_plot", "probability_region", "table", "bar_chart")]
+        if formal_ids:
+            unclaimed_math_scenes += 1
+            unclaimed_math_msgs.append(
+                f"scene {sc.scene_id}: formal visual(s) {formal_ids} lack a verified StructuredClaim or ConstructionOp."
+            )
+    if require_claims and narration_gaps:
+        issues.extend(narration_gaps)
+
+    unclaimed_non_constructive = unclaimed_math_scenes
     explicit_ai_reviewed = sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "ai_reviewed")
     coverage = {
         "deterministically_verified": len(verified_claims),
-        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path")),
+        "numerically_tested": sum(1 for sc in plan.scenes for c in sc.constructions if c.op in ("ode_phase_trajectory", "fourier_general_synthesis", "riemann_integral", "gradient_descent_path", "markov_chain_evolution", "discrete_pmf_convolution")),
         "source_supported": sum(1 for sc in plan.scenes for cl in sc.claims if cl.verification_level == "source_supported"),
         "ai_reviewed": explicit_ai_reviewed,
         "unsupported": len(unsupported_claims) + (unclaimed_non_constructive if require_claims else 0),
@@ -583,6 +665,8 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         "verified": verified_claims,
         "failed": failed_claims,
         "unsupported": unsupported_claims,
+        "unclaimed_math_scenes": unclaimed_math_msgs,
+        "narration_gaps": narration_gaps,
         "verification_coverage": coverage,
     }
 

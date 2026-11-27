@@ -122,6 +122,12 @@ def chunk_caption_cues(
             max_width_px=max_width_px,
             max_lines=max_lines,
         )
+        provs = [w.timing_provenance for w in chunk_words]
+        cue_prov = (
+            "tts_word_boundary"
+            if all(p == "tts_word_boundary" for p in provs)
+            else ("forced_aligned" if "forced_aligned" in provs else ("estimated" if all(p == "estimated" for p in provs) else "interpolated"))
+        )
         cues.append(
             CaptionCue(
                 cue_id=f"cue_{cue_counter:04d}",
@@ -132,22 +138,31 @@ def chunk_caption_cues(
                 end_s=max(float(chunk_words[0].start_s) + 0.15, float(chunk_words[-1].end_s)),
                 lines=lines,
                 words=chunk_words,
+                original_text=" ".join(w.text for w in chunk_words),
+                spoken_text=" ".join(w.spoken_token or w.text for w in chunk_words),
+                timing_provenance=cue_prov,  # type: ignore[arg-type]
             )
         )
 
     for b in beats:
         timed_words: list[CaptionWord] = []
+        b_provs = list(getattr(b, "word_provenance", []) or [])
         if b.words and len(b.words) >= len((b.narration or "").split()):
-            for w in b.words:
+            for wi, w in enumerate(b.words):
                 tok = _clean_word(w[0])
                 if not tok:
                     continue
+                prov = b_provs[wi] if wi < len(b_provs) else (str(w[4]) if len(w) > 4 else "tts_word_boundary")
+                if prov not in ("forced_aligned", "tts_word_boundary", "interpolated", "estimated"):
+                    prov = "tts_word_boundary"
                 timed_words.append(
                     CaptionWord(
                         text=tok,
                         start_s=float(w[1]),
                         end_s=float(w[2]),
                         emphasis=bool(w[3]) if len(w) > 3 else False,
+                        spoken_token=tok,
+                        timing_provenance=prov,  # type: ignore[arg-type]
                     )
                 )
         if not timed_words:
@@ -164,6 +179,8 @@ def chunk_caption_cues(
                         start_s=round(float(b.start_time) + i * step, 4),
                         end_s=round(float(b.start_time) + (i + 1) * step, 4),
                         emphasis=False,
+                        spoken_token=tok,
+                        timing_provenance="estimated",
                     )
                 )
 
@@ -246,6 +263,10 @@ def build_caption_ir(
         (getattr(b, "speaker", "narrator") or "narrator"): _speaker_display(getattr(b, "speaker", "narrator"))
         for b in beat_list
     }
+    prov_counts: dict[str, int] = {}
+    for c in cues:
+        for w in c.words:
+            prov_counts[w.timing_provenance] = prov_counts.get(w.timing_provenance, 0) + 1
     return CaptionIR(
         style=norm_style,
         aspect_label="9:16" if is_vert else "16:9",
@@ -257,4 +278,5 @@ def build_caption_ir(
         speaker_labels=sp_labels,
         cues=cues,
         preset=preset,
+        timing_provenance_counts=prov_counts,
     )

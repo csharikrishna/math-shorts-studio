@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 CaptionStyle = Literal["editorial", "kinetic", "minimal", "dialogue", "accessible", "off"]
+TimingProvenance = Literal["forced_aligned", "tts_word_boundary", "interpolated", "estimated"]
 
 
 class CaptionWord(BaseModel):
@@ -13,6 +14,8 @@ class CaptionWord(BaseModel):
     start_s: float
     end_s: float
     emphasis: bool = False
+    spoken_token: str = ""
+    timing_provenance: TimingProvenance = "tts_word_boundary"
 
 
 class CaptionCue(BaseModel):
@@ -24,6 +27,9 @@ class CaptionCue(BaseModel):
     end_s: float
     lines: list[str] = Field(default_factory=list)
     words: list[CaptionWord] = Field(default_factory=list)
+    original_text: str = ""
+    spoken_text: str = ""
+    timing_provenance: TimingProvenance = "tts_word_boundary"
 
     @property
     def text(self) -> str:
@@ -162,3 +168,5 @@ class CaptionIR(BaseModel):
     speaker_labels: dict[str, str] = Field(default_factory=dict)
     cues: list[CaptionCue] = Field(default_factory=list)
     preset: Optional[CaptionPresetConfig] = None
+    timing_provenance_counts: dict[str, int] = Field(default_factory=dict)
+    source_timeline_hash: str = ""

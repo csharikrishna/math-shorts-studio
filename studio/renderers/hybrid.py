@@ -89,10 +89,17 @@ class HybridRenderBackend(RenderBackend):
         pitch: str = "-2Hz",
     ) -> BackendRenderResult:
         from studio.ai.v3_schema import VideoPlanV3
+        from studio.ai.world_model import materialize_constructions
         from studio.renderers.hyperframes import HyperFramesBackend
         from studio.renderers.hyperframes.browser import _current_process_rss_mb
         from studio.renderers.manimgx_backend import ManimGXBackend
+        from studio.renderers.scene_state import (
+            SceneRuntimeState,
+            advance_scene_state,
+            materialize_carry_objects,
+        )
 
+        plan = materialize_constructions(plan)
         t0 = time.perf_counter()
         prof = FORMATS.get(format_name, FORMATS["widescreen_hd"])
         resolved_look = resolve_look(look_name).name
@@ -154,8 +161,8 @@ class HybridRenderBackend(RenderBackend):
         seg_raw_mp4s: list[Path] = []
         layout_issues: list[str] = []
 
-        # Collect prior persistent objects safely so each segment validates cleanly
-        declared_before: dict[str, object] = {}
+        # Track canonical evaluated SceneRuntimeState across backend boundaries so transforms persist & removed items stay gone
+        runtime_state = SceneRuntimeState()
         for s_idx, part in enumerate(parts):
             seg_dir = bdir / f"seg_{s_idx:02d}_{part.backend}"
             seg_dir.mkdir(parents=True, exist_ok=True)
@@ -166,14 +173,20 @@ class HybridRenderBackend(RenderBackend):
                     {e.target_id for sc in seg_scenes for e in sc.events}
                     | {e.source_id for sc in seg_scenes for e in sc.events if e.source_id}
                     | {o.axes_id for sc in seg_scenes for o in sc.objects if o.axes_id}
-                ) - seg_ids_in_part
-                carry_objs = [declared_before[oid] for oid in needed if oid in declared_before]
+                ) - seg_ids_in_part - runtime_state.removed_ids
+                carry_objs = [
+                    co for co in materialize_carry_objects(runtime_state, needed, include_visible_persistent=True)
+                    if co.id not in seg_ids_in_part
+                ]
                 if carry_objs:
-                    seg_scenes[0].objects = list(carry_objs) + list(seg_scenes[0].objects)  # type: ignore[arg-type]
+                    # Parent axes must precede dependent carried overlays so coordinate mapping matches
+                    carry_objs.sort(key=lambda o: 0 if o.kind == "axes" else 1)
+                    seg_scenes[0].objects = list(carry_objs) + list(seg_scenes[0].objects)
 
+            (seg_dir / "seg_state_in.json").write_text(runtime_state.model_dump_json(indent=2), encoding="utf-8")
             for sc in part.scenes:
-                for o in sc.objects:
-                    declared_before[o.id] = o
+                runtime_state = advance_scene_state(runtime_state, sc)
+            (seg_dir / "seg_state_out.json").write_text(runtime_state.model_dump_json(indent=2), encoding="utf-8")
 
             seg_plan = VideoPlanV3(
                 schema_version="3.0",

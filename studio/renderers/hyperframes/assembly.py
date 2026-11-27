@@ -80,8 +80,20 @@ class HyperFramesBackend(RenderBackend):
         SfxLibrary(bdir / "sfx").ensure_all()
         bgm_wav = generate_ambient_bgm(bdir / "bgm.wav", duration=audio_timeline.total_duration + 3.0)
 
+        from studio.captions import CaptionIR
+        from studio.timeline import MasterTimeline
+
+        cap_ir_file = bdir / "caption_ir.json"
+        if not cap_ir_file.exists():
+            MasterTimeline(audio=audio_timeline).export_subtitles(
+                bdir, slug, caption_style=resolved_cap, format_name=format_name, look_name=resolved_look
+            )
+        shared_cap_ir = CaptionIR.model_validate_json(cap_ir_file.read_text(encoding="utf-8")) if cap_ir_file.exists() else None
+
         design = default_design_spec(format_name=format_name, look_name=resolved_look)
-        html_doc, _total_dur = compile_plan_to_html(plan, design, audio_timeline=audio_timeline, caption_style=resolved_cap)
+        html_doc, _total_dur = compile_plan_to_html(
+            plan, design, audio_timeline=audio_timeline, caption_style=resolved_cap, caption_ir=shared_cap_ir
+        )
         site_dir = bdir / "site"
         site_dir.mkdir(parents=True, exist_ok=True)
         stage_fonts_to_site(site_dir)

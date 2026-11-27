@@ -564,3 +564,75 @@ def markov_chain_trajectory(
     pi_vec = np.abs(vecs[:, idx].real)
     pi_vec = pi_vec / (pi_vec.sum() or 1.0)
     return {"states": states, "stationary": [float(v) for v in pi_vec]}
+
+
+def is_row_stochastic_matrix(matrix: list[list[float]], tol: float = 1e-2) -> tuple[bool, str]:
+    """Verify square non-negative matrix whose every row sums to 1.0."""
+    import numpy as np
+
+    try:
+        P = np.asarray(matrix, dtype=float)
+    except (TypeError, ValueError) as exc:
+        return False, f"non-numeric transition matrix ({exc})"
+    if P.ndim != 2 or P.shape[0] == 0 or P.shape[0] != P.shape[1]:
+        return False, f"expected square non-empty matrix, got shape {P.shape}"
+    if not np.all(np.isfinite(P)) or np.any(P < -1e-6):
+        return False, "transition matrix contains non-finite or negative entries"
+    row_sums = P.sum(axis=1)
+    bad_rows = [(i, float(s)) for i, s in enumerate(row_sums) if abs(float(s) - 1.0) > tol]
+    if bad_rows:
+        return False, f"row sums must equal 1.0 (bad rows={bad_rows})"
+    return True, f"valid {P.shape[0]}x{P.shape[0]} row-stochastic matrix"
+
+
+def verify_stationary_distribution(matrix: list[list[float]], pi_vec: list[float], tol: float = 2e-2) -> tuple[bool, str]:
+    """Verify non-negative normalized vector pi satisfies pi @ P ~= pi."""
+    import numpy as np
+
+    ok_mat, mat_msg = is_row_stochastic_matrix(matrix, tol=tol)
+    if not ok_mat:
+        return False, mat_msg
+    P = np.asarray(matrix, dtype=float)
+    pi = np.asarray(pi_vec, dtype=float)
+    if pi.shape != (P.shape[0],) or not np.all(np.isfinite(pi)) or np.any(pi < -1e-6):
+        return False, f"stationary vector dimension or sign invalid ({pi.shape})"
+    s_pi = float(pi.sum())
+    if abs(s_pi - 1.0) > tol:
+        return False, f"stationary vector sum={s_pi:.4f} != 1.0"
+    resid = float(np.max(np.abs((pi / s_pi) @ P - (pi / s_pi))))
+    if resid > tol:
+        return False, f"stationary invariant |pi*P - pi|_inf = {resid:.4f} > {tol}"
+    return True, f"stationary invariant verified (resid={resid:.5f})"
+
+
+def verify_graph_stochastic_weights(n_nodes: int, edge_pairs: list[list[str]], tol: float = 5e-2) -> tuple[bool, str]:
+    """Verify graph_network node indices and optional outgoing transition weight normalization."""
+    if n_nodes < 1:
+        return False, "graph_network has zero nodes"
+    out_sums: dict[int, float] = {}
+    has_weights = False
+    for edge in edge_pairs:
+        if len(edge) < 2:
+            return False, f"malformed edge {edge!r}"
+        try:
+            u, v = int(edge[0]), int(edge[1])
+        except ValueError:
+            return False, f"non-integer node index in edge {edge!r}"
+        if not (0 <= u < n_nodes and 0 <= v < n_nodes):
+            return False, f"edge ({u}, {v}) out of bounds [0, {n_nodes - 1}]"
+        if len(edge) >= 3 and str(edge[2]).strip():
+            has_weights = True
+            try:
+                w = float(str(edge[2]).rstrip("%"))
+                if str(edge[2]).strip().endswith("%"):
+                    w /= 100.0
+            except ValueError:
+                return False, f"non-numeric edge weight {edge[2]!r}"
+            if w < -1e-6 or w > 1.0 + tol:
+                return False, f"edge weight {w} outside [0, 1]"
+            out_sums[u] = out_sums.get(u, 0.0) + w
+    if has_weights:
+        bad = {k: round(s, 4) for k, s in out_sums.items() if abs(s - 1.0) > tol}
+        if bad:
+            return False, f"outgoing stochastic weights do not sum to 1.0 at nodes {bad}"
+    return True, f"valid {n_nodes}-node graph ({len(edge_pairs)} edges)"

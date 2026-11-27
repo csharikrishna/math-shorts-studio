@@ -252,146 +252,101 @@ def verify_longform_bundle(
     return QACheck("longform_bundle", "passed", f"dur={dur:.2f}s; {loud.detail}; {streams.detail}")
 
 
+def verify_caption_synchronization(
+    *,
+    caption_ir: object | None = None,
+    caption_ir_path: Path | None = None,
+    srt_path: Path | None = None,
+    caption_zone_ok: bool | None = None,
+) -> QACheck:
+    """Independently verify CaptionIR timing monotonicity, alignment provenance, and subtitle sidecar."""
+    import json as _json
+
+    ir_obj = caption_ir
+    if ir_obj is None and caption_ir_path is not None and caption_ir_path.exists():
+        from studio.captions import CaptionIR
+
+        try:
+            ir_obj = CaptionIR.model_validate_json(caption_ir_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return QACheck("caption_synchronization", "failed", f"Invalid CaptionIR JSON: {exc}")
+
+    if ir_obj is None and srt_path is not None and srt_path.exists():
+        txt = srt_path.read_text(encoding="utf-8")
+        if "-->" not in txt:
+            return QACheck("caption_synchronization", "failed", f"SRT {srt_path.name} contains zero timed cues.")
+        return QACheck("caption_synchronization", "passed", f"SRT verified ({srt_path.name})")
+
+    if ir_obj is None:
+        return QACheck("caption_synchronization", "not_evaluated", "No CaptionIR or SRT artifact provided for sync QA.")
+
+    cues = list(getattr(ir_obj, "cues", []) or [])
+    if getattr(ir_obj, "style", "editorial") == "off":
+        return QACheck("caption_synchronization", "passed", "Caption style is off; sidecar track exempt.")
+    if not cues:
+        return QACheck("caption_synchronization", "failed", "CaptionIR contains zero cues.")
+
+    prev_s = -1.0
+    for c in cues:
+        if float(c.end_s) <= float(c.start_s):
+            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} has non-positive duration.")
+        if float(c.start_s) < prev_s - 0.05:
+            return QACheck("caption_synchronization", "failed", f"Cue {c.cue_id} overlaps preceding cue.")
+        prev_s = float(c.start_s)
+        prev_w = -1.0
+        for w in getattr(c, "words", []):
+            if float(w.start_s) < prev_w - 0.02:
+                return QACheck("caption_synchronization", "failed", f"Non-monotonic word timing in {c.cue_id}.")
+            prev_w = float(w.start_s)
+
+    if caption_zone_ok is False:
+        return QACheck("caption_synchronization", "failed", "Rendered frames show no visible captions inside caption zone.")
+
+    prov = dict(getattr(ir_obj, "timing_provenance_counts", {}) or {})
+    return QACheck("caption_synchronization", "passed", f"cues={len(cues)}, provenance={prov or 'recorded'}")
+
+
 def verify_decoded_frames(
     video_path: Path,
     *,
     look_name: str = "midnight_studio",
     format_name: str = "widescreen_hd",
-    sample_count: int = 9,
+    sample_count: int = 12,
     contact_sheet_out: Path | None = None,
+    plan: object | None = None,
+    timeline: object | None = None,
+    renderer_meta_path: Path | None = None,
+    report_out: Path | None = None,
 ) -> tuple[QACheck, list[str], dict[str, object]]:
-    """Decode actual rendered video frames via FFmpeg and audit blank voids, diagram size, contrast, and clipping."""
-    from PIL import ImageDraw
-    from studio.design.spec import resolve_look
+    """Run scene-aware decoded frame QA (bounds, empty midpoints, contrast, edge clips, motion deltas)."""
+    from studio.qa.frames import inspect_video_scene_aware
 
     if not video_path.exists() or video_path.stat().st_size == 0:
         return QACheck("decoded_frames", "not_evaluated", "Missing video_path"), [], {}
-
-    ff = find_ffmpeg()
-    info = subprocess.run([ff, "-hide_banner", "-i", str(video_path)], capture_output=True, text=True, timeout=30)
-    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info.stderr)
-    dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
-    if dur <= 0.2:
-        return QACheck("decoded_frames", "failed", f"Invalid video duration ({dur:.2f}s)"), [], {}
-
-    # Sample opening, evenly spaced content frames, and closing frame cleanly
-    cnt = max(4, min(12, sample_count))
-    timestamps = [round(min(max(0.35, dur * (i + 0.5) / cnt), max(0.35, dur - 0.35)), 3) for i in range(cnt)]
-    tmp_dir = video_path.parent / f".qa_frames_{video_path.stem}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    lk = resolve_look(look_name)
-    is_light = bool(lk.is_light)
-
-    decoded: list[tuple[float, Image.Image, np.ndarray]] = []
-    findings: list[str] = []
-    stats_per_frame: list[dict[str, float]] = []
-
-    try:
-        for i, ts in enumerate(timestamps):
-            img_p = tmp_dir / f"f_{i:02d}.png"
-            subprocess.run(
-                [ff, "-y", "-ss", f"{ts:.3f}", "-i", str(video_path), "-frames:v", "1", str(img_p)],
-                capture_output=True,
-                timeout=20,
-            )
-            if img_p.exists() and img_p.stat().st_size > 0:
-                pil_img = Image.open(img_p).convert("RGB")
-                arr = np.asarray(pil_img, dtype=np.float32)
-                decoded.append((ts, pil_img, arr))
-        if not decoded:
-            return QACheck("decoded_frames", "failed", "FFmpeg decoded zero frames"), ["Zero frames decoded"], {}
-
-        prev_arr: np.ndarray | None = None
-        diffs: list[float] = []
-        stage_width_fracs: list[float] = []
-        fg_ratios: list[float] = []
-        edge_clip_count = 0
-        blank_count = 0
-
-        for ts, _pil, arr in decoded:
-            h, w, _ = arr.shape
-            # Estimate background RGB from image outer corners
-            corners = np.concatenate(
-                [arr[:12, :12].reshape(-1, 3), arr[:12, -12:].reshape(-1, 3), arr[-12:, :12].reshape(-1, 3)],
-                axis=0,
-            )
-            bg_rgb = np.median(corners, axis=0)
-            dist = np.linalg.norm(arr - bg_rgb, axis=2)
-            luma = 0.2126 * arr[:, :, 0] + 0.7152 * arr[:, :, 1] + 0.0722 * arr[:, :, 2]
-
-            fg_mask = dist > 22.0
-            fg_ratio = float(np.mean(fg_mask))
-            fg_ratios.append(fg_ratio)
-            if fg_ratio < 0.008:
-                blank_count += 1
-
-            # Check primary middle stage occupancy (excluding caption footer bottom 14% and outer 4% edge)
-            y0, y1 = int(h * 0.06), int(h * 0.85)
-            x0, x1 = int(w * 0.04), int(w * 0.96)
-            stage_fg = fg_mask[y0:y1, x0:x1]
-            ys, xs = np.where(stage_fg)
-            if xs.size > 20:
-                span_w = float((xs.max() - xs.min()) / w)
-                span_h = float((ys.max() - ys.min()) / h)
-                stage_width_fracs.append(span_w)
-            else:
-                span_w, span_h = 0.0, 0.0
-                stage_width_fracs.append(0.0)
-
-            # Check right/left outer margin clipping (non-bg pixels touching outer 1.2% left/right edge in main band)
-            edge_l = float(np.mean(fg_mask[int(h * 0.08) : int(h * 0.84), : max(2, int(w * 0.012))]))
-            edge_r = float(np.mean(fg_mask[int(h * 0.08) : int(h * 0.84), -max(2, int(w * 0.012)) :]))
-            if edge_l > 0.04 or edge_r > 0.04:
-                edge_clip_count += 1
-
-            # Check light/dark polarity match cleanly
-            bg_luma = float(0.2126 * bg_rgb[0] + 0.7152 * bg_rgb[1] + 0.0722 * bg_rgb[2])
-            if is_light and bg_luma < 140.0:
-                findings.append(f"t={ts:.1f}s: light theme expected high background luminance, got {bg_luma:.0f}")
-            elif (not is_light) and bg_luma > 100.0:
-                findings.append(f"t={ts:.1f}s: dark theme expected low background luminance, got {bg_luma:.0f}")
-
-            if prev_arr is not None:
-                diffs.append(float(np.mean(np.abs(arr - prev_arr))))
-            prev_arr = arr
-            stats_per_frame.append({"t": ts, "fg_ratio": round(fg_ratio, 4), "span_w": round(span_w, 3), "span_h": round(span_h, 3), "bg_luma": round(bg_luma, 1)})
-
-        if blank_count > max(1, len(decoded) // 4):
-            findings.append(f"{blank_count}/{len(decoded)} decoded frames are mostly blank (<0.8% non-background pixels).")
-        if edge_clip_count > max(1, len(decoded) // 3):
-            findings.append(f"{edge_clip_count}/{len(decoded)} decoded frames show content touching outer 1.2% horizontal edges.")
-        med_span = float(np.median(stage_width_fracs)) if stage_width_fracs else 0.0
-        if med_span < 0.22:
-            findings.append(f"Median active stage width fraction is only {med_span*100:.1f}% (< 22% minimum).")
-        max_diff = max(diffs) if diffs else 0.0
-        if len(decoded) >= 3 and max_diff < 0.8:
-            findings.append(f"Decoded frames appear static across video (max frame delta={max_diff:.2f}).")
-
-        if contact_sheet_out is not None and decoded:
-            cols = 3
-            rows = (len(decoded) + cols - 1) // cols
-            cw, ch = 480, int(round(480 * decoded[0][1].height / max(1, decoded[0][1].width)))
-            sheet = Image.new("RGB", (cols * cw, rows * ch), color=(240, 240, 236) if is_light else (14, 18, 28))
-            draw = ImageDraw.Draw(sheet)
-            for idx_f, (ts, pil_img, _) in enumerate(decoded):
-                r_i, c_i = divmod(idx_f, cols)
-                thumb = pil_img.resize((cw, ch), Image.Resampling.LANCZOS)
-                sheet.paste(thumb, (c_i * cw, r_i * ch))
-                draw.rectangle([c_i * cw + 6, r_i * ch + 6, c_i * cw + 116, r_i * ch + 28], fill=(15, 20, 32))
-                draw.text((c_i * cw + 12, r_i * ch + 10), f"t={ts:.1f}s", fill=(240, 245, 255))
-            contact_sheet_out.parent.mkdir(parents=True, exist_ok=True)
-            sheet.save(contact_sheet_out)
-
-        ok = len(findings) == 0
-        summary = (
-            f"frames={len(decoded)}, median_stage_w={med_span*100:.1f}%, "
-            f"mean_fg={np.mean(fg_ratios)*100:.1f}%, max_delta={max_diff:.1f}, edge_clips={edge_clip_count}"
-        )
-        return QACheck("decoded_frames", "passed" if ok else "failed", summary), findings, {"frames": stats_per_frame}
-    finally:
-        import shutil as _shutil
-
-        _shutil.rmtree(tmp_dir, ignore_errors=True)
+    res = inspect_video_scene_aware(
+        video_path,
+        look_name=look_name,
+        format_name=format_name,
+        plan=plan,
+        timeline=timeline,
+        renderer_meta_path=renderer_meta_path,
+        contact_sheet_out=contact_sheet_out,
+        report_out=report_out,
+        max_samples=max(sample_count, 24 if plan is not None else 12),
+    )
+    return (
+        QACheck("decoded_frames", "passed" if res.passed else "failed", res.summary),
+        res.findings,
+        {
+            "frames": res.samples,
+            "scene_motion_ok": res.scene_motion_ok,
+            "caption_zone_ok": res.caption_zone_ok,
+            "warnings": res.warnings,
+            "static_motion_scenes": res.static_motion_scenes,
+            "empty_midpoint_scenes": res.empty_midpoint_scenes,
+            "report_path": res.report_path,
+        },
+    )
 
 
 def audit_educational_quality(
@@ -408,8 +363,13 @@ def audit_educational_quality(
     look_name: str = "midnight_studio",
     chapter_plans: list[object] | None = None,
     target_duration_s: float | None = None,
+    timeline: object | None = None,
+    caption_ir: object | None = None,
+    caption_ir_path: Path | None = None,
+    srt_path: Path | None = None,
+    renderer_meta_path: Path | None = None,
 ) -> object:
-    """Comprehensive pre/post-render 10-category QA returning honest VideoReviewReport (never fake 100/100)."""
+    """Comprehensive pre/post-render 10-category QA returning honest VideoReviewReport with strict publication gates."""
     from studio.ai.validate_v3 import verify_v3_plan_detailed
     from studio.creative.script_ir import validate_script_ir
     from studio.design.spec import resolve_look, validate_look_contrast
@@ -455,7 +415,26 @@ def audit_educational_quality(
 
     math_ok = len(plan_issues) == 0 and cov.failed == 0 and (cov.deterministically_verified + cov.numerically_tested) > 0
     cats["math_accuracy"] = "passed" if math_ok else ("failed" if (plan_issues or cov.failed) else "not_evaluated")
-    cats["scientific_factual_accuracy"] = "passed" if (math_ok and cov.unsupported == 0) else ("failed" if cov.failed else "human_review_required")
+    sci_ok = math_ok and cov.unsupported == 0 and cov.human_review_required == 0
+    cats["scientific_factual_accuracy"] = "passed" if sci_ok else ("failed" if cov.failed else "human_review_required")
+    if cov.unsupported > 0:
+        notes.append(
+            VisualReviewNote(
+                shot_id="claims",
+                severity="warning",
+                category="math_grounding",
+                finding=f"{cov.unsupported} unsupported claim(s) require deterministic/numerical verification before publication approval.",
+            )
+        )
+    if cov.human_review_required > 0:
+        notes.append(
+            VisualReviewNote(
+                shot_id="claims",
+                severity="warning",
+                category="math_grounding",
+                finding=f"{cov.human_review_required} claim(s) require human review before publication approval.",
+            )
+        )
 
     # Theme WCAG contrast check
     lk_tok = resolve_look(look_name)
@@ -469,11 +448,8 @@ def audit_educational_quality(
         s_issues = validate_script_ir(script)  # type: ignore[arg-type]
         if s_issues:
             script_ok = False
-            cats["caption_synchronization"] = "failed"
             for si in s_issues[:15]:
                 notes.append(VisualReviewNote(shot_id="script", severity="blocker", category="caption", finding=si))
-        else:
-            cats["caption_synchronization"] = "passed"
 
     scenes = getattr(plan, "scenes", [])
     compositions = {str(getattr(sc, "composition", "auto")) for sc in scenes}
@@ -523,6 +499,7 @@ def audit_educational_quality(
 
     audio_ok = False
     resolved_sheet = ""
+    caption_zone_ok: bool | None = None
     if video_path is not None and video_path.exists():
         loud = verify_audio_loudness(video_path)
         streams = verify_media_streams(video_path)
@@ -541,17 +518,34 @@ def audit_educational_quality(
                 )
             )
 
-        # Decoded-frame visual pixel QA + contact sheet
+        # Scene-aware decoded-frame visual pixel QA + contact sheet + JSON sidecar
         sheet_target = contact_sheet_out or (video_path.parent / f"{video_path.stem}_qa_sheet.png")
         df_chk, df_findings, _df_meta = verify_decoded_frames(
             video_path,
             look_name=look_name,
             format_name=format_name,
             contact_sheet_out=sheet_target,
+            plan=plan,
+            timeline=timeline,
+            renderer_meta_path=renderer_meta_path,
+            report_out=sheet_target.with_suffix(".frames.json"),
         )
         metrics.append(f"decoded_frames: {df_chk.detail}")
         if sheet_target.exists():
             resolved_sheet = str(sheet_target)
+        caption_zone_ok = _df_meta.get("caption_zone_ok")  # type: ignore[assignment]
+        for df_w in _df_meta.get("warnings", []):  # type: ignore[union-attr]
+            notes.append(VisualReviewNote(shot_id="frames", severity="warning", category="layout", finding=str(df_w)))
+        if _df_meta.get("scene_motion_ok") is False:
+            cats["animation_meaningfulness"] = "failed"
+            notes.append(
+                VisualReviewNote(
+                    shot_id="motion",
+                    severity="warning",
+                    category="motion",
+                    finding=f"Static or under-animated scenes detected: {_df_meta.get('static_motion_scenes')}",
+                )
+            )
         if not df_chk.passed:
             layout_ok = False
             cats["visual_layout_legibility"] = "failed"
@@ -559,8 +553,6 @@ def audit_educational_quality(
                 notes.append(VisualReviewNote(shot_id="frames", severity="blocker", category="layout", finding=df_msg))
         elif layout_ok:
             cats["visual_layout_legibility"] = "passed"
-            if cats["caption_synchronization"] == "not_evaluated":
-                cats["caption_synchronization"] = "passed"
 
         # Duration pacing verification against target_duration_s if supplied
         if target_duration_s and target_duration_s > 0:
@@ -586,6 +578,22 @@ def audit_educational_quality(
         else:
             cats["duration_pacing_accuracy"] = "passed"
 
+    cap_chk = verify_caption_synchronization(
+        caption_ir=caption_ir,
+        caption_ir_path=caption_ir_path,
+        srt_path=srt_path,
+        caption_zone_ok=caption_zone_ok,
+    )
+    metrics.append(f"caption_sync: {cap_chk.detail}")
+    if not script_ok or cap_chk.status == "failed":
+        cats["caption_synchronization"] = "failed"
+        if cap_chk.status == "failed":
+            notes.append(VisualReviewNote(shot_id="caption", severity="blocker", category="caption", finding=cap_chk.detail))
+    elif cap_chk.status == "passed":
+        cats["caption_synchronization"] = "passed"
+    elif script is not None and script_ok and video_path is None:
+        cats["caption_synchronization"] = "passed"
+
     if storyboard_image is not None and storyboard_image.exists():
         sb_chk = verify_storyboard_image(storyboard_image)
         metrics.append(sb_chk.detail)
@@ -596,26 +604,55 @@ def audit_educational_quality(
 
     blockers = sum(1 for n in notes if n.severity == "blocker")
     warnings = sum(1 for n in notes if n.severity == "warning")
-    uneval_req = sum(
-        1
-        for k in (
-            "math_accuracy",
-            "visual_layout_legibility",
-            "theme_contrast_readability",
-            "audio_quality_loudness",
-            "rendering_media_integrity",
-        )
-        if cats.get(k) != "passed"
+    req_cats = (
+        "math_accuracy",
+        "scientific_factual_accuracy",
+        "visual_layout_legibility",
+        "theme_contrast_readability",
+        "caption_synchronization",
+        "audio_quality_loudness",
+        "animation_meaningfulness",
+        "rendering_media_integrity",
     )
-    unsupported_pen = min(10.0, float(cov.unsupported) * 2.5) if cov.unsupported > 0 else 0.0
+    uneval_req = sum(1 for k in req_cats if cats.get(k) != "passed")
+    unsupported_pen = min(25.0, float(cov.unsupported) * 4.0 + float(cov.human_review_required) * 2.5)
     score = max(0.0, 100.0 - blockers * 20.0 - warnings * 6.0 - uneval_req * 10.0 - unsupported_pen)
-    approved = blockers == 0 and uneval_req == 0 and score >= 78.0
+
+    if video_path is None or not video_path.exists():
+        if blockers > 0 or cov.failed > 0 or len(plan_issues) > 0:
+            prod_state = "rejected"
+        elif cov.unsupported > 0 or cov.human_review_required > 0:
+            prod_state = "review_required"
+        else:
+            prod_state = "draft"
+    else:
+        if (
+            blockers > 0
+            or cov.failed > 0
+            or len(plan_issues) > 0
+            or cats["rendering_media_integrity"] == "failed"
+            or cats["audio_quality_loudness"] == "failed"
+        ):
+            prod_state = "rejected"
+        elif (
+            cov.unsupported > 0
+            or cov.human_review_required > 0
+            or uneval_req > 0
+            or not sci_ok
+            or score < 82.0
+        ):
+            prod_state = "review_required"
+        else:
+            prod_state = "publication_approved"
+
+    approved = prod_state == "publication_approved"
 
     return VideoReviewReport(
         topic=topic,
         title=title,
         format_name=format_name,
         backend=backend,
+        production_state=prod_state,  # type: ignore[arg-type]
         approved=approved,
         overall_score=round(score, 1),
         script_clarity_ok=script_ok,
@@ -630,6 +667,7 @@ def audit_educational_quality(
         metrics=metrics,
         summary=(
             f"Audited {len(scenes)} scenes ({look_name}, {format_name}, {backend}): "
-            f"score={score:.1f}/100, approved={approved}, blockers={blockers}, warnings={warnings}, uneval_required={uneval_req}."
+            f"state={prod_state}, score={score:.1f}/100, approved={approved}, "
+            f"blockers={blockers}, warnings={warnings}, uneval_required={uneval_req}."
         ),
     )

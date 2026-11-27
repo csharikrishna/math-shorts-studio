@@ -62,6 +62,7 @@ class SyncedBeat:
     # Bookmark name -> absolute time (s), resolved from word boundaries
     marks: dict = field(default_factory=dict)
     speaker: str = "narrator"
+    word_provenance: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -219,16 +220,33 @@ def parse_script(narration: str) -> tuple[str, list[ScriptToken], dict[str, int]
     return clean, tokens, marks
 
 
-def align_words(
-    clean: str, tokens: list[ScriptToken], boundaries: list[list], speech_dur: float
-) -> list[tuple[float, float]]:
-    """Map TTS word boundaries onto script tokens (MoneyPrinterTurbo-style script alignment).
+def _vad_active_span(pcm: np.ndarray, sr: int, fallback_dur: float) -> tuple[float, float]:
+    """Lightweight local RMS voice-activity onset/offset detector on mono 16-bit PCM."""
+    if pcm.size < max(1, int(0.04 * sr)):
+        return 0.0, fallback_dur
+    win = max(1, int(0.02 * sr))
+    n_frames = pcm.size // win
+    if n_frames <= 0:
+        return 0.0, fallback_dur
+    frames = np.abs(pcm[: n_frames * win].reshape(n_frames, win).astype(np.float32))
+    rms = np.sqrt(np.mean(frames * frames, axis=1)) / 32768.0
+    thresh = 10.0 ** (-38.0 / 20.0)
+    active = np.flatnonzero(rms > thresh)
+    if active.size == 0:
+        return 0.0, fallback_dur
+    return max(0.0, float(active[0] * win) / sr), min(fallback_dur, float((active[-1] + 1) * win) / sr)
 
-    Each boundary word is located in the clean text at/after a moving cursor; a token takes the
-    earliest start / latest end of the boundary words that land in it. Tokens with no boundary
-    (symbols, unmatched words) are interpolated by character position, the manim-voiceover
-    fallback. Times are relative to the trimmed clip.
-    """
+
+def align_words_with_provenance(
+    clean: str,
+    tokens: list[ScriptToken],
+    boundaries: list[list],
+    speech_dur: float,
+    *,
+    pcm_mono: np.ndarray | None = None,
+    sr: int = SAMPLE_RATE,
+) -> tuple[list[tuple[float, float]], list[str]]:
+    """Map TTS word boundaries onto script tokens while tracking per-word provenance."""
     lower = clean.lower()
     times: list[list[float] | None] = [None] * len(tokens)
     cursor = 0
@@ -250,17 +268,27 @@ def align_words(
                 break
 
     total_chars = max(1, len(clean))
+    matched_ratio = sum(1 for t in times if t is not None) / max(1, len(tokens))
+    if matched_ratio < 0.25 and pcm_mono is not None:
+        v0, v1 = _vad_active_span(pcm_mono, sr, speech_dur)
+        active_span = max(0.1, v1 - v0)
+        fallback_prov = "forced_aligned"
+    else:
+        v0, active_span = 0.0, speech_dur
+        fallback_prov = "interpolated" if boundaries else "estimated"
 
     def by_chars(pos: int) -> float:
-        return speech_dur * pos / total_chars
+        return v0 + active_span * pos / total_chars
 
     known = [(tokens[i].char_start, times[i][0]) for i in range(len(tokens)) if times[i] is not None]
     out: list[tuple[float, float]] = []
+    provs: list[str] = []
     for i, tok in enumerate(tokens):
         if times[i] is not None:
             out.append((times[i][0], times[i][1]))
+            provs.append("tts_word_boundary")
             continue
-        if known:
+        if known and matched_ratio >= 0.25:
             xs = np.array([k[0] for k in known] + [total_chars], dtype=float)
             ys = np.array([k[1] for k in known] + [speech_dur], dtype=float)
             if xs[0] > 0:
@@ -268,13 +296,22 @@ def align_words(
                 ys = np.insert(ys, 0, 0.0)
             start = float(np.interp(tok.char_start, xs, ys))
             end = float(np.interp(tok.char_end, xs, ys))
+            provs.append("interpolated")
         else:
             start, end = by_chars(tok.char_start), by_chars(tok.char_end)
+            provs.append(fallback_prov)
         out.append((start, max(start, end)))
-    # Enforce monotonic starts (TTS boundaries can jitter around punctuation)
     for i in range(1, len(out)):
         if out[i][0] < out[i - 1][0]:
             out[i] = (out[i - 1][0], max(out[i - 1][0], out[i][1]))
+    return out, provs
+
+
+def align_words(
+    clean: str, tokens: list[ScriptToken], boundaries: list[list], speech_dur: float
+) -> list[tuple[float, float]]:
+    """Map TTS word boundaries onto script tokens (compat wrapper returning timings list)."""
+    out, _provs = align_words_with_provenance(clean, tokens, boundaries, speech_dur)
     return out
 
 
@@ -469,15 +506,22 @@ def build_voice_timeline(
                     scur += 1
                 sp_tokens.append(ScriptToken(sw, scur, scur + len(sw), False))
                 scur += len(sw)
-            sp_times = align_words(spoken_text, sp_tokens, boundaries, speech_dur)
+            sp_times, sp_provs = align_words_with_provenance(
+                spoken_text, sp_tokens, boundaries, speech_dur, pcm_mono=pcm, sr=SAMPLE_RATE
+            )
             token_times = []
+            token_provs: list[str] = []
             for entry in mapped["token_map"]:  # type: ignore[attr-defined]
                 r0, r1 = entry["spoken_range"]  # type: ignore[index]
                 r0 = min(r0, max(0, len(sp_times) - 1))
                 r1 = min(max(r0 + 1, r1), len(sp_times))
                 token_times.append((sp_times[r0][0], sp_times[r1 - 1][1]))
+                seg_provs = sp_provs[r0:r1]
+                token_provs.append("tts_word_boundary" if all(p == "tts_word_boundary" for p in seg_provs) else (seg_provs[0] if seg_provs else "interpolated"))
         else:
-            token_times = align_words(clean, tokens, boundaries, speech_dur)
+            token_times, token_provs = align_words_with_provenance(
+                clean, tokens, boundaries, speech_dur, pcm_mono=pcm, sr=SAMPLE_RATE
+            )
         words = [
             [tok.text, round(cursor + a, 4), round(cursor + b, 4), tok.emphasis]
             for tok, (a, b) in zip(tokens, token_times)
@@ -501,6 +545,7 @@ def build_voice_timeline(
                 words=words,
                 marks=marks,
                 speaker=getattr(beat, "speaker", "narrator"),
+                word_provenance=token_provs,
             )
         )
         cursor += total_beat_dur
