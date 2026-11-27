@@ -227,12 +227,20 @@ class V3Scene(StoryScene):
                     self._active_eq_id = None
 
             axes_future_eq = False
-            if any(o.kind == "axes" and o.persist for o in sc.objects):
+            axes_future_port_split = False
+            is_port_frame = L.frame_h > L.frame_w
+            ax_persist_ids = {o.id for o in sc.objects if o.kind == "axes" and o.persist}
+            if ax_persist_ids:
                 for later_sc in V3_PLAN.scenes[idx + 1:]:
-                    if any(lo.kind in ("axes", "table", "matrix", "bar_chart", "graph_network") for lo in later_sc.objects):
+                    if any(lo.kind == "axes" for lo in later_sc.objects):
                         break
+                    later_refs = {e.target_id for e in later_sc.events} | {lo.axes_id for lo in later_sc.objects if lo.axes_id}
+                    keeps_axes = bool(later_refs & ax_persist_ids)
                     if any(lo.kind == "equation" for lo in later_sc.objects):
                         axes_future_eq = True
+                    if is_port_frame and keeps_axes and any(lo.kind in ("matrix", "table", "bar_chart") for lo in later_sc.objects):
+                        axes_future_port_split = True
+                    if not keeps_axes and any(lo.kind in ("table", "matrix", "bar_chart", "graph_network") for lo in later_sc.objects):
                         break
             has_eq = bool(new_eq_ids) or bool(self._active_eq_id and self._active_eq_id in self.registry) or axes_future_eq
             self._cur_zones: AdaptiveFrameZones = compute_adaptive_zones(
@@ -251,6 +259,15 @@ class V3Scene(StoryScene):
                 self._obj_boxes[oid] for oid in self.registry if oid in self._obj_boxes
             ]
             # Auto-assign side-by-side / stacked slots if multiple conflicting apparatus/un-axed polygons co-occur
+            if axes_future_port_split:
+                for cand in sc.objects:
+                    if cand.kind == "axes" and cand.persist and cand.panel_slot in ("auto", "center"):
+                        cand.panel_slot = "top"
+            has_live_axes = any(self.obj_kinds.get(lid) == "axes" for lid in self.registry)
+            if has_live_axes:
+                for cand in sc.objects:
+                    if cand.kind in ("matrix", "table", "bar_chart") and cand.panel_slot in ("auto", "center"):
+                        cand.panel_slot = "bottom" if is_port_frame else "right"
             new_app = [
                 o for o in sc.objects
                 if o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network")
@@ -258,14 +275,16 @@ class V3Scene(StoryScene):
             ]
             if len(new_app) >= 2:
                 used_slots = {o.panel_slot for o in new_app if o.panel_slot in ("left", "right", "top", "bottom")}
+                s_first = "top" if is_port_frame else "left"
+                s_second = "bottom" if is_port_frame else "right"
                 for cand in new_app:
                     if cand.panel_slot in ("auto", "center"):
-                        if "left" not in used_slots:
-                            cand.panel_slot = "left"
-                            used_slots.add("left")
-                        elif "right" not in used_slots:
-                            cand.panel_slot = "right"
-                            used_slots.add("right")
+                        if s_first not in used_slots and ("left" not in used_slots if is_port_frame else "top" not in used_slots):
+                            cand.panel_slot = s_first
+                            used_slots.add(s_first)
+                        elif s_second not in used_slots and ("right" not in used_slots if is_port_frame else "bottom" not in used_slots):
+                            cand.panel_slot = s_second
+                            used_slots.add(s_second)
             self._cur_ann_index = 0
             self._cur_ann_total = sum(1 for o in sc.objects if o.kind == "annotation")
             self._cur_eq_index = 0
@@ -413,13 +432,13 @@ class V3Scene(StoryScene):
             if slot == "auto" and eff_comp in ("side_by_side_comparison", "stacked_comparison"):
                 slot = "left" if not is_port else "top"
             if slot == "left":
-                b = PixelBox(st.x, st.y, st.w, st.h * 0.48) if is_port else PixelBox(st.x, st.y, st.w * 0.48, st.h)
+                b = PixelBox(st.x, st.y, st.w, st.h * 0.53) if is_port else PixelBox(st.x, st.y, st.w * 0.48, st.h)
             elif slot == "right":
-                b = PixelBox(st.x, st.y + st.h * 0.52, st.w, st.h * 0.48) if is_port else PixelBox(st.x + st.w * 0.52, st.y, st.w * 0.48, st.h)
+                b = PixelBox(st.x, st.y + st.h * 0.57, st.w, st.h * 0.40) if is_port else PixelBox(st.x + st.w * 0.52, st.y, st.w * 0.48, st.h)
             elif slot == "top":
-                b = PixelBox(st.x, st.y, st.w, st.h * 0.48)
+                b = PixelBox(st.x, st.y, st.w, st.h * (0.53 if is_port else 0.48))
             elif slot == "bottom":
-                b = PixelBox(st.x, st.y + st.h * 0.52, st.w, st.h * 0.48)
+                b = PixelBox(st.x, st.y + st.h * (0.57 if is_port else 0.52), st.w, st.h * (0.40 if is_port else 0.46))
             else:
                 b = st
             cx, cy, _, _ = px_box_to_manim(b, zones, L.frame_w, L.frame_h)
@@ -788,7 +807,7 @@ class V3Scene(StoryScene):
                 fit_mobject(poly, max_width=L.stage_w * 0.40, max_height=L.stage_h * 0.54)
                 poly.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
                 pbox = self._manim_to_px_box(poly, role="polygon")
-                placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=12.0)[0]
+                placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=18.0)[0]
                 px_cx, px_cy, _, _ = px_box_to_manim(placed_box, self._cur_zones, L.frame_w, L.frame_h)
                 poly.move_to(np.array([px_cx, px_cy, 0.0]))
                 self._obj_boxes[obj.id] = placed_box
@@ -931,11 +950,12 @@ class V3Scene(StoryScene):
             brs = mat_mob.get_brackets()
             brs.set_color(T.text_primary)
             brs.set_stroke(color=T.text_primary, width=2.0)
-            max_w = L.stage_w * (0.44 if obj.panel_slot in ("left", "right") else (0.78 if is_port else 0.56))
-            fit_mobject(mat_mob, max_width=max_w, max_height=L.stage_h * 0.58)
+            max_w = L.stage_w * (0.44 if obj.panel_slot in ("left", "right") else (0.76 if is_port else 0.56))
+            max_h = L.stage_h * (0.34 if (is_port and obj.panel_slot in ("left", "right", "top", "bottom")) else (0.44 if obj.panel_slot in ("top", "bottom") else 0.56))
+            fit_mobject(mat_mob, max_width=max_w, max_height=max_h)
             mat_mob.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
             raw_box = self._manim_to_px_box(mat_mob, role="matrix")
-            placed_box = resolve_non_overlapping_boxes([raw_box], self._scene_obstacles, self._cur_zones, gap_px=12.0)[0]
+            placed_box = resolve_non_overlapping_boxes([raw_box], self._scene_obstacles, self._cur_zones, gap_px=20.0)[0]
             px_cx, px_cy, _, _ = px_box_to_manim(placed_box, self._cur_zones, L.frame_w, L.frame_h)
             mat_mob.move_to(np.array([px_cx, px_cy, 0.0]))
             self._obj_boxes[obj.id] = placed_box
@@ -970,8 +990,9 @@ class V3Scene(StoryScene):
 
             total_w = sum(col_widths)
             total_h = sum(row_heights)
-            max_w = L.stage_w * (0.46 if obj.panel_slot in ("left", "right") else 0.88)
-            max_h = L.stage_h * (0.44 if obj.panel_slot in ("top", "bottom") else 0.72)
+            is_port_tbl = L.frame_h > L.frame_w
+            max_w = L.stage_w * (0.46 if (not is_port_tbl and obj.panel_slot in ("left", "right")) else 0.88)
+            max_h = L.stage_h * (0.36 if (is_port_tbl and obj.panel_slot in ("left", "right", "top", "bottom")) else (0.44 if obj.panel_slot in ("top", "bottom") else 0.72))
             s_fit = min(1.0, max_w / max(total_w, 1e-6), max_h / max(total_h, 1e-6))
 
             grp = m.VGroup()
@@ -996,7 +1017,7 @@ class V3Scene(StoryScene):
             border = m.RoundedRectangle(corner_radius=0.12, width=total_w + 0.18, height=total_h + 0.18, stroke_color=T.surface_border, stroke_width=1.8, fill_opacity=0.0)
             tbl_grp = m.VGroup(border, grp).scale(s_fit).move_to(ctr)
             pbox = self._manim_to_px_box(tbl_grp, role="table")
-            placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=12.0)[0]
+            placed_box = resolve_non_overlapping_boxes([pbox], self._scene_obstacles, self._cur_zones, gap_px=20.0)[0]
             px_cx, px_cy, _, _ = px_box_to_manim(placed_box, self._cur_zones, L.frame_w, L.frame_h)
             tbl_grp.move_to(np.array([px_cx, px_cy, 0.0]))
             self._obj_boxes[obj.id] = placed_box

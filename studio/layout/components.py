@@ -66,10 +66,10 @@ class SafeLayout:
             gap = usable_h * 0.020
         elif has_equation_band:
             header_h = fh * (0.105 if profile.is_vertical else 0.105)
-            gap = fh * 0.016
+            gap = fh * (0.022 if profile.is_vertical else 0.018)
         else:
             header_h = 0.0
-            gap = fh * 0.014
+            gap = fh * (0.020 if profile.is_vertical else 0.016)
 
         stage_top = usable_top - header_h - (gap if header_h > 0 else 0.0)
         stage_bot = usable_bot + caption_h + gap
@@ -354,8 +354,8 @@ class CaptionCard:
         self.card_h = max(0.45, layout.caption_h)
         self._speaker = "narrator"
 
-        # Two-line editorial captions need slightly tighter single-line cap height so 2 lines stay centered
-        two_line_factor = 0.34 if self.preset.max_lines >= 2 else 0.44
+        # Two-line captions need slightly tighter single-line cap height so 2 spaced rows stay balanced
+        two_line_factor = 0.31 if self.preset.max_lines >= 2 else 0.44
         self.line_h = min(layout.min_text_h * self.LINE_H_SCALE, self.card_h * two_line_factor)
 
         if self.minimal or self.style == "neon":
@@ -417,7 +417,8 @@ class CaptionCard:
         self.group = m.VGroup(self._neon_bar, self.bg, self._speaker_badge, self.pill, self.line)
 
         self._chunks: list[tuple[float, list[tuple[str, float, float]], list[str]]] = []
-        self._built: dict[int, tuple[m.Text, list[m.VGroup]]] = {}
+        self._built: dict[int, tuple[m.Mobject, list[m.VGroup]]] = {}
+        self._row_meta: dict[int, tuple[list[int], list[list[int]]]] = {}
         self._shown: tuple[int, int] = (-1, -1)
         self._pill_born = 0.0
         self._pill_scale = 1.0
@@ -425,7 +426,7 @@ class CaptionCard:
         self._bounce_part = None
         self._bounce_center = np.zeros(3)
         self._bounce_scale = 1.0
-        self._pop_amp = 0.08
+        self._pop_amp = 0.06
         self._bounce_amp = 0.0
         self._spring = False
         if self.caption_style != "off":
@@ -453,19 +454,64 @@ class CaptionCard:
             txt.set_stroke(color=self.theme.background, width=stroke_w, opacity=0.88, background=True)
         return txt
 
-    def _make_line(self, words: list[str], lines_hint: list[str] | None = None) -> tuple[m.Text, list[m.VGroup]]:
-        display_str = "\n".join(lines_hint) if lines_hint else " ".join(words)
-        line = self._text(display_str)
+    @staticmethod
+    def _split_words_by_lines(words: list[str], lines_hint: list[str] | None) -> list[list[str]]:
+        if not words:
+            return []
+        if not lines_hint or len(lines_hint) <= 1:
+            return [list(words)]
+        counts = [max(0, len(str(ln).split())) for ln in lines_hint]
+        if sum(counts) <= 0:
+            return [list(words)]
+        rows: list[list[str]] = []
+        cursor = 0
+        for i, cnt in enumerate(counts):
+            if cursor >= len(words):
+                break
+            take = (len(words) - cursor) if i == len(counts) - 1 else min(cnt, len(words) - cursor)
+            if take > 0:
+                rows.append(list(words[cursor : cursor + take]))
+                cursor += take
+        if cursor < len(words):
+            if rows:
+                rows[-1].extend(words[cursor:])
+            else:
+                rows.append(list(words[cursor:]))
+        return rows or [list(words)]
+
+    def _make_line(self, words: list[str], lines_hint: list[str] | None = None) -> tuple[m.Mobject, list[m.VGroup]]:
+        rows = self._split_words_by_lines(words, lines_hint)
+        row_mobs: list[m.Text] = []
+        parts: list[m.VGroup] = []
+        word_to_row: list[int] = []
+        row_word_ids: list[list[int]] = []
+
+        for r_idx, r_words in enumerate(rows):
+            row_txt = self._text(" ".join(r_words))
+            glyphs = list(row_txt.submobjects)
+            cursor = 0
+            r_ids: list[int] = []
+            for w in r_words:
+                n = len(w.replace(" ", "").replace("\n", ""))
+                parts.append(m.VGroup(*glyphs[cursor : cursor + n]))
+                r_ids.append(len(parts) - 1)
+                word_to_row.append(r_idx)
+                cursor += n
+            row_word_ids.append(r_ids)
+            row_mobs.append(row_txt)
+
+        if len(row_mobs) <= 1:
+            line: m.Mobject = row_mobs[0] if row_mobs else self._text(" ".join(words))
+        else:
+            line_gap = max(0.16, self.line_h * 0.54)
+            grp = m.VGroup(*row_mobs)
+            grp.arrange(m.DOWN, buff=line_gap)
+            line = grp
+
         fit_mobject(line, max_width=self.inner_w, max_height=self.card_h * (0.86 if self.preset.show_speaker_badge else 0.94))
         y_off = -self.card_h * 0.10 if (self.preset.show_speaker_badge and len(self._speaker_badge.submobjects) > 0) else 0.0
         line.move_to(self.bg.get_center() + np.array([0.0, y_off, 0.0]))
-        glyphs = list(line.submobjects)
-        parts: list[m.VGroup] = []
-        cursor = 0
-        for w in words:
-            n = len(w.replace(" ", "").replace("\n", ""))
-            parts.append(m.VGroup(*glyphs[cursor : cursor + n]))
-            cursor += n
+        self._row_meta[id(line)] = (word_to_row, row_word_ids)
         return line, parts
 
     PHRASE_END = (".", ",", "!", "?", ";", ":", "—")
@@ -669,51 +715,87 @@ class CaptionCard:
             self._shown = (ci, wi)
             return
 
-        if self.minimal or self.style == "neon":
+        if self.minimal or self.style == "neon" or not parts or wi >= len(parts) or len(parts[wi].submobjects) == 0:
             self._show_minimal(ci, wi, line, parts, emph, t)
             return
 
-        pill_h = self.line_h * 1.24
-        pad_y = max(0.0, (pill_h - parts[wi].height) * 0.5)
+        word_to_row, row_word_ids = self._row_meta.get(id(line), ([0] * len(parts), [list(range(len(parts)))]))
+        r_idx = word_to_row[wi] if wi < len(word_to_row) else 0
+        is_multi_row = isinstance(line, m.VGroup) and len(row_word_ids) > 1 and len(line.submobjects) == len(row_word_ids)
+        if is_multi_row and r_idx < len(line.submobjects):
+            row_mob = line.submobjects[r_idx]
+            row_ys = [float(rm.get_center()[1]) for rm in line.submobjects]
+            row_pitch = min(abs(a - b) for a, b in zip(row_ys, row_ys[1:]))
+            max_pill_h = max(float(parts[wi].height) + 0.04, row_pitch * 0.78)
+        else:
+            row_mob = line
+            max_pill_h = max(float(row_mob.height) * 1.28, self.line_h * 1.22)
+
+        r_ids = row_word_ids[r_idx] if r_idx < len(row_word_ids) else [wi]
+        pos_in_row = r_ids.index(wi) if wi in r_ids else 0
+        w_left = float(parts[wi].get_left()[0])
+        w_right = float(parts[wi].get_right()[0])
+        avail_l = (w_left - float(parts[r_ids[pos_in_row - 1]].get_right()[0])) if (pos_in_row > 0 and len(parts[r_ids[pos_in_row - 1]].submobjects) > 0) else self.line_h * 0.25
+        avail_r = (float(parts[r_ids[pos_in_row + 1]].get_left()[0]) - w_right) if (pos_in_row + 1 < len(r_ids) and len(parts[r_ids[pos_in_row + 1]].submobjects) > 0) else self.line_h * 0.25
+        min_gap = max(0.0, min(avail_l, avail_r))
+        pad_x = max(0.024, min(self.line_h * 0.085, min_gap * 0.36))
+        pill_w = max(0.08, float(parts[wi].width) + 2.0 * pad_x)
+
+        row_cy = float(row_mob.get_center()[1])
+        base_h = max(float(parts[wi].height) + 0.08, float(row_mob.height) * 1.14, self.line_h * 1.06)
+        pill_h = max(min(base_h, max_pill_h), float(parts[wi].height) + 0.04)
+        half_h = 0.5 * pill_h
+        cy_lo = float(parts[wi].get_top()[1]) + 0.018 - half_h
+        cy_hi = float(parts[wi].get_bottom()[1]) - 0.018 + half_h
+        if cy_lo <= cy_hi:
+            pill_cy = min(max(row_cy, cy_lo), cy_hi)
+        else:
+            pill_cy = float(parts[wi].get_center()[1])
+
+        pill_col = self.theme.accent_primary if emph else self.accent
+        pad_y = max(0.02, 0.5 * (pill_h - float(parts[wi].height)))
         pill = m.BackgroundRectangle(
             parts[wi],
-            buff=(self.line_h * 0.14, pad_y),
-            corner_radius=self.line_h * 0.16,
-            color=self.theme.accent_primary if emph else self.accent,
+            buff=(pad_x, pad_y),
+            corner_radius=min(self.line_h * 0.16, pill_h * 0.32),
+            color=pill_col,
             fill_opacity=0.95,
             stroke_width=0.0,
-        )
-        pill.move_to(np.array([pill.get_center()[0], line.get_center()[1], 0.0]))
+        ).move_to(np.array([float(parts[wi].get_center()[0]), pill_cy, 0.0]))
         self.group.submobjects = [self.bg, self._speaker_badge, pill, line]
         self.pill, self.line = pill, line
+        self._has_pill = True
         self._pill_center = pill.get_center().copy()
         self._pill_born = t
         self._pill_scale = 1.0
         self._bounce_part = parts[wi] if emph else None
         self._bounce_center = parts[wi].get_center().copy()
         self._bounce_scale = 1.0
-        space = self.line_h * 0.28
-        self._pop_amp = min(0.16 if emph else 0.08, 2.0 * space / 3.0 / max(pill.width, 1e-6))
-        self._bounce_amp = min(0.12, pill.width / max(parts[wi].width, 1e-6) - 1.0)
+        max_expand_half = max(0.0, min_gap * 0.22)
+        pop_cap = (2.0 * max_expand_half) / max(pill_w, 1e-6)
+        self._pop_amp = min(0.10 if emph else 0.055, pop_cap)
+        self._bounce_amp = min(0.08, max(0.0, (pill_w / max(float(parts[wi].width), 1e-6) - 1.0) * 0.65))
         self._shown = (ci, wi)
 
-    def _show_minimal(self, ci: int, wi: int, line: m.Text, parts: list[m.VGroup], emph: bool, t: float) -> None:
+    def _show_minimal(self, ci: int, wi: int, line: m.Mobject, parts: list[m.VGroup], emph: bool, t: float) -> None:
         """Box-free or kinetic minimal: active word pops lightly without neighbor overlap."""
         self.group.submobjects = [self._neon_bar, self.bg, self._speaker_badge, line]
         self.pill, self.line = m.VGroup(), line
+        self._has_pill = False
         self._pill_born = t
         self._pill_scale = 1.0
-        self._bounce_part = parts[wi]
-        self._bounce_center = parts[wi].get_center().copy()
+        self._bounce_part = parts[wi] if (parts and wi < len(parts)) else None
+        self._bounce_center = self._bounce_part.get_center().copy() if self._bounce_part is not None else np.zeros(3)
         self._bounce_scale = 1.0
         space = self.line_h * 0.28
-        cap = 0.75 * space / max(parts[wi].width, 1e-6)
+        w_part = float(self._bounce_part.width) if self._bounce_part is not None else 1.0
+        cap = 0.75 * space / max(w_part, 1e-6)
         self._pop_amp = 0.0
         self._bounce_amp = min(0.14 if emph else 0.07, cap)
         self._spring = emph
-        if self.style == "neon":
+        if self.style == "neon" and self._bounce_part is not None:
             glow_color = self.theme.accent_primary if emph else self.accent
-            parts[wi].set_stroke(color=glow_color, width=self.OUTLINE_WIDTH * 1.35, opacity=0.42, background=True)
+            self._bounce_part.set_stroke(color=glow_color, width=self.OUTLINE_WIDTH * 1.35, opacity=0.42, background=True)
         self._shown = (ci, wi)
 
     def _reset_bounce(self) -> None:
@@ -728,7 +810,7 @@ class CaptionCard:
         """Pill: ease-out pop. Active word: ease-out pop, or a damped-spring bounce for emphasis."""
         age = max(0.0, t - self._pill_born)
         emph = self._bounce_part is not None
-        if self.style == "card":
+        if getattr(self, "_has_pill", self.style == "card") and self._pop_amp > 0.0:
             target = 1.0 + self._pop_amp * float(np.exp(-age * 18.0))
             if abs(target - self._pill_scale) > 1e-4:
                 self.pill.scale(target / self._pill_scale)

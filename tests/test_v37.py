@@ -390,6 +390,56 @@ class TestV37Suite(unittest.TestCase):
         self.assertIn("sidechaincompress=", mix)
         self.assertIn("ratio=2.3", mix)
 
+    def test_two_line_caption_row_pill_and_portrait_spacing(self) -> None:
+        import manimgx as m
+        from studio.config import FORMATS, THEMES
+        from studio.layout.components import CaptionCard, SafeLayout
+
+        prof = FORMATS["shorts_hd"]
+        prev_pw, prev_ph = m.config.pixel_width, m.config.pixel_height
+        try:
+            m.config.pixel_width = prof.pixel_width
+            m.config.pixel_height = prof.pixel_height
+            layout = SafeLayout.from_config(prof, has_header_banner=False, caption_style="kinetic")
+            cc = CaptionCard(layout, THEMES["light"], "Any linear autonomous system can be written", style="minimal", caption_style="kinetic")
+            cue_words = ["Any", "linear", "autonomous", "system", "can", "be", "written"]
+            timed = [(w, float(i) * 0.4, float(i + 1) * 0.4, i == 6) for i, w in enumerate(cue_words)]
+            cc.set_words(timed, 0.0)
+            cc._show(0, 6, [(w, float(i) * 0.4, float(i + 1) * 0.4, False) for i, w in enumerate(cue_words)], ["Any linear autonomous", "system can be written"], 2.4)
+            line_mob, parts = cc._built[0]
+            self.assertEqual(len(line_mob.submobjects), 2)
+            row0_cy = float(line_mob.submobjects[0].get_center()[1])
+            row1_cy = float(line_mob.submobjects[1].get_center()[1])
+            self.assertGreater(row0_cy - row1_cy, cc.line_h * 1.15)
+            # Active pill for row-1 word "written" must align with row 1, NEVER midway between rows or touching row 0
+            self.assertLess(abs(float(cc.pill.get_center()[1]) - row1_cy), 0.08)
+            self.assertLess(float(cc.pill.get_top()[1]), float(line_mob.submobjects[0].get_bottom()[1]) - 0.02)
+            # Horizontal clearance from previous word "be"
+            self.assertGreater(float(cc.pill.get_left()[0]), float(parts[5].get_right()[0]))
+
+            # Active pill for row-0 word "studying" must align with row 0, clear row 1, and stay strictly inside neighbors
+            words2 = ["By", "studying", "how", "vectors", "evolve"]
+            timed2 = [(w, float(i) * 0.4, float(i + 1) * 0.4, False) for i, w in enumerate(words2)]
+            cc.set_words(timed2, 3.0)
+            cc._show(0, 1, timed2, ["By studying how", "vectors evolve"], 3.4)
+            line2, parts2 = cc._built[0]
+            self.assertEqual(len(line2.submobjects), 2)
+            self.assertLess(abs(float(cc.pill.get_center()[1]) - float(line2.submobjects[0].get_center()[1])), 0.08)
+            self.assertGreater(float(cc.pill.get_bottom()[1]), float(line2.submobjects[1].get_top()[1]) + 0.02)
+            self.assertGreater(float(cc.pill.get_left()[0]), float(parts2[0].get_right()[0]))
+            self.assertLess(float(cc.pill.get_right()[0]), float(parts2[2].get_left()[0]))
+        finally:
+            m.config.pixel_width = prev_pw
+            m.config.pixel_height = prev_ph
+
+        # Portrait bottom clearance between paired top axes and bottom matrix
+        z_port = compute_adaptive_zones("shorts_hd", has_header_banner=False, has_equation_strip=False, caption_style="kinetic")
+        top_ax = fit_axes_pixel_box(z_port, xr=[-5, 5], yr=[-5, 5], equal_aspect=True, composition="stacked_comparison", panel_slot="top")
+        bot_mat_raw = PixelBox(z_port.stage_box.cx - 180.0, z_port.stage_box.y + z_port.stage_box.h * 0.56, 360.0, 260.0, role="matrix")
+        placed = resolve_non_overlapping_boxes([bot_mat_raw], [top_ax], z_port, gap_px=20.0)[0]
+        self.assertGreaterEqual(placed.y - top_ax.y2, 20.0)
+        self.assertLessEqual(placed.y2, z_port.caption_box.y - 26.0)
+
 
 if __name__ == "__main__":
     unittest.main()

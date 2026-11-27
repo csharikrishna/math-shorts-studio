@@ -108,7 +108,7 @@ def compute_adaptive_zones(
         top_band = h * prof.top_safe_ratio
 
     eq_band = h * (0.105 if is_vert else 0.105) if has_equation_strip else 0.0
-    gap = h * 0.016
+    gap = h * (0.022 if is_vert else 0.018)
 
     stage_top = top_band + eq_band + (gap if (has_equation_strip or has_header_banner) else 0.0)
     stage_bot = h - cap_band - bot_pad - gap
@@ -209,9 +209,9 @@ def fit_axes_pixel_box(
     elif slot == "right" and not is_vert:
         region = PixelBox(st.x + st.w * 0.44, st.y, st.w * 0.56, st.h, role="axes")
     elif slot in ("left", "top") and (is_vert or composition == "stacked_comparison"):
-        region = PixelBox(st.x, st.y, st.w, st.h * 0.50, role="axes")
+        region = PixelBox(st.x, st.y, st.w, st.h * 0.53, role="axes")
     elif slot in ("right", "bottom") and (is_vert or composition == "stacked_comparison"):
-        region = PixelBox(st.x, st.y + st.h * 0.50, st.w, st.h * 0.48, role="axes")
+        region = PixelBox(st.x, st.y + st.h * 0.57, st.w, st.h * 0.40, role="axes")
     elif composition == "diagram_with_text" and not is_vert and has_side_annotations:
         region = PixelBox(st.x, st.y, st.w * 0.64, st.h * 0.94, role="axes")
     else:
@@ -240,7 +240,8 @@ def clamp_box_to_safe_zone(box: PixelBox, zones: AdaptiveFrameZones, *, pad_px: 
     min_x = zones.side_margin_px + pad_px
     max_x = float(zones.width_px) - zones.side_margin_px - pad_px
     min_y = max(14.0, zones.top_band_px * 0.55)
-    max_y = zones.caption_box.y - 10.0
+    bottom_clear = 28.0 if zones.aspect_label == "9:16" else 18.0
+    max_y = zones.caption_box.y - bottom_clear
 
     w = min(box.w, max(40.0, max_x - min_x))
     h = min(box.h, max(24.0, max_y - min_y))
@@ -254,7 +255,7 @@ def resolve_non_overlapping_boxes(
     obstacles: Sequence[PixelBox],
     zones: AdaptiveFrameZones,
     *,
-    gap_px: float = 14.0,
+    gap_px: float = 20.0,
 ) -> list[PixelBox]:
     """Iteratively adjust auxiliary boxes (annotations, matrices, equations) to prevent overlaps and clipping."""
     placed: list[PixelBox] = []
