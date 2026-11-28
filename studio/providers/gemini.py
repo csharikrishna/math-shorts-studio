@@ -42,8 +42,8 @@ class GeminiProvider(LLMProvider):
         api_key: str | None = None,
         models: tuple[str, ...] | None = None,
         free_only: bool = True,
-        timeout_s: float = 60.0,
-        retries_per_model: int = 2,
+        timeout_s: float = 95.0,
+        retries_per_model: int = 3,
     ) -> None:
         super().__init__(free_only=free_only, timeout_s=timeout_s)
         key = api_key or gemini_api_key()
@@ -60,6 +60,7 @@ class GeminiProvider(LLMProvider):
         for tpm_cycle in range(3):
             active_chain = [m for m in chain if m not in _DAILY_EXHAUSTED_MODELS] or list(chain)
             min_retry_s: float | None = None
+            had_transient = False
             for m in active_chain:
                 for attempt in range(1, self.retries_per_model + 1):
                     t0 = time.perf_counter()
@@ -84,18 +85,24 @@ class GeminiProvider(LLMProvider):
                             if min_retry_s is None or r_sec < min_retry_s:
                                 min_retry_s = r_sec
                             break
-                        if exc.code in TRANSIENT_CODES and attempt < self.retries_per_model:
-                            time.sleep(1.8 * attempt)
-                            continue
+                        if exc.code in TRANSIENT_CODES:
+                            had_transient = True
+                            if attempt < self.retries_per_model:
+                                time.sleep(2.5 * attempt)
+                                continue
                         break
                     except Exception as exc:
                         last_err = exc
+                        had_transient = True
                         if attempt < self.retries_per_model:
-                            time.sleep(1.5 * attempt)
+                            time.sleep(2.0 * attempt)
                             continue
                         break
             if min_retry_s is not None and min_retry_s <= 65.0 and tpm_cycle < 2:
                 time.sleep(min(62.0, min_retry_s + 1.5))
+                continue
+            if had_transient and tpm_cycle < 2:
+                time.sleep(8.0 * (tpm_cycle + 1))
                 continue
             break
         raise ProviderError(f"Gemini failed across {chain}: {last_err}")
