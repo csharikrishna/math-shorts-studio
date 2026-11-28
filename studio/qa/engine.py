@@ -419,6 +419,7 @@ def audit_educational_quality(
     """Comprehensive pre/post-render 10-category QA returning honest VideoReviewReport with strict publication gates."""
     import math as _math
     from studio.ai.validate_v3 import verify_v3_plan_detailed
+    from studio.ai.visual_intelligence import verify_beat_narration_semantics
     from studio.creative.script_ir import validate_script_ir
     from studio.design.spec import resolve_look, validate_look_contrast
     from studio.storyboard.model import VerificationCoverageSummary, VideoReviewReport, VisualReviewNote
@@ -464,6 +465,7 @@ def audit_educational_quality(
         agg_dyn_total += int(det.get("total_dynamic_scenes", 0))
         agg_dyn_gaps.extend(str(g) for g in (det.get("dynamic_motion_gaps", []) or []))
         agg_param_sync.extend(str(g) for g in (det.get("parameter_sync_issues", []) or []))
+        plan_issues.extend(verify_beat_narration_semantics(p_item))  # type: ignore[arg-type]
 
     cov = VerificationCoverageSummary(**cov_acc)
     for msg in plan_issues[:20]:

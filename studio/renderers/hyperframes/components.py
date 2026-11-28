@@ -132,7 +132,9 @@ def compile_scene_object_element(
     }
 
     if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "restoring_force", "spectrum_peak", "time_point", "mechanical_body", "body_point", "phase_orbit", "energy_bars", "readout", "trajectory", "loss_curve", "end_point", "sweep"):
-        xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (obj.x_range or default_geom_xr, obj.y_range or default_geom_yr, box))
+        fb_xr = obj.x_range or ([-2.4, 2.4] if obj.kind == "mechanical_body" else default_geom_xr)
+        fb_yr = obj.y_range or ([-1.5, 1.5] if obj.kind == "mechanical_body" else default_geom_yr)
+        xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (fb_xr, fb_yr, box))
         sw_px: list[dict[str, Any]] = []
         n_kf = max(1, len(obj.sweep_keyframes) - 1)
         for ki, kf in enumerate(obj.sweep_keyframes):
@@ -299,5 +301,27 @@ def compile_scene_object_element(
             "body_px": list(_to_px(bpos, ax_box, xr, yr)),
             "stand_alone": not bool(obj.axes_id),
         }
+    elif obj.kind == "fraction_bar":
+        den = max(1, int(obj.denominator or 4))
+        num = max(0, min(den * 2, int(obj.numerator if obj.numerator is not None else 1)))
+        sub = max(1, int(obj.subdivisions or 1))
+        el["frac_bar"] = {"num": num, "den": den, "sub": sub, "label": obj.label or f"{num}/{den}"}
+    elif obj.kind == "fraction_circle":
+        den = max(1, int(obj.denominator or 4))
+        num = max(0, min(den, int(obj.numerator if obj.numerator is not None else 1)))
+        sub = max(1, int(obj.subdivisions or 1))
+        el["frac_circle"] = {"num": num, "den": den, "sub": sub, "label": obj.label or f"{num}/{den}"}
+    elif obj.kind == "array_grid":
+        rows = max(1, min(12, int(obj.rows or 3)))
+        cols = max(1, min(12, int(obj.cols or 4)))
+        el["array_grid"] = {"rows": rows, "cols": cols, "count": int(obj.count) if obj.count is not None else rows * cols, "label": obj.label or f"{rows} x {cols}"}
+    elif obj.kind == "counting_group":
+        cnt = max(0, min(60, int(obj.count if obj.count is not None else 5)))
+        gsz = max(1, min(10, int(obj.group_size or 5)))
+        el["counting_group"] = {"count": cnt, "group_size": gsz, "label": obj.label or str(cnt)}
+    elif obj.kind == "equation_balance":
+        el["eq_balance"] = {"lhs": obj.lhs_text or obj.text or "x + 2", "rhs": obj.rhs_text or "5", "label": obj.label or "Balance"}
+    elif obj.kind == "concept_card":
+        el["concept_card"] = {"title": obj.label or "Key Idea", "steps": list(obj.steps_list or ([obj.text] if obj.text else []))}
 
     return el, ann_idx_local

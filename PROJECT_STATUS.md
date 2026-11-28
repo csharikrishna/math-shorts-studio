@@ -1,4 +1,21 @@
-# Math Shorts Studio — Project Status (V4.1 Visual Intelligence, Adaptive Cinematography & Educational Quality)
+# Math Shorts Studio — Project Status (V4.2 Educational Visual Reasoning & K–12 Educational Studio)
+
+## V4.2 & K–12 Studio Implemented & Verified
+- **V4.2 Semantic Verification, Layout/Caption Fixes & Remote Sync (`studio/ai/visual_intelligence.py`, `studio/renderers/hyperframes/`, `studio/repair.py`, `studio/qa/engine.py`, `scenes/v3_scene.py`)**
+  - Pushed all 14 local V4.1 commits to `origin/main` cleanly (`6746406..94d0480`).
+  - Fixed `bar_chart` oversized single-bar width (`barW` capped cleanly in both HyperFrames & ManimGX), `mechanical_body` coordinate range parity between `el["mech"]` and `sweep_frames_px`, and `runtime.py` inter-cue caption fallback (eliminating full-beat paragraph dumps at cue boundaries).
+  - Added `verify_beat_narration_semantics()` and `humanize_visible_label()` checking critical/overdamped non-oscillation consistency, upright pendulum equilibrium orientation, potential landscape vs `bar_chart` substitution, and internal identifier/placeholder leaks (`phase_orbit`, `time_series_x`, `Mystery Annotation`).
+- **K–12 Educational Intelligence, Deterministic School Math & Reusable Components (`studio/education/`, `studio/ai/v3_schema.py`, `studio/registry/visuals.py`)**
+  - Implemented `GradeProfile` for all 5 grade bands (`1-2`, `3-5`, `6-8`, `9-10`, `11-12`), `CurriculumReference` + verified `CBSE_MATH_INDEX` (Classes 1–12) with `curriculum_neutral` fallback, and `studio/education/math_engine.py` (exact `Fraction` rational arithmetic, linear/quadratic solvers, arrays, place value, integers, ratios/percentages, right-triangle trigonometry, calculus secant-to-tangent limits, verified worked examples & MCQs).
+  - Added 6 composable K–12 visual components (`fraction_bar`, `fraction_circle`, `array_grid`, `counting_group`, `equation_balance`, `concept_card`) registered in `studio/registry/visuals.py` (`verify_registry_contracts() == []`) and rendered in HyperFrames SVG.
+  - Built the local K–12 Educational Studio web UI (`studio/education/studio_app.py`, `--studio` CLI flag) strictly on `127.0.0.1` with Class 1–12 selector, curriculum/theme/format controls, lesson workspace, and output library.
+- **Rendered K–12 Videos & Full Regression Suite (`tests/test_v42_k12.py`)**
+  - `k12_c1_addition_light_widescreen_hd.mp4` (`48.40s`, **`100.0/100`**, `publication_approved`), `k12_c3_arrays_short_light_shorts_hd.mp4` (`53.60s`, **`100.0/100`**, `publication_approved`), `k12_c5_fractions_light_widescreen_hd.mp4` (`64.10s`, **`100.0/100`**, `publication_approved`), `k12_c8_linear_eq_dark_widescreen_hd.mp4` (`72.60s`, **`100.0/100`**, `publication_approved`), `k12_c12_derivatives_dark_widescreen_hd.mp4` (`97.60s`, `78.0/100`, `review_required`).
+  - **Test Suite:** **106 tests passing** (`unittest discover -s tests -p "test_*.py"`).
+
+---
+
+# Prior Baseline: Math Shorts Studio — Project Status (V4.1 Visual Intelligence, Adaptive Cinematography & Educational Quality)
 
 ## V4.1 Implemented & Verified
 - **Confirmed Mathematical Reliability Fixes & Typed Constraints (`studio/ai/simulation.py`, `studio/ai/linked_models.py`, `studio/ai/validate_v3.py`, `studio/ai/v3_schema.py`)**

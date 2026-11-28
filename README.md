@@ -15,7 +15,8 @@ uv run python -m studio.pipeline --topic "Chaos Theory" --look cinematic
 # Cohesive 8-10 minute long-form documentary (light/dark, editorial captions) + derived 9:16 Short
 uv run python -m studio.pipeline --longform --topic "Fourier Analysis, Spectral Decomposition, and Signal Filtering" --duration 500 --theme light --caption-style editorial --derive-short --ai
 
-# Lightweight local scene-preview workbench & fast single-scene render (127.0.0.1 loopback)
+# Lightweight local K–12 Educational Studio web UI & scene preview workbench (127.0.0.1 loopback)
+uv run python -m studio.pipeline --studio
 uv run python -m studio.preview --source build/longform_<slug> --look light --serve
 uv run python -m studio.preview --source build/longform_<slug> --scene scene_2 --look midnight_studio --backend hyperframes
 

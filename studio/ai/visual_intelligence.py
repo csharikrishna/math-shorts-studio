@@ -59,7 +59,10 @@ def infer_beat_visual_decision(beat: Any, idx: int = 0, total: int = 1) -> Visua
     dc = getattr(beat, "demo_contract", None)
     blob = f"{purpose} {vint} {spoken} {(getattr(dc, 'relationship_explained', '') if dc else '')}".lower()
 
-    if any(k in blob for k in ("spring", "damper", "pendulum", "mass", "bob", "physical")):
+    if any(k in blob for k in ("potential energy", "potential well", "energy landscape", "potential curve")):
+        comp = "main_with_equation_panel"
+        views = ["axes", "function_plot", "point", "annotation"]
+    elif any(k in blob for k in ("spring", "damper", "pendulum", "mass", "bob", "physical")):
         if any(k in blob for k in ("phase", "velocity", "portrait", "orbit", "spiral")):
             comp = "physical_system_with_phase_space"
             views = ["mechanical_body", "phase_orbit", "vector_field", "readout"]
@@ -267,7 +270,7 @@ def apply_visual_intelligence_and_fit(plan: VideoPlanV3, *, aspect_label: str = 
             active_map[o.id] = o
         major_panels = [
             o for o in active_map.values()
-            if o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network")
+            if o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network", "fraction_bar", "fraction_circle", "array_grid", "counting_group", "equation_balance", "concept_card")
             or (o.kind == "mechanical_body" and not o.axes_id)
         ]
         if len(major_panels) >= 2:
@@ -292,3 +295,107 @@ def apply_visual_intelligence_and_fit(plan: VideoPlanV3, *, aspect_label: str = 
                 removed_prev.add(ev.target_id)
 
     return out
+
+
+_INTERNAL_LABEL_MAP = {
+    "phase_orbit": "Phase Portrait",
+    "time_series_x": "x(t)",
+    "time_series_y": "y(t)",
+    "time_signal": "Signal x(t)",
+    "filtered_signal": "Filtered Signal",
+    "winding_curve": "Winding Curve",
+    "centroid_point": "Center of Mass",
+    "centroid_vector": "Centroid Vector",
+    "restoring_force": "Restoring Force",
+    "mechanical_body": "Physical System",
+    "energy_bars": "Energy Distribution",
+    "response_curve": "Frequency Response",
+    "mystery annotation": "Key Observation",
+}
+
+_INTERNAL_TOKEN_RE = re.compile(
+    r"\b(?:phase_orbit|time_series_[xy]|mechanical_body|energy_bars|winding_curve|centroid_point|"
+    r"mystery annotation|placeholder|todo|c\d+__scene_\d+)\b",
+    re.IGNORECASE,
+) if False else None
+
+
+def humanize_visible_label(raw: str) -> str:
+    """Replace internal model/object identifiers or placeholder headings with readable mathematical labels."""
+    s = str(raw or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    if low in _INTERNAL_LABEL_MAP:
+        return _INTERNAL_LABEL_MAP[low]
+    if low.startswith("mystery "):
+        return "Key Observation"
+    if "_" in s and " " not in s and not s.startswith("\\") and not any(ch in s for ch in ("(", ")", "=", "^")):
+        return s.replace("_", " ").title()
+    return s
+
+
+def verify_beat_narration_semantics(plan: VideoPlanV3) -> list[str]:
+    """Verify beat-level narration-to-visual mathematical correspondence and reject exposed internal identifiers."""
+    import re as _re
+
+    issues: list[str] = []
+    bad_tok_re = _re.compile(
+        r"(?:\bphase_orbit\b|\btime_series_[xy]\b|\bmechanical_body\b|\bmystery annotation\b|\bplaceholder\b|\btodo\b|\bc\d+__scene_\d+\b)",
+        _re.IGNORECASE,
+    )
+    models = {m.model_id: m for m in (getattr(plan, "math_models", []) or [])}
+
+    for sc in plan.scenes:
+        nar = (sc.narration or "").lower()
+        # 1. Check exposed internal identifiers / placeholders in visible labels
+        for o in sc.objects:
+            for fld_name, val in (("label", o.label), ("text", o.text), ("x_label", o.x_label), ("y_label", o.y_label)):
+                if val and bad_tok_re.search(val):
+                    issues.append(f"scene {sc.scene_id}: internal/placeholder {fld_name} {val!r} on '{o.id}'")
+            for item in (getattr(o, "legend_items", None) or []):
+                if item and bad_tok_re.search(str(item[0])):
+                    issues.append(f"scene {sc.scene_id}: internal legend identifier {item[0]!r} on '{o.id}'")
+
+        # 2. Critical damping / non-oscillating claim vs oscillating trajectory
+        if any(k in nar for k in ("critical damping", "critically damped", "overdamped", "non-oscillating", "without oscillating", "returns without oscillation")):
+            for o in sc.objects:
+                if o.kind == "data_series" and o.points_list and len(o.points_list) >= 8 and (o.model_output in ("time_series_x", "time_signal", "")):
+                    ys = [float(p[1]) for p in o.points_list if len(p) >= 2]
+                    diffs = [ys[i + 1] - ys[i] for i in range(len(ys) - 1) if abs(ys[i + 1] - ys[i]) > 1e-4]
+                    reversals = sum(1 for i in range(len(diffs) - 1) if diffs[i] * diffs[i + 1] < 0)
+                    if reversals >= 3:
+                        issues.append(
+                            f"scene {sc.scene_id}: narration describes critical/non-oscillating damping but '{o.id}' exhibits {reversals} oscillation reversals"
+                        )
+                if o.model_id and o.model_id in models:
+                    m = models[o.model_id]
+                    if m.kind == "dynamical_simulation" and "c" in m.params and "k" in m.params:
+                        mv = float(m.params.get("m", 1.0))
+                        cv = float(m.params.get("c", 0.0))
+                        kv = float(m.params.get("k", 1.0))
+                        if cv * cv < 4.0 * mv * kv - 1e-3:
+                            issues.append(
+                                f"scene {sc.scene_id}: narration describes critical/overdamped return but model '{m.model_id}' is underdamped (c={cv}, 2*sqrt(mk)={2*math.sqrt(max(0.0, mv*kv)):.2f})"
+                            )
+
+        # 3. Upright unstable equilibrium claim vs downward pendulum state
+        if any(k in nar for k in ("upright equilibrium", "unstable upright", "inverted pendulum", "balanced at the top")):
+            for o in sc.objects:
+                if o.kind == "mechanical_body" and getattr(o, "connector_kind", "") == "rod":
+                    anc = o.anchor_coords or [0.0, 1.2]
+                    pos = o.coords or [0.0, 0.0]
+                    if float(pos[1]) < float(anc[1]) - 0.15:
+                        issues.append(
+                            f"scene {sc.scene_id}: narration describes upright unstable equilibrium but '{o.id}' is hanging below pivot (y={pos[1]} < anchor_y={anc[1]})"
+                        )
+
+        # 4. Potential energy landscape should not be substituted by a generic bar_chart alone
+        if any(k in nar for k in ("potential energy landscape", "potential landscape", "potential well")):
+            kinds = {o.kind for o in sc.objects}
+            if "bar_chart" in kinds and not (kinds & {"function_plot", "data_series"}):
+                issues.append(
+                    f"scene {sc.scene_id}: narration describes a potential energy landscape but uses only a bar_chart instead of a potential curve"
+                )
+
+    return issues

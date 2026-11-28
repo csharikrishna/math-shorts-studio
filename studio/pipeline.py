@@ -332,7 +332,23 @@ def main() -> None:
     parser.add_argument("--lut", type=Path, default=None, help="Optional .cube LUT applied before the look")
     parser.add_argument("--allow-layout-warnings", action="store_true")
     parser.add_argument("--output-stem", type=str, default=None, help="Optional custom output file stem")
+    parser.add_argument("--grade", type=int, default=None, help="Optional K-12 class/grade level (1-12)")
+    parser.add_argument("--board", type=str, default="CBSE/NCERT", help="Curriculum board (e.g. CBSE/NCERT, curriculum_neutral)")
+    parser.add_argument("--studio", action="store_true", help="Launch local K-12 Educational Studio web UI on 127.0.0.1")
     args = parser.parse_args()
+
+    if args.studio:
+        import time as _time
+        from studio.education.studio_app import create_studio_server
+        srv, url = create_studio_server(port=8770, use_llm=True)
+        print(f"K-12 Educational Studio running at {url} (Ctrl+C to stop)")
+        try:
+            while True:
+                _time.sleep(0.5)
+        except KeyboardInterrupt:
+            srv.shutdown()
+            srv.server_close()
+        return 0
 
     theme_resolved = resolve_look(args.theme).name
     common = dict(

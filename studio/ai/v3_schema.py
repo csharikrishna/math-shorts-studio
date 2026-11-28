@@ -33,6 +33,12 @@ ObjectKind = Literal[
     "waveform",
     "mechanical_body",
     "vector_field",
+    "fraction_bar",
+    "fraction_circle",
+    "array_grid",
+    "counting_group",
+    "equation_balance",
+    "concept_card",
 ]
 
 EventOp = Literal[
@@ -154,6 +160,17 @@ class SceneObject(BaseModel):
     body_mass: Optional[float] = None
     damping_coeff: Optional[float] = None
     panel_slot: Literal["auto", "left", "right", "top", "bottom", "center"] = "auto"
+    # K-12 reusable educational component extensions
+    numerator: Optional[int] = None
+    denominator: Optional[int] = None
+    subdivisions: Optional[int] = None
+    rows: Optional[int] = None
+    cols: Optional[int] = None
+    count: Optional[int] = None
+    group_size: Optional[int] = None
+    steps_list: list[str] = Field(default_factory=list)
+    lhs_text: Optional[str] = None
+    rhs_text: Optional[str] = None
 
 
 ConstructionKind = Literal[

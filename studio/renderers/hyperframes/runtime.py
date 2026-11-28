@@ -202,7 +202,20 @@ def build_runtime_js(payload_json: str) -> str:
           capText.appendChild(lineDiv);
         }}
       }} else {{
-        capText.textContent = activeBeat.caption;
+        const prevCue = DATA.cues ? DATA.cues.find(c => c.beat_id === activeBeat.id && t > c.end && (t - c.end) <= 0.35) : null;
+        if (prevCue && prevCue.lines && prevCue.lines.length > 0) {{
+          for (const lineStr of prevCue.lines) {{
+            const lineDiv = document.createElement("span");
+            lineDiv.className = "cap-line word-past";
+            lineDiv.textContent = lineStr;
+            capText.appendChild(lineDiv);
+          }}
+        }} else {{
+          capText.style.display = "none";
+        }}
+      }}
+      if (capText.childNodes.length > 0) {{
+        capText.style.display = "";
       }}
     }} else if (DATA.caption_style === "off") {{
       spBadge.style.display = "none";
@@ -331,23 +344,39 @@ def build_runtime_js(payload_json: str) -> str:
         if (el.segment.arrow) attrs["marker-end"] = "url(#hf-arrow)";
         svgTarget.appendChild(svgEl("line", attrs));
       }} else if (el.kind === "bar_chart" && el.bars) {{
-        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "bar_chart" }});
         const swiB = sweepIdxFor(el, t);
         const liveVals = (swiB >= 0 && el.sweep_frames_px[swiB] && el.sweep_frames_px[swiB].bar_values && el.sweep_frames_px[swiB].bar_values.length === el.bars.length)
           ? el.sweep_frames_px[swiB].bar_values
           : null;
-        const maxLive = liveVals ? Math.max(...liveVals.map(v => Math.abs(v)), el.bars_max_val || 1e-6) : 1;
+        const maxLive = liveVals ? Math.max(...liveVals.map(v => Math.abs(v)), el.bars_max_val || 1e-6) : (el.bars_max_val || 1);
         const n = el.bars.length;
-        const colW = bw / Math.max(1, n);
-        const baseY = by + bh * 0.85;
-        const maxH = bh * 0.68;
+        const padX = Math.min(44, bw * 0.08);
+        const plotW = Math.max(80, bw - 2 * padX);
+        const colW = plotW / Math.max(1, n);
+        const barW = Math.min(88, Math.max(14, colW * 0.56));
+        const baseY = by + bh * 0.84;
+        const maxH = bh * 0.62;
+        // Baseline and subtle horizontal guide ticks
+        g.appendChild(svgEl("line", {{ x1: bx + padX, y1: baseY, x2: bx + padX + plotW, y2: baseY, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
+        [0.5, 1.0].forEach((f) => {{
+          const gy = baseY - f * maxH;
+          g.appendChild(svgEl("line", {{ x1: bx + padX, y1: gy, x2: bx + padX + plotW, y2: gy, stroke: DATA.look.grid, "stroke-width": 1.2, "stroke-dasharray": "4 4" }}));
+        }});
         el.bars.forEach((b, i) => {{
+          const rawVal = liveVals ? liveVals[i] : b.val;
           const fracUse = liveVals ? (Math.abs(liveVals[i]) / maxLive) : b.frac;
-          const barH = Math.max(2, fracUse * maxH * (swiB >= 0 ? 1 : p));
-          const x = bx + i * colW + colW * 0.18;
-          g.appendChild(svgEl("rect", {{ x: x, y: baseY - barH, width: Math.max(6, colW * 0.64), height: barH, fill: el.color, rx: 4 }}));
+          const barH = Math.max(3, Math.min(maxH, fracUse * maxH * (swiB >= 0 ? 1 : p)));
+          const colCx = bx + padX + (i + 0.5) * colW;
+          const x = colCx - 0.5 * barW;
+          g.appendChild(svgEl("rect", {{ x: x, y: baseY - barH, width: barW, height: barH, fill: el.color, rx: 5, opacity: 0.92 }}));
+          if (n <= 8 && Number.isFinite(rawVal)) {{
+            const vTxt = svgEl("text", {{ x: colCx, y: baseY - barH - 8, fill: DATA.look.ink_primary, "font-size": 17, "font-weight": "600", "text-anchor": "middle", "font-variant-numeric": "tabular-nums" }});
+            vTxt.textContent = Math.abs(rawVal) >= 100 ? rawVal.toFixed(0) : rawVal.toFixed(2);
+            g.appendChild(vTxt);
+          }}
           if (i % Math.max(1, Math.ceil(n / 8)) === 0) {{
-            const txt = svgEl("text", {{ x: x + colW * 0.32, y: baseY + 24, fill: DATA.look.ink_muted, "font-size": 20, "text-anchor": "middle" }});
+            const txt = svgEl("text", {{ x: colCx, y: baseY + 24, fill: DATA.look.ink_muted, "font-size": 18, "text-anchor": "middle" }});
             txt.textContent = b.label;
             g.appendChild(txt);
           }}
@@ -450,6 +479,117 @@ def build_runtime_js(payload_json: str) -> str:
           lbl.textContent = (x0 + ((x1 - x0) * i) / 4).toFixed(1).replace(/\\.0$/, "");
           g.appendChild(lbl);
         }}
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "fraction_bar" && el.frac_bar) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const {{ num, den, sub, label }} = el.frac_bar;
+        const barW = Math.min(bw * 0.84, 720);
+        const barH = Math.min(96, bh * 0.34);
+        const x0 = bx + (bw - barW) * 0.5;
+        const y0 = by + (bh - barH) * 0.5;
+        const totalParts = den * sub;
+        const filledParts = num * sub;
+        const partW = barW / Math.max(1, totalParts);
+        for (let i = 0; i < totalParts; i++) {{
+          const isFilled = i < filledParts;
+          g.appendChild(svgEl("rect", {{
+            x: x0 + i * partW + 1.5, y: y0, width: Math.max(4, partW - 3), height: barH, rx: 4,
+            fill: isFilled ? el.color : DATA.look.surface, stroke: DATA.look.ink_primary, "stroke-width": 2.2
+          }}));
+        }}
+        const lbl = svgEl("text", {{ x: bx + bw * 0.5, y: y0 - 18, fill: DATA.look.ink_primary, "font-size": 28, "font-weight": "700", "text-anchor": "middle" }});
+        lbl.textContent = label;
+        g.appendChild(lbl);
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "fraction_circle" && el.frac_circle) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const {{ num, den, sub, label }} = el.frac_circle;
+        const total = den * sub;
+        const filled = num * sub;
+        const cx = bx + bw * 0.5, cy = by + bh * 0.52;
+        const rad = Math.min(bw, bh) * 0.34;
+        for (let i = 0; i < total; i++) {{
+          const a0 = -Math.PI / 2 + (2 * Math.PI * i) / total;
+          const a1 = -Math.PI / 2 + (2 * Math.PI * (i + 1)) / total;
+          const x1 = cx + rad * Math.cos(a0), y1 = cy + rad * Math.sin(a0);
+          const x2 = cx + rad * Math.cos(a1), y2 = cy + rad * Math.sin(a1);
+          const largeArc = (a1 - a0) > Math.PI ? 1 : 0;
+          const d = `M ${{cx}} ${{cy}} L ${{x1.toFixed(1)}} ${{y1.toFixed(1)}} A ${{rad.toFixed(1)}} ${{rad.toFixed(1)}} 0 ${{largeArc}} 1 ${{x2.toFixed(1)}} ${{y2.toFixed(1)}} Z`;
+          g.appendChild(svgEl("path", {{ d: d, fill: i < filled ? el.color : DATA.look.surface, stroke: DATA.look.ink_primary, "stroke-width": 2.4 }}));
+        }}
+        const lbl = svgEl("text", {{ x: cx, y: cy - rad - 18, fill: DATA.look.ink_primary, "font-size": 28, "font-weight": "700", "text-anchor": "middle" }});
+        lbl.textContent = label;
+        g.appendChild(lbl);
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "array_grid" && el.array_grid) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const {{ rows, cols, count, label }} = el.array_grid;
+        const cell = Math.min(96, Math.min((bw * 0.78) / cols, (bh * 0.68) / rows));
+        const gridW = cell * cols, gridH = cell * rows;
+        const x0 = bx + (bw - gridW) * 0.5, y0 = by + (bh - gridH) * 0.52;
+        let idx = 0;
+        for (let r = 0; r < rows; r++) {{
+          for (let c = 0; c < cols; c++) {{
+            const active = idx < count;
+            g.appendChild(svgEl("rect", {{
+              x: x0 + c * cell + 3, y: y0 + r * cell + 3, width: Math.max(6, cell - 6), height: Math.max(6, cell - 6),
+              rx: 6, fill: active ? el.color : DATA.look.surface, stroke: DATA.look.ink_primary, "stroke-width": 1.8, opacity: active ? 0.92 : 0.45
+            }}));
+            idx += 1;
+          }}
+        }}
+        const lbl = svgEl("text", {{ x: bx + bw * 0.5, y: y0 - 16, fill: DATA.look.ink_primary, "font-size": 26, "font-weight": "700", "text-anchor": "middle" }});
+        lbl.textContent = label;
+        g.appendChild(lbl);
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "counting_group" && el.counting_group) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const {{ count, group_size, label }} = el.counting_group;
+        const cols = Math.min(group_size, Math.max(1, count));
+        const rows = Math.max(1, Math.ceil(count / Math.max(1, group_size)));
+        const step = Math.min(88, (bw * 0.8) / Math.max(1, cols), (bh * 0.68) / Math.max(1, rows));
+        const rad = Math.max(10, step * 0.34);
+        const x0 = bx + (bw - cols * step) * 0.5 + step * 0.5;
+        const y0 = by + (bh - rows * step) * 0.52 + step * 0.5;
+        for (let i = 0; i < count; i++) {{
+          const r = Math.floor(i / group_size), c = i % group_size;
+          g.appendChild(svgEl("circle", {{ cx: x0 + c * step, cy: y0 + r * step, r: rad, fill: el.color, stroke: DATA.look.ground, "stroke-width": 2.4 }}));
+        }}
+        const lbl = svgEl("text", {{ x: bx + bw * 0.5, y: y0 - step * 0.5 - 16, fill: DATA.look.ink_primary, "font-size": 26, "font-weight": "700", "text-anchor": "middle" }});
+        lbl.textContent = label;
+        g.appendChild(lbl);
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "equation_balance" && el.eq_balance) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const cx = bx + bw * 0.5, baseY = by + bh * 0.74, beamY = by + bh * 0.42;
+        const span = Math.min(bw * 0.34, 240);
+        g.appendChild(svgEl("polygon", {{ points: `${{cx - 28}},${{baseY}} ${{cx + 28}},${{baseY}} ${{cx}},${{beamY + 8}}`, fill: DATA.look.accent_secondary }}));
+        g.appendChild(svgEl("line", {{ x1: cx - span, y1: beamY, x2: cx + span, y2: beamY, stroke: DATA.look.ink_primary, "stroke-width": 5, "stroke-linecap": "round" }}));
+        [[-span, el.eq_balance.lhs], [span, el.eq_balance.rhs]].forEach(([dx, txtStr]) => {{
+          const px = cx + dx;
+          g.appendChild(svgEl("rect", {{ x: px - 105, y: beamY - 64, width: 210, height: 52, rx: 10, fill: DATA.look.surface, stroke: el.color, "stroke-width": 2.6 }}));
+          const tEl = svgEl("text", {{ x: px, y: beamY - 30, fill: DATA.look.ink_primary, "font-size": 24, "font-weight": "700", "text-anchor": "middle" }});
+          tEl.textContent = txtStr;
+          g.appendChild(tEl);
+        }});
+        svgTarget.appendChild(g);
+      }} else if (el.kind === "concept_card" && el.concept_card) {{
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        const cw = Math.min(bw - 24, 1180);
+        const steps = (el.concept_card.steps || []).slice(0, 5);
+        const rowH = 44;
+        const ch = Math.min(bh - 20, 84 + steps.length * rowH);
+        const cx0 = bx + (bw - cw) * 0.5;
+        const cy0 = by + (bh - ch) * 0.5;
+        g.appendChild(svgEl("rect", {{ x: cx0, y: cy0, width: cw, height: ch, rx: 16, fill: DATA.look.surface, stroke: el.color, "stroke-width": 3 }}));
+        const hTxt = svgEl("text", {{ x: cx0 + 28, y: cy0 + 42, fill: el.color, "font-size": 26, "font-weight": "700" }});
+        hTxt.textContent = (el.concept_card.title || "").slice(0, 72);
+        g.appendChild(hTxt);
+        steps.forEach((stStr, si) => {{
+          const rTxt = svgEl("text", {{ x: cx0 + 32, y: cy0 + 82 + si * rowH, fill: DATA.look.ink_primary, "font-size": 22 }});
+          rTxt.textContent = `${{si + 1}}. ${{String(stStr).slice(0, 82)}}`;
+          g.appendChild(rTxt);
+        }});
         svgTarget.appendChild(g);
       }} else if (el.kind === "equation") {{
         const card = document.createElement("div");

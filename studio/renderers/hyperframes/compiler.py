@@ -533,6 +533,8 @@ html, body {{
   padding: {cap_pad};
   text-shadow: {cap_shadow};
   max-width: {int(stage_w * 0.92)}px;
+  max-height: {max(68, int(zones.caption_band_px) - 8)}px;
+  overflow: hidden;
 }}
 .cap-line {{ display: block; }}
 .word-active {{ color: {lk.accent_primary if cap_style in ("editorial", "dialogue") else (lk.ink_primary if cap_style in ("minimal", "accessible") else lk.ink_primary)}; font-weight: 700; }}

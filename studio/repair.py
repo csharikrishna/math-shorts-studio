@@ -83,7 +83,7 @@ def diagnose_scene_visual_defects(plan: VideoPlanV3, frame_audit: Any | None = N
         # 3. Multiple large containers lacking disjoint panel slots
         containers = [
             o for o in active.values()
-            if o.kind in ("axes", "matrix", "table", "bar_chart", "graph_network")
+            if o.kind in ("axes", "matrix", "table", "bar_chart", "graph_network", "fraction_bar", "fraction_circle", "array_grid", "counting_group", "equation_balance", "concept_card")
             or (o.kind == "mechanical_body" and not o.axes_id)
         ]
         if len(containers) >= 2:
@@ -208,7 +208,18 @@ def repair_scene_deterministically(
             active_map[o.id] = o
 
         if not scene_id or sc.scene_id == scene_id:
+            from studio.ai.visual_intelligence import humanize_visible_label
             for o in sc.objects:
+                if o.label:
+                    o.label = humanize_visible_label(o.label)
+                if o.x_label:
+                    o.x_label = humanize_visible_label(o.x_label)
+                if o.y_label:
+                    o.y_label = humanize_visible_label(o.y_label)
+                if o.legend_items:
+                    o.legend_items = [[humanize_visible_label(it[0]), *it[1:]] for it in o.legend_items if it]
+                if o.text:
+                    o.text = humanize_visible_label(o.text)
                 if o.text and _QUESTION_TOKEN_RE.search(o.text.strip()):
                     cleaned = re.sub(r"\s*=\s*\?(?!\S)", "", o.text).strip(" ?:")
                     o.text = cleaned or o.id.replace("_", " ").title()

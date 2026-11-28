@@ -1125,8 +1125,9 @@ class V3Scene(StoryScene):
             lbl_step = max(1, (n + 7) // 8)
             for i, frac in enumerate(norm):
                 h = max(0.0, abs(frac) * max_h)
+                bar_w = min(w * 0.58, 1.35)
                 if h > 0.0:
-                    bar = m.Rectangle(width=w * 0.62, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
+                    bar = m.Rectangle(width=bar_w, height=h, fill_color=color, fill_opacity=0.88, stroke_width=0)
                     x_pos = -0.5 * chart_w + (i + 0.5) * w
                     y_off = h * 0.5 if frac >= 0 else -h * 0.5
                     bar.move_to(np.array([x_pos, base_y + y_off, 0.0]))
