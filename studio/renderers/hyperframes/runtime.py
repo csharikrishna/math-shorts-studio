@@ -696,6 +696,26 @@ def build_runtime_js(payload_json: str) -> str:
     const issues = doAudit ? window.__HF_AUDIT_LAYOUT() : [];
     return {{ changed, issues }};
   }};
+  window.__HF_STEP_BATCH = (startIdx, maxRun, fps, nextAuditIdx) => {{
+    const s0 = startIdx | 0;
+    const ts = s0 / fps;
+    const sig0 = computeRenderSig(ts);
+    const changed = sig0 !== prevSig;
+    if (changed) {{
+      prevSig = sig0;
+      renderAtTime(ts);
+    }}
+    const issues = (s0 === nextAuditIdx) ? window.__HF_AUDIT_LAYOUT() : [];
+    let runLen = 1;
+    const lim = Math.max(1, maxRun | 0);
+    while (runLen < lim) {{
+      const fi = s0 + runLen;
+      if (fi === nextAuditIdx) break;
+      if (computeRenderSig(fi / fps) !== prevSig) break;
+      runLen += 1;
+    }}
+    return {{ changed, runLen, issues }};
+  }};
 
   renderAtTime(0);
 }})();

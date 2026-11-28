@@ -439,6 +439,9 @@ def _synth_kokoro_trimmed(text: str, voice: str, speed: float, out_wav: Path) ->
     with _KOKORO_LOCK:
         pipe = _KOKORO_PIPELINES.get(lang)
         if pipe is None:
+            kokoro_cache = Path.home() / ".cache" / "huggingface" / "hub" / "models--hexgrad--Kokoro-82M"
+            if kokoro_cache.exists():
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
             pipe = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M")
             _KOKORO_PIPELINES[lang] = pipe
         with inf_ctx:

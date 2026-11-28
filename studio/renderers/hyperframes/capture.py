@@ -63,14 +63,24 @@ def capture_frames_to_ffmpeg(
             cdp.call("Runtime.evaluate", {"expression": "typeof window.__HF_STEP === 'function'"})
 
         ff_proc = subprocess.Popen(ff_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        audit_frames = {int(round(0.5 * (sb.start_time + sb.end_time) * fps)) for sb in audio_timeline.beats}
+        audit_sorted = sorted(int(round(0.5 * (sb.start_time + sb.end_time) * fps)) for sb in audio_timeline.beats)
+        audit_ptr = 0
         seen_issues: set[str] = set()
         last_jpeg: bytes | None = None
 
-        for f_idx in range(total_frames):
-            t_s = f_idx / fps
-            do_audit_js = "true" if f_idx in audit_frames else "false"
-            step = cdp.call("Runtime.evaluate", {"expression": f"window.__HF_STEP({t_s:.6f}, {do_audit_js})", "returnByValue": True})
+        f_idx = 0
+        while f_idx < total_frames:
+            while audit_ptr < len(audit_sorted) and audit_sorted[audit_ptr] < f_idx:
+                audit_ptr += 1
+            next_audit = audit_sorted[audit_ptr] if audit_ptr < len(audit_sorted) else -1
+            max_run = min(240, total_frames - f_idx)
+            step = cdp.call(
+                "Runtime.evaluate",
+                {
+                    "expression": f"window.__HF_STEP_BATCH({f_idx}, {max_run}, {fps}, {next_audit})",
+                    "returnByValue": True,
+                },
+            )
             val = step.get("result", {}).get("value") or {}
             for v in val.get("issues") or []:
                 if v not in seen_issues:
@@ -80,8 +90,10 @@ def capture_frames_to_ffmpeg(
                 shot = cdp.call("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
                 last_jpeg = base64.b64decode(shot["data"])
                 captured_frames += 1
+            run_len = max(1, min(max_run, int(val.get("runLen", 1) or 1)))
             assert ff_proc.stdin is not None
-            ff_proc.stdin.write(last_jpeg)
+            ff_proc.stdin.write(last_jpeg * run_len)
+            f_idx += run_len
 
         if ff_proc.stdin:
             ff_proc.stdin.close()
