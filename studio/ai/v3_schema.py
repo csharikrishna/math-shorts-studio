@@ -83,6 +83,12 @@ CompositionKind = Literal[
     "before_after_simulation",
     "multi_view_dashboard",
     "progressive_derivation",
+    "physical_system_with_displacement",
+    "physical_system_with_phase_space",
+    "dual_time_series",
+    "parameter_sweep_with_response",
+    "vector_field_with_trajectory",
+    "state_with_conserved_chart",
 ]
 
 
@@ -274,6 +280,14 @@ ClaimRuleKind = Literal[
     "parseval_energy_conservation",
     "simulation_trajectory_bounds",
     "frequency_response_peak",
+    "state_bounds",
+    "positivity",
+    "conservation_law",
+    "energy_dissipation",
+    "periodicity",
+    "numerical_accuracy",
+    "parameter_validity",
+    "physical_units",
 ]
 
 
@@ -333,6 +347,11 @@ class StructuredClaim(BaseModel):
     expected_regime: Optional[
         Literal["stable_node", "unstable_node", "saddle", "stable_spiral", "unstable_spiral", "center", "degenerate"]
     ] = None
+    lower_bound: Optional[float] = None
+    upper_bound: Optional[float] = None
+    state_var: Optional[str] = None
+    units: dict[str, str] = Field(default_factory=dict)
+    assumptions: str = ""
     verification_level: Literal[
         "deterministically_verified",
         "numerically_tested",

@@ -86,7 +86,7 @@ def run_pipeline(
         raise ValueError(f"Unknown theme '{theme_name}'. Options: {list(THEMES)}")
 
     profile = FORMATS[format_name]
-    resolved_cap_style = caption_style or ("kinetic" if (profile.is_vertical and ui in ("card", "neon")) else ("editorial" if not profile.is_vertical else "minimal"))
+    resolved_cap_style = caption_style or ("editorial" if not profile.is_vertical else "minimal")
     script_path = script_path.resolve()
     prev_env_vals: dict[str, str | None] = {}
     with _V3_SCENE_ENV_LOCK:
@@ -243,7 +243,7 @@ def run_plan(plan_path: Path, **kwargs) -> Path:
             )
             fmt_p = str(kwargs.get("format_name", "shorts_hd"))
             thm_p = str(kwargs.get("theme_name", "midnight_studio"))
-            cap_p = str(kwargs.get("caption_style") or ("kinetic" if "shorts" in fmt_p else "editorial"))
+            cap_p = str(kwargs.get("caption_style") or "editorial")
             bdir_p = PROJECT_ROOT / "build" / f"{stem}_{fmt_p}"
             from studio.provenance import build_and_write_manifest
 

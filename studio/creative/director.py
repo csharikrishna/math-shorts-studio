@@ -42,7 +42,7 @@ Before choosing equations or scenes, deeply analyze the concept and explore 3 ge
 Rules:
 - Storyline 1..3 must use DIFFERENT explanation strategies and opening visual hooks (do not pitch minor word tweaks).
 - Never use generic hype or cliches ("Welcome to a journey", "Unlock secrets", "game-changer").
-- Anchor the explanation in ONE compelling central question, prerequisites, and honest real-world or mathematical examples.
+- Anchor the explanation in ONE compelling central question, prerequisites, concrete intuition BEFORE formal symbols, and explain WHY each mathematical relationship works in natural conversational English.
 """
 
 
@@ -121,8 +121,8 @@ class CreativeDirector:
             f"TARGET: ~{target_duration_s:.0f}s ({n_beats} beats, ~{target_words} total words, minimum {min_words} words).\n"
             "STRICT PEDAGOGICAL & SCRIPT RULES:\n"
             "- Write pure speakable English in `spoken_text` (NO raw LaTeX like \\frac or \\alpha and NO code tokens like x_dot; write 'x dot', 'x squared', 'lambda').\n"
-            "- Open with a concrete example or visual paradox before introducing abstract formulas; define every symbol the moment it first appears (`symbols_introduced`).\n"
-            "- Connect each beat smoothly with natural `transition_from_prev` reasoning (never repeat opening stems or dramatic hype).\n"
+            "- Explain WHY mechanisms behave the way they do, not just what happens next: open with a concrete intuition or sensory comparison before introducing symbols, and define each new variable (`symbols_introduced`) the exact moment it enters.\n"
+            "- Keep narration conversational, clear, and varied in rhythm — never repeat canned transition stems or fake drama/hype.\n"
             "- Use 1-2 *asterisk* emphasis words and place `<bookmark mark='m1'/>` right before key visual trigger words.\n"
             "- Every mark listed in `anchor_marks` MUST appear verbatim as `<bookmark mark='...'/>` in `spoken_text`.\n"
             "- Populate `visual_intent`, `educational_purpose`, `mathematical_claims`, `latex_refs`, `beat_id`, and `demo_contract` "

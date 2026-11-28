@@ -442,6 +442,15 @@ def create_v3_plan(
         design = default_design_spec(format_name=format_name, look_name=look_name)
         (art_dir / "DESIGN.md").write_text(export_design_md(design), encoding="utf-8")
 
+    if active_script is not None and getattr(active_script, "beats", None):
+        from studio.ai.visual_intelligence import build_visual_intelligence_brief
+
+        _vi_decs, _vi_txt = build_visual_intelligence_brief(active_script.beats)
+        creative_context += (
+            "\nVISUAL INTELLIGENCE DECISIONS (bind each beat's chosen linked composition, views, and moving state explicitly):\n"
+            f"{_vi_txt}\n"
+        )
+
     min_words = max(45, int(target_duration_s * 1.9))
     max_words = max(min_words + 20, int(target_duration_s * 2.28))
     req = (

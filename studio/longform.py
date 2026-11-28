@@ -215,7 +215,7 @@ def create_longform_plan(
     ch_system = f"{V3_STYLE_GUIDE}\n\n{dlg_rules}\n\n{registry_caps}"
 
     req_sig = JobStore.content_hash(
-        {"topic": topic, "dur": target_duration_s, "aud": audience, "mode": narration_mode, "n": n_chapters, "v": "v38"}
+        {"topic": topic, "dur": target_duration_s, "aud": audience, "mode": narration_mode, "n": n_chapters, "v": "v41"}
     )
     # Run CreativeDirector upfront for STORYLINES.md + central question + strategy + misconceptions
     brief_cache = logs_dir / f"brief_{req_sig}.json"
@@ -502,6 +502,9 @@ def create_longform_plan(
         if on_progress:
             on_progress(f"compiling visuals from approved script {idx}/{len(lf_plan.chapters)}: {ch.title} (~{ch_target_s:.0f}s)")
         node_ctx = "; ".join(f"{node_map[nid].title}: {[c.statement for c in node_map[nid].claims]}" for nid in ch.node_ids if nid in node_map)
+        from studio.ai.visual_intelligence import build_visual_intelligence_brief
+
+        _vi_decs, _vi_txt = build_visual_intelligence_brief(ch_beats)
         locked_spec_lines = "\n".join(
             f"- scene_id='{b.scene_id}' | speaker='{b.speaker}' | visual_intent='{b.visual_intent}' | claims={b.mathematical_claims} | spoken_text={json.dumps(b.spoken_text)}"
             + (
@@ -517,7 +520,13 @@ def create_longform_plan(
             f"Summary: {ch.summary}\nKnowledge context: {node_ctx}\n"
             f"Shared Continuity Variables: {json.dumps(lf_plan.continuity.defined_variables)}\n"
             "APPROVED BEATS (preserve exact `scene_id`, `speaker`, and `narration` verbatim; add deterministic simulations/constructions, visual objects, meaningful state-changing motion events, and verified StructuredClaim objects):\n"
+            f"VISUAL INTELLIGENCE BEAT DECISIONS:\n{_vi_txt}\n"
             "CLAIM, SIMULATION & MOTION RULES:\n"
+            "- NEVER leave an axes empty or containing only 1-2 tiny isolated points without curves/vector_field/trajectories/mechanical_body! Start trajectories AWAY from exact equilibria so orbits visibly evolve!\n"
+            "- For `dynamical_simulation` models, ALWAYS supply explicit non-empty `state_vars`, matching `rhs_exprs`, and matching `initial_state` (plus `units` and `derived_exprs` for invariants/energies). Choose `x_label`, `y_label`, and `legend_items` cleanly.\n"
+            "- For multiple simultaneous plots/panels in one scene, give each `axes`/`table`/`bar_chart`/`mechanical_body` distinct `panel_slot` (`left`/`right` in 16:9, `top`/`bottom` in 9:16), or use `dual_time_series`, `physical_system_with_displacement`, `physical_system_with_phase_space`, `vector_field_with_trajectory`, `state_with_conserved_chart`.\n"
+            "- NEVER trace an unlinked static `point` — always bind moving points to `model_id` (`model_output='centroid_point'|'time_point'|'spectrum_peak'|'body_point'`)!\n"
+            "- NEVER use cryptic placeholder annotations like `?` — write concise, informative labels (`Prey x(t)`, `Center Equil.`, etc.).\n"
             "- NEVER rely only on static fade/create across dynamic explanation beats: whenever narration describes motion, oscillation, decay, phase portraits, trajectories, convergence, or resonance, declare shared `math_models` (`dynamical_simulation`, `frequency_response`, `signal_spectral_pipeline`, etc.) + reusable components (`mechanical_body` with `spring`/`damper`/`spring_damper`/`rod`, `vector_field`, `data_series`, `vector`, live `bar_chart` `energy_bars`, `annotation` readout) driven by `op='animate_param'` or `'trace'`!\n"
             "- Use `frequency_response` for driven steady-state gain & verify damping threshold: nonzero resonance peak ONLY occurs when damping_ratio < 1/sqrt(2) (~0.707) at w_res = w0*sqrt(1 - 2*zeta^2) (distinct from free damped frequency w_d = w0*sqrt(1 - zeta^2)); ALWAYS leave expected_value=null on frequency_response_peak unless citing an exact verified number, and declare a second model_id when comparing another damping_ratio!\n"
             "- NEVER attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to `axes`, `parametric_curve`, `function_plot`, `point`, or `vector`.\n"
@@ -582,6 +591,18 @@ def create_longform_plan(
             _atomic_write_json(logs_dir / f"failed_{ch.chapter_id}.json", ch_plan.model_dump() if ch_plan else {})
             raise RuntimeError(f"Chapter {ch.chapter_id} failed validation after repairs: {issues}")
         mat = materialize_constructions(ch_plan)
+        from studio.repair import repair_plan_scenes
+
+        mat, rep_evidence = repair_plan_scenes(
+            mat,
+            provider=director.provider if os.environ.get("STUDIO_SCENE_LLM_REPAIR", "") == "1" else None,
+            preview_verify=os.environ.get("STUDIO_SCENE_PREVIEW_REPAIR", "") == "1",
+            look_name=os.environ.get("STUDIO_LOOK_DEFAULT", "light"),
+            out_dir=logs_dir / f"repair_{ch.chapter_id}",
+        )
+        if rep_evidence:
+            with log_lock:
+                gen_log.append({"stage": f"chapter_{ch.chapter_id}_visual_repair", "repairs": rep_evidence})
         if ch_beats:
             lock_script_to_plan(mat, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
         post_issues = validate_v3_plan(mat, require_claims=True)
@@ -633,7 +654,7 @@ def build_longform_video(
     qa_time_s = 0.0
 
     resolved_look = resolve_look(look_name).name
-    resolved_cap = caption_style or ("kinetic" if "shorts" in format_name else "editorial")
+    resolved_cap = caption_style or "editorial"
 
     lf_dir = PROJECT_ROOT / "build" / f"longform_{slug}"
     lf_dir.mkdir(parents=True, exist_ok=True)
@@ -1130,7 +1151,7 @@ def derive_recomposed_short(
 ) -> dict[str, object]:
     """Derive a native recomposed 9:16 portrait Short from the core chapter (no 16:9 crop)."""
     resolved_look = resolve_look(look_name).name
-    resolved_cap = caption_style or ("kinetic" if "shorts" in format_name else "editorial")
+    resolved_cap = caption_style or "editorial"
     if not chapter_plans:
         raise ValueError("Need at least one chapter plan to derive a recomposed Short.")
     # Choose highest-value contiguous 3..6-scene climax window (~75..115 words) with real motion ops & claims

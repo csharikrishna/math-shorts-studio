@@ -288,6 +288,7 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
         "time_series_x",
         "time_series_y",
         "energy_total",
+        "conserved_invariant",
         "response_curve",
         "phase_curve",
         "mean_curve",
@@ -298,10 +299,19 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
         "error_curve",
     ):
         pts = model_data.get(out_key) or []
+        if not pts and isinstance(model_data.get("derived"), dict) and out_key in model_data["derived"]:
+            t_ax = model_data.get("t_axis") or []
+            d_seq = model_data["derived"][out_key] or []
+            if len(t_ax) == len(d_seq) and len(t_ax) >= 2:
+                pts = [[round(float(tv), 5), round(float(dv), 6)] for tv, dv in zip(t_ax, d_seq)]
         if pts and not obj.points_list:
             obj.points_list = [list(p) for p in pts]
-    elif out_key in ("centroid_point", "spectrum_peak", "end_point", "body_point", "mechanical_body"):
-        pt = model_data.get("body_point" if out_key == "mechanical_body" else out_key)
+    elif out_key in ("centroid_point", "spectrum_peak", "end_point", "body_point", "mechanical_body", "sweep"):
+        if out_key == "sweep" and model_data.get("sweep_frames"):
+            fr0 = model_data["sweep_frames"][0]
+            pt = fr0.get("body_pos") if obj.kind == "mechanical_body" else fr0.get("point")
+        else:
+            pt = model_data.get("body_point" if out_key == "mechanical_body" else out_key)
         if pt and len(pt) >= 2 and obj.coords is None:
             obj.coords = [float(pt[0]), float(pt[1])]
     elif out_key in ("centroid_vector", "restoring_force"):
@@ -333,13 +343,13 @@ def _bind_object_from_model(obj: "SceneObject", model_data: dict[str, Any], swee
     if not obj.sweep_keyframes and model_data.get("sweep_frames"):
         if out_key in (
             "winding_curve", "centroid_point", "centroid_vector", "restoring_force",
-            "spectrum_peak", "phase_orbit", "mechanical_body", "body_point",
-            "energy_bars", "trajectory", "loss_curve", "end_point", "readout",
+            "spectrum_peak", "time_point", "phase_orbit", "mechanical_body", "body_point",
+            "energy_bars", "trajectory", "loss_curve", "end_point", "readout", "sweep",
         ):
             obj.sweep_keyframes = [sweep_cls.model_validate(kf) for kf in model_data["sweep_frames"]]
     if "selected_sweep_u" in model_data and out_key in (
         "winding_curve", "centroid_point", "centroid_vector", "restoring_force",
-        "spectrum_peak", "phase_orbit", "mechanical_body", "energy_bars", "readout",
+        "spectrum_peak", "time_point", "phase_orbit", "mechanical_body", "energy_bars", "readout", "sweep",
     ):
         obj.param_init = float(model_data["selected_sweep_u"])
 
@@ -675,4 +685,6 @@ def materialize_constructions(plan: "VideoPlanV3") -> "VideoPlanV3":
                         fspec_id = c.output_ids[1]
                         sc.objects.append(SceneObject(id=fspec_id, kind="data_series", persist=c.persist, color_role="secondary", points_list=pipe["filtered_spectrum"], axes_id=p.axes_id, label="F_filtered(w)"))
                         existing_ids.add(fspec_id)
-    return out
+    from studio.ai.visual_intelligence import apply_visual_intelligence_and_fit
+
+    return apply_visual_intelligence_and_fit(out)

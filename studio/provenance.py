@@ -52,6 +52,7 @@ class ProductionManifest(BaseModel):
     qa_overall_score: float = 0.0
     qa_approved: bool = False
     qa_review_path: str = ""
+    qa_report_sha256: str = ""
     telemetry_summary: dict[str, Any] = Field(default_factory=dict)
     generated_at_utc: str = ""
     provider_provenance: list[dict[str, Any]] = Field(default_factory=list)
@@ -403,6 +404,7 @@ def build_and_write_manifest(
         qa_overall_score=qa_score,
         qa_approved=qa_app,
         qa_review_path=rev_path_str,
+        qa_report_sha256=sha256_file(review_path) if (review_path is not None and review_path.exists()) else "",
         generated_at_utc=datetime.now(timezone.utc).isoformat(),
         provider_provenance=prov_log,
         telemetry_summary=telemetry_summary or {},
@@ -458,6 +460,7 @@ def finalize_manifest_qa(
     id_ok = bool(streams.get("width") and dur_s > 0.0 and mf.font_versions)
     cert_ok = bool(id_ok and prod_state == "publication_approved" and qa_app and qa_score >= 82.0)
 
+    qa_review_sha = sha256_file(review_path) if (review_path is not None and review_path.exists()) else mf.qa_report_sha256
     updated = mf.model_copy(
         update={
             "stream_info": streams,
@@ -466,6 +469,7 @@ def finalize_manifest_qa(
             "qa_overall_score": qa_score,
             "qa_approved": qa_app,
             "qa_review_path": rev_p_str,
+            "qa_report_sha256": qa_review_sha,
             "identity_verified": id_ok,
             "production_certified": cert_ok,
             "telemetry_summary": telemetry_summary if telemetry_summary is not None else mf.telemetry_summary,
@@ -535,6 +539,8 @@ def inspect_manifest_verification(
             rp = PROJECT_ROOT / rp
         if not rp.exists():
             identity_issues.append(f"Linked review report missing: {mf.qa_review_path}")
+        elif mf.qa_report_sha256 and sha256_file(rp) != mf.qa_report_sha256:
+            identity_issues.append(f"Review report SHA-256 mismatch: {mf.qa_review_path}")
 
     if mf.production_state != "publication_approved" or not mf.qa_approved or mf.qa_overall_score < 82.0:
         cert_issues.append(

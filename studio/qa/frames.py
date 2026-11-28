@@ -37,8 +37,12 @@ class FrameAuditResult:
     caption_zone_ok: bool = True
     median_stage_w: float = 0.0
     mean_fg_ratio: float = 0.0
+    primary_content_ratio: float = 0.0
     max_frame_delta: float = 0.0
     empty_midpoint_scenes: list[str] = field(default_factory=list)
+    trivial_stage_scenes: list[str] = field(default_factory=list)
+    clipped_data_scenes: list[str] = field(default_factory=list)
+    panel_overlap_findings: list[str] = field(default_factory=list)
     static_motion_scenes: list[str] = field(default_factory=list)
     edge_clip_frames: int = 0
     scenes_covered: int = 0
@@ -190,10 +194,39 @@ def inspect_video_scene_aware(
         diffs: list[float] = []
         stage_widths: list[float] = []
         fg_ratios: list[float] = []
+        primary_ratios: list[float] = []
         edge_clips = 0
         cap_band_hits = 0
         empty_midpoints: list[str] = []
+        trivial_stage_scenes: list[str] = []
+        clipped_data_scenes: list[str] = []
+        panel_overlap_findings: list[str] = []
+        checked_overlap_scenes: set[str] = set()
         arr_by_scene: dict[str, list[tuple[str, np.ndarray, bool]]] = {}
+
+        # Plan-level object map for differentiating axes/chrome vs primary mathematical objects
+        plan_scene_map = {str(getattr(sc, "scene_id", "")): sc for sc in (getattr(plan, "scenes", []) or [])} if plan is not None else {}
+        if plan_scene_map:
+            ax_bounds_all: dict[str, tuple[list[float], list[float], bool]] = {}
+            for sc_obj in plan_scene_map.values():
+                is_z = any(str(getattr(e, "op", "")) == "zoom" for e in getattr(sc_obj, "events", [])) or str(getattr(sc_obj, "composition", "")) == "spotlight_zoom"
+                for o in getattr(sc_obj, "objects", []):
+                    if getattr(o, "kind", "") == "axes":
+                        ax_bounds_all[str(o.id)] = (list(o.x_range or [-4.0, 4.0]), list(o.y_range or [-2.5, 2.5]), is_z)
+            for sc_id_p, sc_obj in plan_scene_map.items():
+                is_z = any(str(getattr(e, "op", "")) == "zoom" for e in getattr(sc_obj, "events", [])) or str(getattr(sc_obj, "composition", "")) == "spotlight_zoom"
+                for o in getattr(sc_obj, "objects", []):
+                    if getattr(o, "kind", "") in ("data_series", "parametric_curve") and getattr(o, "points_list", None) and getattr(o, "axes_id", None) in ax_bounds_all:
+                        axr, ayr, axz = ax_bounds_all[str(o.axes_id)]
+                        if is_z or axz:
+                            continue
+                        pts_p = o.points_list
+                        out_cnt = sum(
+                            1 for pt in pts_p
+                            if len(pt) >= 2 and (float(pt[0]) < float(axr[0]) - 1e-2 or float(pt[0]) > float(axr[1]) + 1e-2 or float(pt[1]) < float(ayr[0]) - 1e-2 or float(pt[1]) > float(ayr[1]) + 1e-2)
+                        )
+                        if pts_p and out_cnt > max(2, int(0.08 * len(pts_p))):
+                            clipped_data_scenes.append(f"{sc_id_p}:{o.id}({out_cnt}/{len(pts_p)} pts out of axes bounds)")
 
         cap_y0 = max(0, int(zones.caption_box.y))
         for tgt, _pil, arr in decoded:
@@ -205,12 +238,14 @@ def inspect_video_scene_aware(
             bg_rgb = np.median(corners, axis=0)
             dist = np.linalg.norm(arr - bg_rgb, axis=2)
             fg_mask = dist > 22.0
+            primary_mask = dist > 36.0
             fg_ratio = float(np.mean(fg_mask))
             fg_ratios.append(fg_ratio)
 
             y0, y1 = int(h * 0.06), min(int(h * 0.85), max(int(h * 0.50), cap_y0 - 8))
             x0, x1 = int(w * 0.04), int(w * 0.96)
             stage_fg = fg_mask[y0:y1, x0:x1]
+            stage_prim = primary_mask[y0:y1, x0:x1]
             stage_fg_ratio = float(np.mean(stage_fg)) if stage_fg.size else 0.0
             ys, xs = np.where(stage_fg)
             if xs.size > 20:
@@ -220,15 +255,56 @@ def inspect_video_scene_aware(
                 span_w, span_h = 0.0, 0.0
             stage_widths.append(span_w)
 
+            # Check renderer panel overlap metadata once per scene
+            sc_meta_list = meta_boxes.get(tgt.scene_id, [])
+            if tgt.scene_id and sc_meta_list and tgt.scene_id not in checked_overlap_scenes:
+                checked_overlap_scenes.add(tgt.scene_id)
+                panel_entries = [m_e for m_e in sc_meta_list if m_e.get("kind") in ("axes", "matrix", "table", "bar_chart", "graph_network", "mechanical_body") and isinstance(m_e.get("box"), list) and len(m_e["box"]) == 4]
+                for i_a in range(len(panel_entries)):
+                    for i_b in range(i_a + 1, len(panel_entries)):
+                        ba = panel_entries[i_a]["box"]
+                        bb = panel_entries[i_b]["box"]
+                        ix = max(0.0, min(ba[0] + ba[2], bb[0] + bb[2]) - max(ba[0], bb[0]))
+                        iy = max(0.0, min(ba[1] + ba[3], bb[1] + bb[3]) - max(ba[1], bb[1]))
+                        if ix > 14.0 and iy > 14.0:
+                            panel_overlap_findings.append(f"{tgt.scene_id}: {panel_entries[i_a].get('id')} overlaps {panel_entries[i_b].get('id')} ({int(ix)}x{int(iy)}px)")
+
+            # Differentiate bare axes chrome vs actual mathematical curve/geometry inside axes interior
+            axes_metas = [m_e for m_e in sc_meta_list if m_e.get("kind") == "axes" and isinstance(m_e.get("box"), list) and len(m_e["box"]) == 4]
+            if axes_metas:
+                interior_ratios: list[float] = []
+                interior_spans: list[float] = []
+                for am in axes_metas:
+                    bx, by, bw, bh = [float(v) for v in am["box"]]
+                    ix0 = max(0, int(bx + 0.09 * bw))
+                    ix1 = min(w, int(bx + 0.91 * bw))
+                    iy0 = max(0, int(by + 0.09 * bh))
+                    iy1 = min(h, int(by + 0.91 * bh))
+                    if ix1 > ix0 + 8 and iy1 > iy0 + 8:
+                        sub_p = primary_mask[iy0:iy1, ix0:ix1]
+                        interior_ratios.append(float(np.mean(sub_p)))
+                        pys, pxs = np.where(sub_p)
+                        if pxs.size > 6:
+                            interior_spans.append(float((pxs.max() - pxs.min()) / max(1.0, bw)))
+                        else:
+                            interior_spans.append(0.0)
+                prim_ratio = max(interior_ratios) if interior_ratios else float(np.mean(stage_prim))
+                prim_span = max(interior_spans) if interior_spans else span_w
+            else:
+                prim_ratio = float(np.mean(stage_prim)) if stage_prim.size else 0.0
+                prim_span = span_w
+            primary_ratios.append(prim_ratio)
+
             # Caption band foreground check (detects burned-in caption visibility inside caption_box)
             cap_slice = fg_mask[cap_y0 : int(h * 0.98), x0:x1]
             cap_fg = float(np.mean(cap_slice)) if cap_slice.size else 0.0
             if cap_fg > 0.002:
                 cap_band_hits += 1
 
-            edge_l = float(np.mean(fg_mask[int(h * 0.08) : y1, : max(2, int(w * 0.012))]))
-            edge_r = float(np.mean(fg_mask[int(h * 0.08) : y1, -max(2, int(w * 0.012)) :]))
-            if edge_l > 0.04 or edge_r > 0.04:
+            edge_l = float(np.mean(fg_mask[int(h * 0.06) : y1, : max(2, int(w * 0.012))]))
+            edge_r = float(np.mean(fg_mask[int(h * 0.06) : y1, -max(2, int(w * 0.012)) :]))
+            edge_t = float(np.mean(fg_mask[1 : max(4, int(h * 0.012)), int(w * 0.06) : int(w * 0.94)]))
+            if edge_l > 0.04 or edge_r > 0.04 or edge_t > 0.08:
                 edge_clips += 1
 
             bg_luma = float(0.2126 * bg_rgb[0] + 0.7152 * bg_rgb[1] + 0.0722 * bg_rgb[2])
@@ -237,9 +313,15 @@ def inspect_video_scene_aware(
             elif (not is_light) and bg_luma > 100.0:
                 findings.append(f"t={tgt.t:.1f}s ({tgt.scene_id}): dark theme high background luma={bg_luma:.0f}")
 
-            # Scene-level void detection at midpoints/ends (distinguishes sparse dark gridlines from populated math)
-            if tgt.kind in ("scene_mid", "scene_end") and stage_fg_ratio < 0.0028 and span_w < 0.12:
-                empty_midpoints.append(f"{tgt.scene_id}@t={tgt.t:.1f}s")
+            # Scene-level primary content void detection (distinguishes bare empty axes from actual plotted math!)
+            if tgt.kind in ("scene_mid", "scene_end"):
+                if (stage_fg_ratio < 0.0028 and span_w < 0.12) or (axes_metas and prim_ratio < 0.0010 and prim_span < 0.06):
+                    empty_midpoints.append(f"{tgt.scene_id}@t={tgt.t:.1f}s")
+                elif axes_metas and prim_ratio < 0.0025 and prim_span < 0.08:
+                    sc_p = plan_scene_map.get(tgt.scene_id)
+                    has_curve_or_body = bool(sc_p and any(getattr(o, "kind", "") in ("data_series", "parametric_curve", "function_plot", "mechanical_body", "vector_field", "bar_chart", "matrix", "table") for o in getattr(sc_p, "objects", [])))
+                    if not has_curve_or_body:
+                        trivial_stage_scenes.append(f"{tgt.scene_id}@t={tgt.t:.1f}s(isolated_dot_only)")
 
             delta = float(np.mean(np.abs(arr - prev_arr))) if prev_arr is not None else 0.0
             if prev_arr is not None:
@@ -256,6 +338,7 @@ def inspect_video_scene_aware(
                     "scene_id": tgt.scene_id,
                     "fg_ratio": round(fg_ratio, 4),
                     "stage_fg": round(stage_fg_ratio, 4),
+                    "primary_fg": round(prim_ratio, 4),
                     "span_w": round(span_w, 3),
                     "span_h": round(span_h, 3),
                     "cap_fg": round(cap_fg, 4),
@@ -278,9 +361,15 @@ def inspect_video_scene_aware(
                     static_motion_scenes.append(sid)
 
         if empty_midpoints:
-            findings.append(f"Empty visual stage at {len(empty_midpoints)} scene midpoint/end frame(s): {empty_midpoints[:5]}")
+            findings.append(f"Empty mathematical stage (missing curve/data inside axes) at {len(empty_midpoints)} frame(s): {empty_midpoints[:5]}")
+        if trivial_stage_scenes:
+            warnings.append(f"Minimal/isolated-dot mathematical stage detected at {len(trivial_stage_scenes)} frame(s): {trivial_stage_scenes[:5]}")
+        if panel_overlap_findings:
+            findings.append(f"Overlapping panel layout in {len(panel_overlap_findings)} scene(s): {panel_overlap_findings[:4]}")
+        if clipped_data_scenes:
+            findings.append(f"Data clipped outside declared axes bounds in {len(clipped_data_scenes)} series: {clipped_data_scenes[:4]}")
         if edge_clips > max(1, len(decoded) // 4):
-            findings.append(f"{edge_clips}/{len(decoded)} frames clip horizontal safe margins.")
+            findings.append(f"{edge_clips}/{len(decoded)} frames clip safe margins.")
         med_span = float(np.median(stage_widths)) if stage_widths else 0.0
         if med_span < 0.22:
             findings.append(f"Median primary object width {med_span*100:.1f}% < 22% minimum.")
@@ -341,10 +430,12 @@ def inspect_video_scene_aware(
             rep_path_str = str(report_out)
 
         mean_fg = float(np.mean(fg_ratios)) if fg_ratios else 0.0
+        mean_prim = float(np.mean(primary_ratios)) if primary_ratios else mean_fg
         summary = (
             f"frames={len(decoded)}, scenes={scenes_covered_cnt}/{total_sc_cnt or scenes_covered_cnt}, "
-            f"median_stage_w={med_span*100:.1f}%, mean_fg={mean_fg*100:.1f}%, max_delta={max_diff:.1f}, "
-            f"edge_clips={edge_clips}, empty_mids={len(empty_midpoints)}"
+            f"median_stage_w={med_span*100:.1f}%, primary_fg={mean_prim*100:.2f}%, mean_fg={mean_fg*100:.1f}%, "
+            f"max_delta={max_diff:.1f}, edge_clips={edge_clips}, empty_mids={len(empty_midpoints)}, "
+            f"overlaps={len(panel_overlap_findings)}, data_clips={len(clipped_data_scenes)}"
         )
         return FrameAuditResult(
             summary=summary,
@@ -355,8 +446,12 @@ def inspect_video_scene_aware(
             caption_zone_ok=(cap_band_hits > 0 or len(decoded) < 2),
             median_stage_w=med_span,
             mean_fg_ratio=mean_fg,
+            primary_content_ratio=mean_prim,
             max_frame_delta=max_diff,
             empty_midpoint_scenes=empty_midpoints,
+            trivial_stage_scenes=trivial_stage_scenes,
+            clipped_data_scenes=clipped_data_scenes,
+            panel_overlap_findings=panel_overlap_findings,
             static_motion_scenes=static_motion_scenes,
             edge_clip_frames=edge_clips,
             scenes_covered=scenes_covered_cnt,

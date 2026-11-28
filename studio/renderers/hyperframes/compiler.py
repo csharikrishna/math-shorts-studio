@@ -36,7 +36,7 @@ def compile_plan_to_html(
     tp = design.typography
     mt = design.motion
 
-    default_cap = "kinetic" if sz.aspect_label == "9:16" else "editorial"
+    default_cap = "editorial"
     any_eq = any(any(o.kind == "equation" for o in sc.objects) for sc in plan.scenes)
     zones = compute_adaptive_zones(
         design.format_name,
@@ -197,9 +197,10 @@ def compile_plan_to_html(
                 if ev.anchor_mark in marks_for_scene:
                     event_show_at[ev.target_id] = float(marks_for_scene[ev.anchor_mark])
             if ev.op == "remove":
+                rem_t = round(t_start + min(0.25, mt.exit_s), 4)
                 for el in elements_payload:
-                    if el["id"] == ev.target_id and el["hide_at"] > t_start:
-                        el["hide_at"] = round(t_start + min(0.4, mt.exit_s), 4)
+                    if (el["id"] == ev.target_id or el.get("axes_id") == ev.target_id) and el["hide_at"] > t_start:
+                        el["hide_at"] = rem_t
 
         ann_idx_local = 0
         for obj in sc.objects:
@@ -421,28 +422,38 @@ html, body {{
   position: absolute;
   left: {sz.side_margin_px + 16}px;
   right: {sz.side_margin_px + 16}px;
-  top: {int(zones.equation_box.y)}px;
-  min-height: {int(zones.equation_box.h)}px;
+  top: {max(24, int(zones.equation_box.y))}px;
+  min-height: 52px;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: visible;
 }}
 .hf-eq-bare {{
   font-family: {tp.math_font};
-  font-size: {tp.equation_px}px;
+  font-size: {min(34, max(24, int(tp.equation_px * 0.68)))}px;
+  line-height: 1.25;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: {lk.ink_primary};
+  max-width: 100%;
+  white-space: nowrap;
+  transform-origin: center center;
 }}
 .hf-eq-inner {{
   background: {lk.surface};
   border: 1.4px solid {lk.surface_border};
   border-radius: 12px;
-  padding: 10px 26px;
+  padding: 6px 20px;
   font-family: {tp.math_font};
-  font-size: {tp.equation_px}px;
+  font-size: {min(34, max(24, int(tp.equation_px * 0.66)))}px;
+  line-height: 1.25;
   font-weight: 600;
   color: {lk.ink_primary};
+  max-width: 100%;
+  white-space: nowrap;
+  transform-origin: center center;
 }}
 .hf-table {{
   position: absolute;

@@ -61,18 +61,26 @@ def integrate_ode_system(
     max_steps: int = 2000,
     max_abs_state: float = 1e5,
 ) -> SimulationResult:
-    """Integrate arbitrary N-variable time-varying ODE dx/dt = f(state..., params..., t) via RK4 or adaptive RK45."""
+    """Integrate arbitrary N-variable ODE dx/dt = f(state, params, t) via Cash-Karp RK4(5), RK4 step-doubling, or RK4."""
+    if method not in ("rk45", "rk4_adaptive", "rk4"):
+        raise ValueError(f"Unsupported ODE integration method {method!r}; expected 'rk45', 'rk4_adaptive', or 'rk4'.")
+    if rtol <= 0.0 or atol <= 0.0:
+        raise ValueError(f"ODE tolerances rtol and atol must be strictly positive (got rtol={rtol}, atol={atol}).")
     s_vars = [str(v).strip() for v in state_vars if str(v).strip()]
     if not s_vars or len(s_vars) != len(rhs_exprs) or len(s_vars) != len(initial_state):
         raise ValueError("state_vars, rhs_exprs, and initial_state must have identical nonzero length.")
-    t0, t1 = float(t_range[0]), float(t_range[1]) if len(t_range) >= 2 else (0.0, 10.0)
-    if t1 <= t0:
-        raise ValueError(f"ODE integration requires t1 > t0 (got [{t0}, {t1}]).")
+    if len(t_range) < 2:
+        raise ValueError(f"t_range must specify [t0, t1] (got {t_range!r}).")
+    t0, t1 = float(t_range[0]), float(t_range[1])
+    if not (math.isfinite(t0) and math.isfinite(t1)) or t1 <= t0:
+        raise ValueError(f"ODE integration requires finite t1 > t0 (got [{t0}, {t1}]).")
     n_out = max(12, min(max_steps, int(steps)))
     allowed = tuple(dict.fromkeys([*s_vars, "t"]))
     fns = [_compile_param_expr(ex, allowed, params) for ex in rhs_exprs]
     y0 = np.asarray([float(v) for v in initial_state], dtype=float)
     _assert_finite_array(y0, "initial_state")
+    if np.max(np.abs(y0)) > max_abs_state:
+        raise ValueError(f"Initial ODE state exceeds max_abs_state={max_abs_state}.")
 
     def _rhs(t_val: float, y_vec: np.ndarray) -> np.ndarray:
         kw = {nm: float(y_vec[idx]) for idx, nm in enumerate(s_vars)}
@@ -81,61 +89,100 @@ def integrate_ode_system(
         _assert_finite_array(out, f"rhs(t={t_val:.4f})")
         return out
 
+    def _check_state(vec: np.ndarray, t_val: float) -> np.ndarray:
+        _assert_finite_array(vec, f"state(t={t_val:.4f})")
+        if np.max(np.abs(vec)) > max_abs_state:
+            raise ValueError(f"Simulation state diverged beyond bound {max_abs_state} at t={t_val:.3f}")
+        return vec
+
     def _rk4_step(t_cur: float, y_cur: np.ndarray, h: float) -> np.ndarray:
         k1 = _rhs(t_cur, y_cur)
         k2 = _rhs(t_cur + 0.5 * h, y_cur + 0.5 * h * k1)
         k3 = _rhs(t_cur + 0.5 * h, y_cur + 0.5 * h * k2)
         k4 = _rhs(t_cur + h, y_cur + h * k3)
-        nxt = y_cur + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-        _assert_finite_array(nxt, f"state(t={t_cur + h:.4f})")
-        if np.max(np.abs(nxt)) > max_abs_state:
-            raise ValueError(f"Simulation state diverged beyond bound {max_abs_state} at t={t_cur + h:.3f}")
-        return nxt
+        return _check_state(y_cur + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4), t_cur + h)
+
+    # Genuine 6-stage Cash-Karp embedded RK4(5) Butcher tableau (order 5 advance, order 4 error estimate)
+    def _cash_karp_step(t_cur: float, y_cur: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
+        k1 = _rhs(t_cur, y_cur)
+        k2 = _rhs(t_cur + 0.2 * h, y_cur + h * (0.2 * k1))
+        k3 = _rhs(t_cur + 0.3 * h, y_cur + h * (0.075 * k1 + 0.225 * k2))
+        k4 = _rhs(t_cur + 0.6 * h, y_cur + h * (0.3 * k1 - 0.9 * k2 + 1.2 * k3))
+        k5 = _rhs(t_cur + h, y_cur + h * ((-11.0 / 54.0) * k1 + 2.5 * k2 - (70.0 / 27.0) * k3 + (35.0 / 27.0) * k4))
+        k6 = _rhs(
+            t_cur + 0.875 * h,
+            y_cur + h * ((1631.0 / 55296.0) * k1 + (175.0 / 512.0) * k2 + (575.0 / 13824.0) * k3 + (44275.0 / 110592.0) * k4 + (253.0 / 4096.0) * k5),
+        )
+        y5 = y_cur + h * ((37.0 / 378.0) * k1 + (250.0 / 621.0) * k3 + (125.0 / 594.0) * k4 + (512.0 / 1771.0) * k6)
+        y4 = y_cur + h * ((2825.0 / 27648.0) * k1 + (18575.0 / 48384.0) * k3 + (13525.0 / 55296.0) * k4 + (277.0 / 14336.0) * k5 + 0.25 * k6)
+        _check_state(y5, t_cur + h)
+        return y5, np.abs(y5 - y4)
 
     ts_grid = np.linspace(t0, t1, n_out + 1, dtype=float)
     states_out: list[list[float]] = [[round(float(x), 6) for x in y0]]
-    max_err = 0.0
+    max_err_abs = 0.0
+    max_err_norm = 0.0
+    min_h = 1e-6
 
     y = y0.copy()
-    sub_min = 4 if method == "rk45" else 2
+    sub_min = 4 if method in ("rk45", "rk4_adaptive") else 2
     for i in range(n_out):
         ta, tb = float(ts_grid[i]), float(ts_grid[i + 1])
         span = tb - ta
-        if method == "rk45":
-            # Step-doubling embedded RK4 error control to honor tolerances deterministically without external scipy
+        if method in ("rk45", "rk4_adaptive"):
             t_cur = ta
             h = span / float(sub_min)
             sub_iters = 0
             while t_cur < tb - 1e-12:
                 sub_iters += 1
-                if sub_iters > 128:
-                    raise ValueError(f"Adaptive ODE tolerance step limit exceeded near t={t_cur:.4f}")
+                if sub_iters > 256:
+                    raise ValueError(f"Adaptive ODE ({method}) exceeded 256 substeps near t={t_cur:.4f} (stiff or singular).")
                 h = min(h, tb - t_cur)
-                y_full = _rk4_step(t_cur, y, h)
-                y_half = _rk4_step(t_cur + 0.5 * h, _rk4_step(t_cur, y, 0.5 * h), 0.5 * h)
-                scale = atol + rtol * np.maximum(np.abs(y_full), np.abs(y_half))
-                err_norm = float(np.max(np.abs(y_half - y_full) / (15.0 * scale)))
-                max_err = max(max_err, err_norm * rtol)
-                if err_norm <= 1.0 or h <= 1e-6:
-                    # 5th-order Richardson extrapolated step
-                    y = y_half + (y_half - y_full) / 15.0
+                if method == "rk45":
+                    y_next, err_vec = _cash_karp_step(t_cur, y, h)
+                else:
+                    y_full = _rk4_step(t_cur, y, h)
+                    y_half = _rk4_step(t_cur + 0.5 * h, _rk4_step(t_cur, y, 0.5 * h), 0.5 * h)
+                    err_vec = np.abs(y_half - y_full) / 15.0
+                    y_next = _check_state(y_half + (y_half - y_full) / 15.0, t_cur + h)
+                scale = atol + rtol * np.maximum(np.abs(y), np.abs(y_next))
+                err_norm = float(np.max(err_vec / scale))
+                if err_norm <= 1.0:
+                    max_err_abs = max(max_err_abs, float(np.max(err_vec)))
+                    max_err_norm = max(max_err_norm, err_norm)
+                    y = y_next
                     t_cur += h
                     h = h * min(2.0, max(0.5, 0.9 * (max(err_norm, 1e-12) ** -0.2)))
+                elif h <= min_h + 1e-15:
+                    raise ValueError(
+                        f"Adaptive ODE ({method}) failed tolerance at minimum step h={h:.2e} near t={t_cur:.4f} "
+                        f"(err_norm={err_norm:.3f} > 1.0 for rtol={rtol}, atol={atol})."
+                    )
                 else:
-                    h = max(1e-6, h * max(0.25, 0.85 * (err_norm ** -0.25)))
+                    h = max(min_h, h * max(0.25, 0.85 * (err_norm ** -0.25)))
         else:
             dt_s = span / float(sub_min)
             for k in range(sub_min):
                 y = _rk4_step(ta + k * dt_s, y, dt_s)
         states_out.append([round(float(x), 6) for x in y])
 
+    solver_desc = "cash_karp_rk45" if method == "rk45" else ("rk4_step_doubling" if method == "rk4_adaptive" else "rk4_fixed")
     return SimulationResult(
         solver=method,
         state_vars=s_vars,
         t_axis=[round(float(tv), 5) for tv in ts_grid],
         states=states_out,
-        max_error_est=round(max_err, 9),
-        summary={"t0": t0, "t1": t1, "n_steps": n_out, "end_state": states_out[-1]},
+        max_error_est=round(max_err_abs, 9),
+        summary={
+            "t0": t0,
+            "t1": t1,
+            "n_steps": n_out,
+            "solver_algorithm": solver_desc,
+            "rtol": float(rtol),
+            "atol": float(atol),
+            "max_err_norm": round(max_err_norm, 6),
+            "end_state": states_out[-1],
+        },
     )
 
 
@@ -198,25 +245,35 @@ def compute_driven_frequency_response(
     w_res = round(w0 * math.sqrt(max(0.0, 1.0 - 2.0 * zeta * zeta)), 6) if has_nonzero_res else 0.0
 
     base_w = np.linspace(w_min, w_max, max(40, int(n_pts)))
-    key_ws = [w0, w_res] + ([w_damped] if w_damped is not None else [])
-    ws = np.array(sorted({round(float(v), 5) for v in (*base_w, *key_ws) if w_min - 1e-6 <= float(v) <= w_max + 1e-6}), dtype=float)
+    pole_band = 0.025 * w0 if zeta == 0.0 else 0.0
+    key_ws = ([w0, w_res] if zeta > 0.0 else []) + ([w_damped] if (w_damped is not None and zeta > 0.0) else [])
+    ws = np.array(
+        sorted(
+            {
+                round(float(v), 5)
+                for v in (*base_w, *key_ws)
+                if w_min - 1e-6 <= float(v) <= w_max + 1e-6 and (zeta > 0.0 or abs(float(v) - w0) > pole_band)
+            }
+        ),
+        dtype=float,
+    )
     resp_pts: list[list[float]] = []
     phase_pts: list[list[float]] = []
     gains: list[float] = []
     for w in ws:
-        re_d = (w0 * w0 - w * w)
+        re_d = w0 * w0 - w * w
         im_d = 2.0 * zeta * w0 * w
         denom = math.hypot(re_d, im_d)
-        if denom <= 1e-6:
-            # Cap exact undamped singularity explicitly without masking arithmetic
-            amp = abs(f0) / 1e-4
-        else:
-            amp = abs(f0) / denom
+        if denom <= 1e-9:
+            # Never fabricate arbitrary finite gain at an exact undamped singularity
+            continue
+        amp = abs(f0) / denom
         phi = -math.atan2(im_d, re_d)
         resp_pts.append([round(float(w), 5), round(float(amp), 5)])
         phase_pts.append([round(float(w), 5), round(float(phi), 5)])
         gains.append(float(amp))
 
+    has_singularity = bool(zeta == 0.0 and w_min <= w0 <= w_max and abs(f0) > 0.0)
     pk_idx = int(np.argmax(gains)) if gains else 0
     pk_w = float(ws[pk_idx]) if len(ws) else w_res
     pk_amp = float(gains[pk_idx]) if gains else 0.0
@@ -227,14 +284,16 @@ def compute_driven_frequency_response(
         "damping_regime": regime,
         "damped_freq": w_damped,
         "has_nonzero_resonance_peak": has_nonzero_res,
+        "has_singularity": has_singularity,
+        "singularity_freq": round(w0, 5) if has_singularity else None,
         "resonance_freq": w_res,
-        "measured_peak_freq": round(pk_w, 5),
-        "peak_gain": round(pk_amp, 5),
+        "measured_peak_freq": round(w0, 5) if has_singularity else round(pk_w, 5),
+        "peak_gain": None if has_singularity else round(pk_amp, 5),
         "static_deflection": round(static_deflection, 5),
         "response_curve": resp_pts,
         "phase_curve": phase_pts,
-        "peak_point": [round(pk_w, 5), round(pk_amp, 5)],
-        "natural_marker": [round(w0, 5), round(abs(f0) / max(1e-6, 2.0 * zeta * w0 * w0), 5)],
+        "peak_point": [round(w0 if has_singularity else pk_w, 5), round(pk_amp, 5)],
+        "natural_marker": None if has_singularity else [round(w0, 5), round(abs(f0) / (2.0 * zeta * w0 * w0), 5)],
     }
 
 
@@ -344,13 +403,14 @@ def build_simulation_sweep_frames(
     *,
     derived: dict[str, list[float]] | None = None,
     force_expr: str | None = None,
+    mass: float | None = None,
     params: dict[str, float] | None = None,
     n_keyframes: int = 24,
     geometry_mode: str = "linear_spring",
     anchor_x: float = 0.0,
     anchor_y: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Build unified SweepKeyframe sequence linking physical body, phase orbit, force vector, and energy bars."""
+    """Build unified SweepKeyframe sequence linking physical body, phase orbit, explicit force/tangent vector, and derived bars."""
     n_pts = len(sim.t_axis)
     k_target = max(6, min(n_pts, int(n_keyframes)))
     indices = np.unique(np.round(np.linspace(0, n_pts - 1, k_target)).astype(int))
@@ -360,8 +420,10 @@ def build_simulation_sweep_frames(
     if force_expr:
         allowed = tuple(dict.fromkeys([*sim.state_vars, "t"]))
         f_fn = _compile_param_expr(force_expr, allowed, params)
+    if mass is not None and float(mass) <= 0.0:
+        raise ValueError(f"Physical mass must be positive (got {mass}).")
 
-    energy_keys = [k for k in ("potential_energy", "kinetic_energy", "total_energy", "dissipated_energy") if k in derived]
+    energy_keys = [k for k in ("potential_energy", "kinetic_energy", "total_energy", "dissipated_energy", "conserved_invariant") if k in derived]
     if not energy_keys and derived:
         energy_keys = list(derived.keys())[:3]
 
@@ -379,16 +441,28 @@ def build_simulation_sweep_frames(
         else:
             bx = x_val
             by = anchor_y
-        force_val = float(f_fn(**{nm: float(st[si]) for si, nm in enumerate(sim.state_vars)}, t=tv)) if f_fn else (-x_val)
-        f_scale = 0.35
-        vec_start = [round(bx, 5), round(by, 5)]
-        vec_end = [round(bx + force_val * f_scale, 5), round(by, 5)] if geometry_mode != "pendulum" else [round(bx + force_val * 0.25 * math.cos(x_val), 5), round(by + force_val * 0.25 * math.sin(x_val), 5)]
+        if f_fn is not None:
+            kw_s = {nm: float(st[si]) for si, nm in enumerate(sim.state_vars)}
+            kw_s["t"] = tv
+            force_val = float(f_fn(**kw_s)) * (float(mass) if mass is not None else 1.0)
+            f_scale = 0.35
+            vec_start = [round(bx, 5), round(by, 5)]
+            vec_end = (
+                [round(bx + force_val * f_scale, 5), round(by, 5)]
+                if geometry_mode != "pendulum"
+                else [round(bx + force_val * 0.25 * math.cos(x_val), 5), round(by + force_val * 0.25 * math.sin(x_val), 5)]
+            )
+        else:
+            # Without explicit force_expr/mass assumption, vector represents normalized phase-space velocity/displacement indicator
+            vec_start = [0.0, 0.0]
+            vec_end = [round(x_val, 5), round(v_val, 5)]
         bars = [round(float(derived[ek][idx]), 5) for ek in energy_keys] if energy_keys else []
         phase_trail = [[float(sim.states[k][0]), float(sim.states[k][1]) if len(sim.states[k]) >= 2 else 0.0] for k in range(0, int(idx) + 1, max(1, int(idx) // 48 or 1))]
         if phase_trail[-1] != [round(x_val, 5), round(v_val, 5)]:
             phase_trail.append([round(x_val, 5), round(v_val, 5)])
         u_norm = round(fi / float(n_last), 6)
-        v_lbl = sim.state_vars[0] if sim.state_vars else "x"
+        v_lbl0 = sim.state_vars[0] if sim.state_vars else "x"
+        v_lbl1 = sim.state_vars[1] if len(sim.state_vars) >= 2 else "v"
         frames.append(
             {
                 "param": round(tv, 4),
@@ -400,7 +474,7 @@ def build_simulation_sweep_frames(
                 "vector_end": vec_end,
                 "curve_pts": phase_trail,
                 "bar_values": bars,
-                "label": f"t={tv:.2f} | {v_lbl}={x_val:+.2f}" + (f", v={v_val:+.2f}" if len(st) >= 2 else ""),
+                "label": f"t={tv:.2f} | {v_lbl0}={x_val:.2f}" + (f", {v_lbl1}={v_val:.2f}" if len(st) >= 2 else ""),
             }
         )
     return frames

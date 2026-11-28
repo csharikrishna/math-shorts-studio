@@ -34,7 +34,7 @@ class _StoryMixin:
 
         self.profile: FormatProfile = FORMATS[fmt_name]
         self.theme: Theme = THEMES[theme_name]
-        cap_default = "kinetic" if (self.profile.is_vertical and os.environ.get("STUDIO_UI", "minimal") in ("card", "neon")) else ("editorial" if not self.profile.is_vertical else "minimal")
+        cap_default = "editorial" if not self.profile.is_vertical else "minimal"
         self.caption_style: str = os.environ.get("STUDIO_CAPTION_STYLE") or cap_default
 
         m.config.background_color = self.theme.background

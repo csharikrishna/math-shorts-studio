@@ -68,7 +68,7 @@ CAPTION_PRESETS: dict[CaptionStyle, CaptionPresetConfig] = {
     ),
     "kinetic": CaptionPresetConfig(
         style="kinetic",
-        description="Crisp active-word pop tuned for Shorts/TikTok pacing without full-width permanent dock bars.",
+        description="Explicit pill-highlight active typography preset when intentionally selected.",
         landscape_max_chars=34,
         portrait_max_chars=24,
         max_lines=2,
@@ -145,8 +145,8 @@ def normalize_caption_style(raw: str | None, *, default: CaptionStyle = "editori
         return default
     cleaned = raw.strip().lower()
     legacy_map: dict[str, CaptionStyle] = {
-        "card": "kinetic",
-        "neon": "kinetic",
+        "card": "editorial",
+        "neon": "editorial",
     }
     if cleaned in legacy_map:
         return legacy_map[cleaned]

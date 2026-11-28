@@ -414,8 +414,10 @@ def audit_educational_quality(
     caption_ir_path: Path | None = None,
     srt_path: Path | None = None,
     renderer_meta_path: Path | None = None,
+    strict_pacing: bool = False,
 ) -> object:
     """Comprehensive pre/post-render 10-category QA returning honest VideoReviewReport with strict publication gates."""
+    import math as _math
     from studio.ai.validate_v3 import verify_v3_plan_detailed
     from studio.creative.script_ir import validate_script_ir
     from studio.design.spec import resolve_look, validate_look_contrast
@@ -526,10 +528,20 @@ def audit_educational_quality(
     animated_scenes = agg_animated
     total_dyn = agg_dyn_total
     dyn_gaps = agg_dyn_gaps
-    min_anim_req = 1 if len(scenes) <= 2 else (max(2, len(scenes) // 3) if len(scenes) >= 6 else 1)
-    dyn_coverage_ok = (len(scenes) <= 2) or (total_dyn == 0) or ((total_dyn - len(dyn_gaps)) >= max(1, int(0.65 * total_dyn)))
+    min_anim_req = 1 if len(scenes) <= 2 else (max(2, (len(scenes) + 2) // 3) if len(scenes) >= 6 else 1)
+    req_dyn_covered = max(1, _math.ceil(0.65 * total_dyn)) if total_dyn > 0 else 0
+    dyn_coverage_ok = (len(scenes) <= 2) or (total_dyn == 0) or ((total_dyn - len(dyn_gaps)) >= req_dyn_covered)
     motion_ok = (len(scenes) <= 2) or (bool(motion_ops) and animated_scenes >= min_anim_req and dyn_coverage_ok)
     cats["animation_meaningfulness"] = "passed" if motion_ok else "failed"
+    if dyn_gaps and motion_ok:
+        notes.append(
+            VisualReviewNote(
+                shot_id="global",
+                severity="warning",
+                category="motion",
+                finding=f"{len(dyn_gaps)} dynamic scene(s) missed state-changing demonstrations ({dyn_gaps[0]}).",
+            )
+        )
     if not motion_ok:
         detail_msg = (
             "No state-changing or mathematical motion events used (only fade/create)."
@@ -706,7 +718,10 @@ def audit_educational_quality(
         "audio_quality_loudness",
         "animation_meaningfulness",
         "rendering_media_integrity",
-    )
+    ) + (("duration_pacing_accuracy",) if strict_pacing else ())
+    failed_advisory = [k for k, v in cats.items() if v == "failed" and k not in req_cats]
+    pacing_policy_lbl = "mandatory_12pct" if strict_pacing else "advisory_12pct"
+    metrics.append(f"publication_policy: pacing={pacing_policy_lbl}, required_categories={len(req_cats)}, failed_advisory={failed_advisory}")
     uneval_req = sum(1 for k in req_cats if cats.get(k) != "passed")
     unsupported_pen = min(25.0, float(cov.unsupported) * 4.0 + float(cov.human_review_required) * 2.5)
     score = max(0.0, 100.0 - blockers * 20.0 - warnings * 6.0 - uneval_req * 10.0 - unsupported_pen)
@@ -761,6 +776,8 @@ def audit_educational_quality(
         summary=(
             f"Audited {len(scenes)} scenes ({look_name}, {format_name}, {backend}): "
             f"state={prod_state}, score={score:.1f}/100, approved={approved}, "
-            f"blockers={blockers}, warnings={warnings}, uneval_required={uneval_req}."
+            f"blockers={blockers}, warnings={warnings}, uneval_required={uneval_req}"
+            + (f", failed_advisory={failed_advisory}" if failed_advisory else "")
+            + "."
         ),
     )

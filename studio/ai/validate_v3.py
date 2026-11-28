@@ -673,24 +673,203 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     else:
                         verified_claims.append(f"{where}: parseval_energy_conservation(rel_err={rel_err:.2e})")
 
-            elif cl.kind in ("simulation_trajectory_bounds", "frequency_response_peak"):
+            elif cl.kind in (
+                "simulation_trajectory_bounds",
+                "frequency_response_peak",
+                "state_bounds",
+                "positivity",
+                "conservation_law",
+                "energy_dissipation",
+                "periodicity",
+                "numerical_accuracy",
+                "parameter_validity",
+                "physical_units",
+            ):
+                m_spec = next((ms for ms in (getattr(plan, "math_models", []) or []) if ms.model_id == cl.model_id), None)
                 m_data = computed_models.get(cl.model_id or "") if cl.model_id else None
                 if m_data is None:
                     inferred_mid = next((live_objs[oid].model_id for oid in cl.object_ids if oid in live_objs and live_objs[oid].model_id in computed_models), None)
                     m_data = computed_models.get(inferred_mid) if inferred_mid else None
+                    if m_spec is None and inferred_mid:
+                        m_spec = next((ms for ms in (getattr(plan, "math_models", []) or []) if ms.model_id == inferred_mid), None)
                 if m_data is None:
                     msg = f"{where} claim {cl.kind}: requires a valid LinkedMathModelSpec model_id."
                     issues.append(msg); unsupported_claims.append(msg)
-                elif cl.kind == "simulation_trajectory_bounds":
+                elif cl.kind in ("simulation_trajectory_bounds", "state_bounds"):
                     pts_l = list(m_data.get("phase_orbit") or m_data.get("time_series_x") or [])
                     if len(pts_l) < 4 or not all_coords_finite(pts_l):
-                        msg = f"{where} claim simulation_trajectory_bounds: simulation has empty or nonfinite states."
+                        msg = f"{where} claim {cl.kind}: simulation has empty or nonfinite states."
                         issues.append(msg); failed_claims.append(msg)
                     else:
-                        verified_claims.append(f"{where}: simulation_trajectory_bounds(n={len(pts_l)})")
+                        s_vars_m = list(m_data.get("state_vars") or [])
+                        states_m = list(m_data.get("states") or [])
+                        col_idx = 0
+                        if cl.state_var and cl.state_var in s_vars_m:
+                            col_idx = s_vars_m.index(cl.state_var)
+                        series = [float(st[col_idx]) for st in states_m if len(st) > col_idx] if states_m else [float(p[min(1, len(p) - 1)]) for p in pts_l]
+                        lo_b = cl.lower_bound if cl.lower_bound is not None else cl.a_bound
+                        hi_b = cl.upper_bound if cl.upper_bound is not None else cl.b_bound
+                        mn_v, mx_v = min(series), max(series)
+                        span_v = max(abs(st[i] - states_m[0][i]) for st in states_m for i in range(len(st))) if states_m else (mx_v - mn_v)
+                        if cl.kind == "state_bounds" and lo_b is None and hi_b is None:
+                            msg = f"{where} claim state_bounds: requires explicit lower_bound/upper_bound or a_bound/b_bound."
+                            issues.append(msg); unsupported_claims.append(msg)
+                        elif lo_b is not None and mn_v < float(lo_b) - cl.tolerance:
+                            msg = f"{where} claim {cl.kind}: min({cl.state_var or 'state'})={mn_v:.4f} violates lower bound {lo_b}."
+                            issues.append(msg); failed_claims.append(msg)
+                        elif hi_b is not None and mx_v > float(hi_b) + cl.tolerance:
+                            msg = f"{where} claim {cl.kind}: max({cl.state_var or 'state'})={mx_v:.4f} violates upper bound {hi_b}."
+                            issues.append(msg); failed_claims.append(msg)
+                        elif cl.expected_value is not None and mx_v > float(cl.expected_value) + cl.tolerance:
+                            msg = f"{where} claim {cl.kind}: max={mx_v:.4f} exceeds asserted expected_value={cl.expected_value}."
+                            issues.append(msg); failed_claims.append(msg)
+                        elif span_v <= 1e-6 and "equilibrium" not in f"{cl.statement} {sc.narration}".lower():
+                            msg = f"{where} claim {cl.kind}: simulation collapsed to constant state {states_m[0] if states_m else pts_l[0]}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: {cl.kind}(n={len(series)}, range=[{mn_v:.3f}, {mx_v:.3f}])")
+                elif cl.kind == "positivity":
+                    states_m = list(m_data.get("states") or [])
+                    s_vars_m = list(m_data.get("state_vars") or [])
+                    if not states_m:
+                        msg = f"{where} claim positivity: simulation has no state trajectory."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        cols = [s_vars_m.index(cl.state_var)] if (cl.state_var and cl.state_var in s_vars_m) else list(range(len(states_m[0])))
+                        min_val = min(float(st[ci]) for st in states_m for ci in cols)
+                        if min_val <= 0.0:
+                            msg = f"{where} claim positivity: state dropped to {min_val:.5f} <= 0 (positivity violated)."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: positivity(min={min_val:.4f} > 0)")
+                elif cl.kind == "conservation_law":
+                    inv_expr = (cl.expr or "").strip()
+                    derived_m = dict(m_data.get("derived") or {})
+                    seq: list[float] = []
+                    if inv_expr and inv_expr in derived_m:
+                        seq = [float(v) for v in derived_m[inv_expr]]
+                    elif inv_expr:
+                        from studio.ai.simulation import evaluate_derived_observables, SimulationResult
+
+                        s_vars_m = list(m_data.get("state_vars") or ["x", "y"])
+                        sim_tmp = SimulationResult(
+                            solver="verify",
+                            state_vars=s_vars_m,
+                            t_axis=list(m_data.get("t_axis") or []),
+                            states=list(m_data.get("states") or []),
+                        )
+                        try:
+                            seq = evaluate_derived_observables(
+                                sim_tmp,
+                                {"inv": inv_expr},
+                                params=(m_spec.params if m_spec else None),
+                            )["inv"]
+                        except Exception as exc:
+                            msg = f"{where} claim conservation_law: failed evaluating {inv_expr!r}: {exc}"
+                            issues.append(msg); failed_claims.append(msg)
+                            continue
+                    elif "conserved_invariant" in derived_m:
+                        seq = [float(v) for v in derived_m["conserved_invariant"]]
+                    elif "total_energy" in derived_m:
+                        seq = [float(v) for v in derived_m["total_energy"]]
+                    if len(seq) < 2:
+                        msg = f"{where} claim conservation_law: requires expr or model derived conserved observable."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        ref_v = seq[0]
+                        rel_drift = max(abs(v - ref_v) for v in seq) / max(1.0, abs(ref_v))
+                        tol_use = max(cl.tolerance, 5e-3)
+                        if rel_drift > tol_use:
+                            msg = f"{where} claim conservation_law: quantity varied by rel_drift={rel_drift:.5f} > {tol_use}."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: conservation_law(drift={rel_drift:.2e})")
+                elif cl.kind == "energy_dissipation":
+                    derived_m = dict(m_data.get("derived") or {})
+                    e_seq = list(derived_m.get("total_energy") or [])
+                    if not e_seq and cl.expr:
+                        from studio.ai.simulation import evaluate_derived_observables, SimulationResult
+
+                        sim_tmp = SimulationResult(
+                            solver="verify",
+                            state_vars=list(m_data.get("state_vars") or ["x", "v"]),
+                            t_axis=list(m_data.get("t_axis") or []),
+                            states=list(m_data.get("states") or []),
+                        )
+                        e_seq = evaluate_derived_observables(sim_tmp, {"E": cl.expr}, params=(m_spec.params if m_spec else None))["E"]
+                    if len(e_seq) < 4:
+                        msg = f"{where} claim energy_dissipation: requires explicit total_energy derivation and physical assumptions."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        inc_max = max(float(e_seq[i + 1]) - float(e_seq[i]) for i in range(len(e_seq) - 1))
+                        net_drop = float(e_seq[0]) - float(e_seq[-1])
+                        if inc_max > max(cl.tolerance, 1e-3) or net_drop <= 1e-4:
+                            msg = f"{where} claim energy_dissipation: E_init={e_seq[0]:.4f}, E_final={e_seq[-1]:.4f}, max_step_inc={inc_max:.5f} violates monotone dissipation."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            verified_claims.append(f"{where}: energy_dissipation(drop={net_drop:.4f})")
+                elif cl.kind == "periodicity":
+                    states_m = list(m_data.get("states") or [])
+                    t_ax = list(m_data.get("t_axis") or [])
+                    if len(states_m) < 16 or len(t_ax) != len(states_m):
+                        msg = f"{where} claim periodicity: insufficient simulation samples to check periodicity."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        y0 = np.asarray(states_m[0], dtype=float)
+                        scale_p = max(1.0, float(np.linalg.norm(y0)))
+                        dists = [float(np.linalg.norm(np.asarray(st, dtype=float) - y0)) / scale_p for st in states_m]
+                        span_orbit = max(dists)
+                        # Must leave initial neighborhood significantly before returning close to initial state
+                        left_idx = next((i for i, d in enumerate(dists) if d > 0.12), None)
+                        ret_idx = next((i for i in range((left_idx or 0) + 4, len(dists)) if dists[i] <= max(cl.tolerance * 20.0, 0.05)), None) if left_idx is not None else None
+                        if span_orbit <= 0.05 or ret_idx is None:
+                            msg = f"{where} claim periodicity: trajectory does not complete a near-periodic return (max_disp={span_orbit:.4f}, min_post_dist={min(dists[left_idx+4:] or [1.0]):.4f})."
+                            issues.append(msg); failed_claims.append(msg)
+                        else:
+                            est_period = float(t_ax[ret_idx]) - float(t_ax[0])
+                            if cl.expected_value is not None and abs(est_period - float(cl.expected_value)) > max(cl.tolerance, 0.15 * float(cl.expected_value)):
+                                msg = f"{where} claim periodicity: observed period {est_period:.3f} != expected {cl.expected_value}."
+                                issues.append(msg); failed_claims.append(msg)
+                            else:
+                                verified_claims.append(f"{where}: periodicity(T~={est_period:.2f})")
+                elif cl.kind == "numerical_accuracy":
+                    meas = dict(m_data.get("measurements") or {})
+                    max_err = float(meas.get("max_error_est", 0.0))
+                    rtol_m = float(meas.get("rtol", 1e-4))
+                    if max_err > max(cl.tolerance, rtol_m * 10.0):
+                        msg = f"{where} claim numerical_accuracy: max_error_est={max_err:.2e} exceeds tolerance."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: numerical_accuracy(solver={meas.get('solver_algorithm', meas.get('solver'))}, err={max_err:.2e})")
+                elif cl.kind == "parameter_validity":
+                    p_dict = dict(m_spec.params or {}) if m_spec else {}
+                    bad_p = [f"{k}={v}" for k, v in p_dict.items() if (not math.isfinite(float(v)) or float(v) < 0.0)]
+                    if m_spec and m_spec.mass is not None and float(m_spec.mass) <= 0.0:
+                        bad_p.append(f"mass={m_spec.mass}")
+                    if m_spec and m_spec.natural_freq is not None and float(m_spec.natural_freq) <= 0.0:
+                        bad_p.append(f"natural_freq={m_spec.natural_freq}")
+                    if bad_p:
+                        msg = f"{where} claim parameter_validity: invalid physical parameter(s) {bad_p}."
+                        issues.append(msg); failed_claims.append(msg)
+                    elif not (p_dict or (m_spec and (m_spec.mass is not None or m_spec.natural_freq is not None))):
+                        msg = f"{where} claim parameter_validity: requires explicit declared model parameters."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: parameter_validity({list(p_dict.keys())})")
+                elif cl.kind == "physical_units":
+                    declared_u = dict(cl.units or {}) or dict(m_data.get("units") or {})
+                    if not declared_u or not all(str(v).strip() for v in declared_u.values()):
+                        msg = f"{where} claim physical_units: requires explicit non-empty variable unit declarations."
+                        issues.append(msg); unsupported_claims.append(msg)
+                    elif m_spec and m_spec.kind == "signal_spectral_pipeline" and m_spec.angular_units == "hz" and "rad/s" in str(declared_u.get("freq", "")).lower():
+                        msg = f"{where} claim physical_units: model angular_units='hz' conflicts with declared unit {declared_u}."
+                        issues.append(msg); failed_claims.append(msg)
+                    else:
+                        verified_claims.append(f"{where}: physical_units({declared_u})")
                 elif cl.kind == "frequency_response_peak":
                     meas = dict(m_data.get("measurements") or {})
                     has_pk = bool(meas.get("has_nonzero_resonance_peak", False))
+                    has_sing = bool(meas.get("has_singularity", False))
                     zeta_v = float(meas.get("damping_ratio", 0.0))
                     w_res = float(meas.get("resonance_freq", 0.0))
                     low_st = f"{cl.statement} {sc.narration}".lower()
@@ -698,11 +877,14 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     if zeta_v >= (1.0 / math.sqrt(2.0)) - 1e-4 and (w_res > 1e-3 or claims_nonzero_pk):
                         msg = f"{where} claim frequency_response_peak: zeta={zeta_v:.3f} >= 1/sqrt(2) cannot yield a nonzero resonance peak."
                         issues.append(msg); failed_claims.append(msg)
+                    elif has_sing and cl.expected_value is not None:
+                        msg = f"{where} claim frequency_response_peak: undamped resonance at w0={meas.get('singularity_freq')} is unbounded (singularity), cannot equal finite expected_value={cl.expected_value}."
+                        issues.append(msg); failed_claims.append(msg)
                     elif cl.expected_value is not None and abs(w_res - float(cl.expected_value)) > max(cl.tolerance, 5e-2):
                         msg = f"{where} claim frequency_response_peak: computed w_res={w_res:.4f} != expected {cl.expected_value}."
                         issues.append(msg); failed_claims.append(msg)
                     else:
-                        verified_claims.append(f"{where}: frequency_response_peak(zeta={zeta_v:.2f}, w_res={w_res:.2f}, has_pk={has_pk})")
+                        verified_claims.append(f"{where}: frequency_response_peak(zeta={zeta_v:.2f}, w_res={w_res:.2f}, has_pk={has_pk}, singularity={has_sing})")
 
         # Validate ClaimLedgerEntry rows (exact spoken span + assumptions + backing)
         from studio.audio.tts import parse_script as _parse_scr
@@ -749,7 +931,7 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             elif not (has_winding_model or has_winding_op or any(o.kind in ("parametric_curve", "data_series") and o.points_list for o in sc.objects)):
                 issues.append(f"{where}: narration describes winding center-of-mass without a 2D winding curve object.")
 
-        # Reject bare empty axes stages (every declared axes must host at least one plotted curve, vector, trajectory, point, or polygon)
+        # Reject bare empty axes & collapsed zero-span trajectory stages
         non_chrome_kinds = ("axes", "annotation", "equation", "matrix", "table")
         scene_axes_ids = [o.id for o in sc.objects if o.kind == "axes"]
         scene_non_chrome = [o for o in sc.objects if o.kind not in non_chrome_kinds]
@@ -764,6 +946,15 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
             )
             if not (has_local or (not require_claims and has_later)):
                 issues.append(f"{where}: bare axes {ax_id!r} has no plotted curve, vector, trajectory, point, or polygon in this scene.")
+        for o in sc.objects:
+            if o.kind in ("data_series", "parametric_curve") and o.points_list and len(o.points_list) >= 2 and not getattr(o, "sweep_keyframes", None):
+                xs_o = [float(p[0]) for p in o.points_list]
+                ys_o = [float(p[1]) for p in o.points_list]
+                if (max(xs_o) - min(xs_o)) < 1e-4 and (max(ys_o) - min(ys_o)) < 1e-4 and require_claims:
+                    issues.append(
+                        f"{where} obj {o.id}: trajectory collapsed to a single stationary point {o.points_list[0]}; "
+                        "start ODE away from exact equilibrium or include surrounding vector_field/orbit."
+                    )
         live_stage_kinds = {live_objs[oid].kind for oid, st_v in state.items() if oid in live_objs and st_v in ("declared", "visible")}
         live_non_chrome = [
             live_objs[oid]
@@ -831,33 +1022,83 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         for cl in sc.claims
         if cl.verification_level == "source_supported"
     )
-    # Track narration-to-demonstration dynamic motion coverage & parameter-at-anchor synchronization
+    # Track narration-to-demonstration dynamic motion coverage with substantive motion-capability verification
     _STATE_MOTION_OPS = {"transform", "morph", "move", "rotate", "scale", "trace", "animate_param", "set_param", "iterate_states", "interpolate_values"}
     _DYNAMIC_NARR_RE = re.compile(
         r"\b(?:oscillat\w*|swing\w*|vibrat\w*|evolv\w*|sweep\w*|converg\w*|spiral\w*|decay\w*|dissipat\w*|resonat\w*|trajector\w*|simulat\w*|phase\s+space|move|moves|moving|transform\w*|shift\w*|slide\w*|orbit\w*|step[- ]by[- ]step|iteration)\b"
     )
     dynamic_motion_gaps: list[str] = []
     parameter_sync_issues: list[str] = []
+    hollow_motion_issues: list[str] = []
     animated_scenes_count = 0
     total_dynamic_scenes = 0
     _swept_models_seen: set[str] = set()
+    _all_objs_seen: dict[str, SceneObject] = {o.id: o for sc in plan.scenes for o in sc.objects}
+
+    def _event_produces_real_state_change(ev_item: Any) -> tuple[bool, str]:
+        op_n = str(ev_item.op)
+        if op_n not in _STATE_MOTION_OPS:
+            return False, ""
+        tgt_o = _all_objs_seen.get(ev_item.target_id)
+        if op_n == "move":
+            sh = ev_item.shift or []
+            if len(sh) < 2 or math.hypot(float(sh[0]), float(sh[1])) <= 1e-4:
+                return False, f"move on {ev_item.target_id!r} has zero displacement shift"
+            return True, ""
+        if op_n == "rotate":
+            if abs(float(ev_item.angle_deg or 0.0)) <= 1e-2:
+                return False, f"rotate on {ev_item.target_id!r} has zero angle_deg"
+            return True, ""
+        if op_n == "scale":
+            if abs(float(ev_item.scale_factor or 1.0) - 1.0) <= 1e-3:
+                return False, f"scale on {ev_item.target_id!r} has unit scale_factor"
+            return True, ""
+        if op_n in ("transform", "morph"):
+            return bool(ev_item.source_id), ("" if ev_item.source_id else f"{op_n} missing source_id")
+        if op_n == "trace":
+            if tgt_o is not None and tgt_o.kind == "point":
+                has_kfs = bool(getattr(tgt_o, "sweep_keyframes", None) and len(tgt_o.sweep_keyframes) >= 2)
+                has_param = bool(tgt_o.param_name and tgt_o.expr and ";" in tgt_o.expr)
+                if not (has_kfs or has_param):
+                    return False, f"trace on static unlinked point {ev_item.target_id!r} produces zero visual motion"
+            if tgt_o is not None and tgt_o.kind in ("data_series", "parametric_curve") and tgt_o.points_list:
+                xs_t = [float(p[0]) for p in tgt_o.points_list]
+                ys_t = [float(p[1]) for p in tgt_o.points_list]
+                if (max(xs_t) - min(xs_t)) + (max(ys_t) - min(ys_t)) <= 1e-4 and not getattr(tgt_o, "sweep_keyframes", None):
+                    return False, f"trace on constant zero-length curve {ev_item.target_id!r} produces zero visual motion"
+            return True, ""
+        if op_n in ("animate_param", "set_param", "iterate_states", "interpolate_values"):
+            if tgt_o is not None:
+                has_kfs = bool(getattr(tgt_o, "sweep_keyframes", None) and len(tgt_o.sweep_keyframes) >= 2)
+                has_param = bool(tgt_o.param_name or tgt_o.model_id)
+                has_bar_steps = bool(tgt_o.kind == "bar_chart" and tgt_o.points_list and len(tgt_o.points_list) >= 2)
+                if not (has_kfs or has_param or has_bar_steps or tgt_o.kind in ("data_series", "parametric_curve", "function_plot")):
+                    return False, f"{op_n} on unparameterized {tgt_o.kind} {ev_item.target_id!r} produces zero state change"
+            return True, ""
+        return True, ""
+
     for sc in plan.scenes:
-        sc_ops = {e.op for e in sc.events}
-        has_state_anim = bool(sc_ops & _STATE_MOTION_OPS)
-        if has_state_anim:
-            animated_scenes_count += 1
+        has_substantive_anim = False
         for e in sc.events:
+            if e.op in _STATE_MOTION_OPS:
+                ok_ev, reason_ev = _event_produces_real_state_change(e)
+                if ok_ev:
+                    has_substantive_anim = True
+                elif reason_ev and require_claims:
+                    hollow_motion_issues.append(f"scene {sc.scene_id}: {reason_ev}.")
             if e.op == "animate_param":
-                obj_m = next((o for o in sc.objects if o.id == e.target_id), None)
+                obj_m = next((o for o in sc.objects if o.id == e.target_id), None) or _all_objs_seen.get(e.target_id)
                 mid_e = str((obj_m.model_id if obj_m else None) or e.target_id)
                 _swept_models_seen.add(mid_e)
+        if has_substantive_anim:
+            animated_scenes_count += 1
         low_n = sc.narration.lower()
         is_dynamic_beat = bool(_DYNAMIC_NARR_RE.search(low_n))
         if is_dynamic_beat:
             total_dynamic_scenes += 1
-            if not has_state_anim:
+            if not has_substantive_anim:
                 dynamic_motion_gaps.append(
-                    f"scene {sc.scene_id}: narration describes dynamic evolution/motion without a state-changing animation event."
+                    f"scene {sc.scene_id}: narration describes dynamic evolution/motion without a state-changing animation event that visibly alters state."
                 )
         # Check frequency parameter sync across subsequent beats mentioning explicit frequency values
         m_hz = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:hz|hertz)\b", low_n)
@@ -884,9 +1125,10 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
         "ai_reviewed": explicit_ai_reviewed,
         "unsupported": len(unsupported_claims) + (unclaimed_non_constructive if require_claims else 0),
         "failed": len(failed_claims),
-        "human_review_required": 1 if (failed_claims or unsupported_claims or source_supported_unbacked > 0 or parameter_sync_issues or (require_claims and unclaimed_non_constructive > 0)) else 0,
+        "human_review_required": 1 if (failed_claims or unsupported_claims or source_supported_unbacked > 0 or parameter_sync_issues or hollow_motion_issues or (require_claims and unclaimed_non_constructive > 0)) else 0,
     }
     issues.extend(parameter_sync_issues)
+    issues.extend(hollow_motion_issues)
     return {
         "issues": issues,
         "verified": verified_claims,

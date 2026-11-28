@@ -66,12 +66,17 @@ class LinkedMathModelSpec(BaseModel):
     derived_exprs: dict[str, str] = Field(default_factory=dict)
     force_expr: Optional[str] = None
     geometry_mode: Literal["linear_spring", "pendulum", "phase_body"] = "linear_spring"
-    solver: Literal["rk4", "rk45"] = "rk45"
+    solver: Literal["rk4", "rk4_adaptive", "rk45"] = "rk45"
     rtol: float = 1e-5
     atol: float = 1e-7
     natural_freq: Optional[float] = None
     damping_ratio: Optional[float] = None
     drive_amp: Optional[float] = None
+    mass: Optional[float] = None
+    stiffness: Optional[float] = None
+    damping_coeff: Optional[float] = None
+    units: dict[str, str] = Field(default_factory=dict)
+    assumptions: list[str] = Field(default_factory=list)
     diffusion_stds: list[float] = Field(default_factory=list)
     n_paths: Optional[int] = None
     seed: Optional[int] = None
@@ -217,7 +222,7 @@ def evaluate_signal_spectral_pipeline(spec: LinkedMathModelSpec) -> dict[str, An
     sel_sweep_u = 0.0
     for idx_s, fv in enumerate(sweep_freqs):
         w_pts_k, c_xy_k, mag_k = _wind_and_centroid(float(fv))
-        stride = max(1, len(w_pts_k) // 90)
+        stride = max(1, len(w_pts_k) // 180)
         u_val = round(idx_s / float(n_sw_tot), 6)
         if abs(fv - sel_f) <= 1e-4:
             sel_sweep_u = u_val
@@ -464,28 +469,76 @@ def evaluate_series_approximation_model(spec: LinkedMathModelSpec) -> dict[str, 
 
 
 def evaluate_dynamical_simulation_model(spec: LinkedMathModelSpec) -> dict[str, Any]:
-    """Evaluate general N-variable ODE simulation driving physical body, phase space, time series, force, & energy."""
+    """Evaluate explicitly specified N-variable ODE simulation with strict dimension, physical unit, and assumption checks."""
     from studio.ai.simulation import (
         build_simulation_sweep_frames,
         evaluate_derived_observables,
         integrate_ode_system,
     )
 
-    s_vars = list(spec.state_vars or ["x", "v"])
-    if spec.rhs_exprs and len(spec.rhs_exprs) == len(s_vars):
-        rhs = list(spec.rhs_exprs)
-    elif spec.dx_expr and spec.dy_expr and len(s_vars) == 2:
-        rhs = [spec.dx_expr, spec.dy_expr]
-    else:
-        w0 = float(spec.natural_freq if spec.natural_freq is not None else 2.0)
-        zeta = float(spec.damping_ratio if spec.damping_ratio is not None else 0.15)
-        rhs = ["v", f"-({w0 * w0})*x - ({2.0 * zeta * w0})*v"]
+    s_vars = [str(v).strip() for v in (spec.state_vars or []) if str(v).strip()]
+    if not s_vars:
+        raise ValueError(f"dynamical_simulation {spec.model_id!r} requires explicit non-empty state_vars (silent fallback disabled).")
 
-    init = list(spec.initial_state) if len(spec.initial_state) == len(s_vars) else (
-        [float(spec.x0 if spec.x0 is not None else 1.5), float(spec.y0 if spec.y0 is not None else 0.0)]
-        if len(s_vars) == 2
-        else [1.0] * len(s_vars)
-    )
+    assumptions = list(spec.assumptions or [])
+    if spec.mass is not None and float(spec.mass) <= 0.0:
+        raise ValueError(f"dynamical_simulation {spec.model_id!r} mass must be positive (got {spec.mass}).")
+    if spec.stiffness is not None and float(spec.stiffness) < 0.0:
+        raise ValueError(f"dynamical_simulation {spec.model_id!r} stiffness must be non-negative (got {spec.stiffness}).")
+    if spec.damping_coeff is not None and float(spec.damping_coeff) < 0.0:
+        raise ValueError(f"dynamical_simulation {spec.model_id!r} damping_coeff must be non-negative (got {spec.damping_coeff}).")
+
+    rhs: list[str]
+    explicit_mech_energy = False
+    eff_mass: float | None = float(spec.mass) if spec.mass is not None else None
+    eff_k: float | None = float(spec.stiffness) if spec.stiffness is not None else None
+
+    if spec.rhs_exprs:
+        if len(spec.rhs_exprs) != len(s_vars):
+            raise ValueError(
+                f"dynamical_simulation {spec.model_id!r}: rhs_exprs length ({len(spec.rhs_exprs)}) "
+                f"must equal state_vars length ({len(s_vars)})."
+            )
+        rhs = [str(ex).strip() for ex in spec.rhs_exprs]
+        if any(not ex for ex in rhs):
+            raise ValueError(f"dynamical_simulation {spec.model_id!r}: rhs_exprs cannot contain blank expressions.")
+    elif spec.dx_expr and spec.dy_expr:
+        if len(s_vars) != 2:
+            raise ValueError(f"dynamical_simulation {spec.model_id!r}: dx_expr/dy_expr requires exactly 2 state_vars.")
+        rhs = [spec.dx_expr.strip(), spec.dy_expr.strip()]
+    elif spec.natural_freq is not None and spec.damping_ratio is not None and len(s_vars) == 2:
+        w0 = float(spec.natural_freq)
+        zeta = float(spec.damping_ratio)
+        if w0 <= 0.0 or not math.isfinite(w0):
+            raise ValueError(f"natural_freq must be finite and positive (got {w0}).")
+        if zeta < 0.0 or not math.isfinite(zeta):
+            raise ValueError(f"damping_ratio must be finite and non-negative (got {zeta}).")
+        v0, v1 = s_vars[0], s_vars[1]
+        rhs = [v1, f"-({w0 * w0})*{v0} - ({2.0 * zeta * w0})*{v1}"]
+        eff_mass = float(spec.mass) if spec.mass is not None else 1.0
+        eff_k = float(spec.stiffness) if spec.stiffness is not None else eff_mass * (w0 * w0)
+        explicit_mech_energy = True
+        assumptions.append(f"linear_second_order_oscillator(w0={w0}, zeta={zeta}, m={eff_mass})")
+    else:
+        raise ValueError(
+            f"dynamical_simulation {spec.model_id!r} requires explicit rhs_exprs matching state_vars "
+            "(or dx_expr/dy_expr, or both natural_freq & damping_ratio); silent fallback disabled."
+        )
+
+    if spec.initial_state:
+        if len(spec.initial_state) != len(s_vars):
+            raise ValueError(
+                f"dynamical_simulation {spec.model_id!r}: initial_state dimension ({len(spec.initial_state)}) "
+                f"does not match state_vars ({len(s_vars)})."
+            )
+        init = [float(v) for v in spec.initial_state]
+    elif len(s_vars) == 2 and spec.x0 is not None and spec.y0 is not None:
+        init = [float(spec.x0), float(spec.y0)]
+    else:
+        raise ValueError(
+            f"dynamical_simulation {spec.model_id!r}: explicit initial_state matching state_vars={s_vars} required (silent default disabled)."
+        )
+
     tr = spec.t_range or [0.0, 10.0]
     steps = int(spec.steps if spec.steps is not None else 140)
     sim = integrate_ode_system(
@@ -499,36 +552,66 @@ def evaluate_dynamical_simulation_model(spec: LinkedMathModelSpec) -> dict[str, 
         rtol=spec.rtol,
         atol=spec.atol,
     )
+
     derived_spec = dict(spec.derived_exprs or {})
-    if not derived_spec and s_vars == ["x", "v"]:
-        w0 = float(spec.natural_freq if spec.natural_freq is not None else 2.0)
-        k_stiff = w0 * w0
+    if not derived_spec and explicit_mech_energy and eff_mass is not None and eff_k is not None and len(s_vars) >= 2:
+        v0, v1 = s_vars[0], s_vars[1]
         derived_spec = {
-            "potential_energy": f"0.5*({k_stiff})*x**2",
-            "kinetic_energy": "0.5*v**2",
-            "total_energy": f"0.5*({k_stiff})*x**2 + 0.5*v**2",
+            "potential_energy": f"0.5*({eff_k})*({v0})**2",
+            "kinetic_energy": f"0.5*({eff_mass})*({v1})**2",
+            "total_energy": f"0.5*({eff_k})*({v0})**2 + 0.5*({eff_mass})*({v1})**2",
         }
+    elif not derived_spec and (spec.mass is not None and spec.stiffness is not None) and len(s_vars) >= 2:
+        v0, v1 = s_vars[0], s_vars[1]
+        derived_spec = {
+            "potential_energy": f"0.5*({float(spec.stiffness)})*({v0})**2",
+            "kinetic_energy": f"0.5*({float(spec.mass)})*({v1})**2",
+            "total_energy": f"0.5*({float(spec.stiffness)})*({v0})**2 + 0.5*({float(spec.mass)})*({v1})**2",
+        }
+        assumptions.append(f"mechanical_energy(m={spec.mass}, k={spec.stiffness})")
+
     derived = evaluate_derived_observables(sim, derived_spec, params=spec.params)
     ts_x = [[tv, float(st[0])] for tv, st in zip(sim.t_axis, sim.states)]
     ts_y = [[tv, float(st[1])] for tv, st in zip(sim.t_axis, sim.states)] if len(s_vars) >= 2 else []
     phase_orbit = [[float(st[0]), float(st[1])] for st in sim.states] if len(s_vars) >= 2 else []
-    force_expr = spec.force_expr or (rhs[1] if len(rhs) >= 2 else rhs[0])
+
+    # Never confuse raw acceleration with force unless explicit force_expr or explicit mass*accel is declared
+    force_expr: str | None = spec.force_expr
+    force_mass: float | None = eff_mass
+    if force_expr is None and spec.mass is not None and len(rhs) >= 2:
+        force_expr = rhs[1]
+        assumptions.append(f"force_from_mass_times_accel(mass={spec.mass})")
+    elif force_expr is None and explicit_mech_energy and eff_mass is not None and len(rhs) >= 2:
+        force_expr = rhs[1]
+
     sweep_frames = build_simulation_sweep_frames(
         sim,
         derived=derived,
         force_expr=force_expr,
+        mass=force_mass if force_expr == (rhs[1] if len(rhs) >= 2 else None) else None,
         params=spec.params,
         n_keyframes=24,
         geometry_mode=spec.geometry_mode,
     )
-    energy_keys = [k for k in ("potential_energy", "kinetic_energy", "total_energy") if k in derived]
+    energy_keys = [k for k in ("potential_energy", "kinetic_energy", "total_energy", "conserved_invariant") if k in derived]
+    if not energy_keys and derived:
+        energy_keys = list(derived.keys())[:3]
     e_labels = [k.replace("_energy", "").replace("_", " ").title() for k in energy_keys]
     e_vals0 = [round(float(derived[k][0]), 5) for k in energy_keys] if energy_keys else []
     energy_total_curve = [[tv, float(derived[energy_keys[-1]][i])] for i, tv in enumerate(sim.t_axis)] if energy_keys else []
     end_pt = phase_orbit[-1] if phase_orbit else ts_x[-1]
+    meas_extra: dict[str, Any] = {}
+    if "total_energy" in derived:
+        meas_extra["energy_initial"] = derived["total_energy"][0]
+        meas_extra["energy_final"] = derived["total_energy"][-1]
+    elif "conserved_invariant" in derived:
+        vals_inv = derived["conserved_invariant"]
+        meas_extra["invariant_initial"] = vals_inv[0]
+        meas_extra["invariant_max_drift"] = round(max(abs(v - vals_inv[0]) for v in vals_inv), 6)
     return {
         "kind": spec.kind,
         "state_vars": s_vars,
+        "rhs_exprs": rhs,
         "t_axis": sim.t_axis,
         "states": sim.states,
         "time_series_x": ts_x,
@@ -546,14 +629,21 @@ def evaluate_dynamical_simulation_model(spec: LinkedMathModelSpec) -> dict[str, 
         "sweep_frames": sweep_frames,
         "selected_sweep_u": 1.0,
         "derived": derived,
+        "units": dict(spec.units or {}),
+        "assumptions": assumptions,
         "measurements": {
             "solver": sim.solver,
+            "solver_algorithm": sim.summary.get("solver_algorithm", sim.solver),
             "max_error_est": sim.max_error_est,
+            "rtol": spec.rtol,
+            "atol": spec.atol,
             "initial_state": init,
             "end_state": sim.states[-1],
             "x_min": round(min(p[1] for p in ts_x), 5),
             "x_max": round(max(p[1] for p in ts_x), 5),
-            **({"energy_initial": derived["total_energy"][0], "energy_final": derived["total_energy"][-1]} if "total_energy" in derived else {}),
+            "y_min": round(min(p[1] for p in ts_y), 5) if ts_y else None,
+            "y_max": round(max(p[1] for p in ts_y), 5) if ts_y else None,
+            **meas_extra,
         },
         "readout_text": sweep_frames[-1]["label"] if sweep_frames else f"end={sim.states[-1]}",
     }
@@ -585,6 +675,12 @@ def evaluate_frequency_response_model(spec: LinkedMathModelSpec) -> dict[str, An
         for i, pt in enumerate(resp_pts[:: max(1, len(resp_pts) // 20)])
     ]
     pk = res["peak_point"]
+    if res.get("has_singularity"):
+        readout_txt = f"w0={res['natural_freq']:.2f}, zeta=0.00 (undamped) | unbounded resonance singularity at w=w0"
+    elif res["has_nonzero_resonance_peak"]:
+        readout_txt = f"w0={res['natural_freq']:.2f}, zeta={res['damping_ratio']:.2f} ({res['damping_regime']}) | w_res={res['resonance_freq']:.2f}"
+    else:
+        readout_txt = f"w0={res['natural_freq']:.2f}, zeta={res['damping_ratio']:.2f} ({res['damping_regime']}) | no nonzero resonance peak (zeta >= 1/sqrt(2))"
     return {
         "kind": spec.kind,
         "response_curve": resp_pts,
@@ -595,10 +691,7 @@ def evaluate_frequency_response_model(spec: LinkedMathModelSpec) -> dict[str, An
         "sweep_frames": sweep_frames,
         "selected_sweep_u": 1.0,
         "measurements": {k: v for k, v in res.items() if k not in ("response_curve", "phase_curve")},
-        "readout_text": (
-            f"w0={res['natural_freq']:.2f}, zeta={res['damping_ratio']:.2f} ({res['damping_regime']}) | "
-            + (f"w_res={res['resonance_freq']:.2f}" if res["has_nonzero_resonance_peak"] else "no nonzero resonance peak (zeta >= 1/sqrt(2))")
-        ),
+        "readout_text": readout_txt,
     }
 
 

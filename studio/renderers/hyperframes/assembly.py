@@ -53,7 +53,7 @@ class HyperFramesBackend(RenderBackend):
         t0 = time.perf_counter()
         prof = FORMATS.get(format_name, FORMATS["widescreen_hd"])
         resolved_look = resolve_look(look_name).name
-        resolved_cap = normalize_caption_style(caption_style, default="kinetic" if prof.is_vertical else "editorial")
+        resolved_cap = normalize_caption_style(caption_style, default="editorial")
         bdir = build_dir or (PROJECT_ROOT / "build" / f"backend_hyperframes_{slug}_{format_name}")
         bdir.mkdir(parents=True, exist_ok=True)
         out_mp4 = out_path or (PROJECT_ROOT / "output" / f"HF_{slug}_{format_name}.mp4")

@@ -131,7 +131,7 @@ def compile_scene_object_element(
         ],
     }
 
-    if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "restoring_force", "spectrum_peak", "time_point", "mechanical_body", "body_point", "phase_orbit", "energy_bars", "readout", "trajectory", "loss_curve", "end_point"):
+    if getattr(obj, "sweep_keyframes", None) and obj.model_output in ("winding_curve", "centroid_point", "centroid_vector", "restoring_force", "spectrum_peak", "time_point", "mechanical_body", "body_point", "phase_orbit", "energy_bars", "readout", "trajectory", "loss_curve", "end_point", "sweep"):
         xr_sw, yr_sw, ax_sw = axes_specs.get(obj.axes_id or "", (obj.x_range or default_geom_xr, obj.y_range or default_geom_yr, box))
         sw_px: list[dict[str, Any]] = []
         n_kf = max(1, len(obj.sweep_keyframes) - 1)
@@ -289,14 +289,15 @@ def compile_scene_object_element(
             arrows_px.append([p0[0], p0[1], p1[0], p1[1]])
         el["field_arrows"] = arrows_px
     elif obj.kind == "mechanical_body":
-        xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (obj.x_range or [-2.6, 2.6], obj.y_range or [-1.6, 1.6], box))
+        xr, yr, ax_box = axes_specs.get(obj.axes_id or "", (obj.x_range or [-2.4, 2.4], obj.y_range or [-1.5, 1.5], box))
         conn = getattr(obj, "connector_kind", "spring") or "spring"
-        anc = obj.anchor_coords or ([-2.3, 0.0] if conn != "rod" else [0.0, 1.3])
+        anc = obj.anchor_coords or ([float(xr[0]) + 0.12 * (float(xr[1]) - float(xr[0])), 0.0] if conn != "rod" else [0.0, float(yr[1]) - 0.15 * (float(yr[1]) - float(yr[0]))])
         bpos = obj.coords or [0.0, 0.0]
         el["mech"] = {
             "connector": conn,
             "anchor_px": list(_to_px(anc, ax_box, xr, yr)),
             "body_px": list(_to_px(bpos, ax_box, xr, yr)),
+            "stand_alone": not bool(obj.axes_id),
         }
 
     return el, ann_idx_local

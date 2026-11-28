@@ -49,7 +49,7 @@ class SafeLayout:
         top_pad = fh * profile.top_safe_ratio
         norm_cap = normalize_caption_style(
             caption_style or os.environ.get("STUDIO_CAPTION_STYLE") or os.environ.get("STUDIO_UI"),
-            default="editorial" if not profile.is_vertical else "kinetic",
+            default="editorial",
         )
         preset = CAPTION_PRESETS[norm_cap]
         cap_ratio = preset.reserve_band_ratio_portrait if profile.is_vertical else preset.reserve_band_ratio_landscape
@@ -339,7 +339,7 @@ class CaptionCard:
         self.theme = theme
         is_port = layout.frame_h > layout.frame_w
         raw_style = caption_style or os.environ.get("STUDIO_CAPTION_STYLE") or style or os.environ.get("STUDIO_UI")
-        default_cap = "kinetic" if (is_port and (style in ("card", "neon"))) else ("editorial" if not is_port else "minimal")
+        default_cap = "editorial" if not is_port else "minimal"
         self.caption_style = normalize_caption_style(raw_style, default=default_cap)
         self.preset = CAPTION_PRESETS[self.caption_style]
         self.legacy_style = ui_style(style if style in UI_STYLES else None)
@@ -701,7 +701,7 @@ class CaptionCard:
                 if self.style == "neon":
                     part.set_stroke(color=self.theme.background, width=self.OUTLINE_WIDTH, opacity=0.90, background=True)
                 if j == wi:
-                    if self.minimal or self.style == "neon" or not emph:
+                    if not getattr(self.preset, "use_pill_highlight", False) or self.minimal or self.style == "neon" or not emph:
                         part.set_fill(color=self.theme.accent_primary if emph else (sp_col if self.preset.show_speaker_badge else self.accent))
                     else:
                         part.set_color(self.theme.background)
@@ -719,8 +719,8 @@ class CaptionCard:
             self._shown = (ci, wi)
             return
 
-        # Only apply pill background highlight when active word is a semantic concept token (never on filler words)
-        if not emph or self.minimal or self.style == "neon" or not parts or wi >= len(parts) or len(parts[wi].submobjects) == 0:
+        # Only apply pill background highlight when preset explicitly opts in AND active word is a concept token
+        if (not getattr(self.preset, "use_pill_highlight", False)) or (not emph) or self.minimal or self.style == "neon" or not parts or wi >= len(parts) or len(parts[wi].submobjects) == 0:
             self._show_minimal(ci, wi, line, parts, emph, t)
             return
 

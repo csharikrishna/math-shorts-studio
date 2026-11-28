@@ -583,8 +583,19 @@ class V3Scene(StoryScene):
             return m.Rotate(mob, angle=float(np.deg2rad(ev.angle_deg)))
         if ev.op == "remove":
             self.registry.pop(ev.target_id, None)
+            self.obj_kinds.pop(ev.target_id, None)
+            self.obj_axes.pop(ev.target_id, None)
             self._obj_boxes.pop(ev.target_id, None)
             self._live_unaxed_polys.discard(ev.target_id)
+            child_fades = []
+            for lid in [k for k in list(self.registry.keys()) if self.obj_axes.get(k) == ev.target_id]:
+                ch_m = self.registry.pop(lid)
+                self.obj_kinds.pop(lid, None)
+                self.obj_axes.pop(lid, None)
+                self._obj_boxes.pop(lid, None)
+                child_fades.append(m.FadeOut(ch_m))
+            if child_fades:
+                return m.AnimationGroup(m.FadeOut(mob), *child_fades)
             return m.FadeOut(mob)
         if ev.op == "focus":
             return m.Circumscribe(mob, color=self.theme.accent_highlight)
@@ -685,14 +696,14 @@ class V3Scene(StoryScene):
     def _get_geom_scale(self) -> float:
         return self._get_geom_frame()[0]
 
-    def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
-        def _resolve_axes(aid: str | None) -> m.Axes | None:
-            cand = self.registry.get(aid or "")
-            if isinstance(cand, m.Axes):
-                return cand
-            return getattr(cand, "_wrapped_axes", None)
+    def _resolve_axes(self, aid: str | None) -> m.Axes | None:
+        cand = self.registry.get(aid or "")
+        if isinstance(cand, m.Axes):
+            return cand
+        return getattr(cand, "_wrapped_axes", None)
 
-        ax = _resolve_axes(axes_id)
+    def _to_point(self, coords: list[float], axes_id: str | None) -> np.ndarray:
+        ax = self._resolve_axes(axes_id)
         if isinstance(ax, m.Axes):
             return ax.c2p(coords[0], coords[1])
         s, center = self._get_geom_frame()
@@ -718,33 +729,47 @@ class V3Scene(StoryScene):
             cx, cy, x_len, y_len = px_box_to_manim(pbox, zones, L.frame_w, L.frame_h)
             axis_col = T.text_muted if not getattr(T, "is_light", False) else T.text_primary
             has_chrome = bool(getattr(obj, "x_label", "") or getattr(obj, "y_label", "") or getattr(obj, "legend_items", None))
-            eq_clearance = 0.72 if has_chrome else (0.86 if zones.equation_box.h > 0 else 0.92)
-            x_fit_scale = 0.88 if has_chrome else 0.94
+            eq_clearance = 0.72 if has_chrome else (0.82 if zones.equation_box.h > 0 else 0.88)
+            x_fit_scale = 0.86 if has_chrome else 0.90
             y_shift = -0.06 if zones.equation_box.h > 0 else 0.0
+            dx_ax = max(1e-6, float(xr[1]) - float(xr[0]))
+            dy_ax = max(1e-6, float(yr[1]) - float(yr[0]))
+            x_step = dx_ax / 4.0
+            y_step = dy_ax / 4.0
             ax = m.Axes(
-                x_range=[xr[0], xr[1], (xr[1] - xr[0]) / 4.0],
-                y_range=[yr[0], yr[1], (yr[1] - yr[0]) / 4.0],
+                x_range=[xr[0], xr[1], x_step],
+                y_range=[yr[0], yr[1], y_step],
                 x_length=x_len * x_fit_scale,
                 y_length=y_len * eq_clearance,
-                axis_config={"color": axis_col, "stroke_width": 2.1, "include_tip": True},
+                axis_config={
+                    "color": axis_col,
+                    "stroke_width": 2.2,
+                    "include_tip": True,
+                    "include_numbers": True,
+                    "font_size": 22,
+                    "line_to_number_buff": 0.18,
+                    "decimal_number_config": {"num_decimal_places": 0 if dx_ax >= 8.0 and dy_ax >= 8.0 else 1},
+                },
+                x_axis_config={"decimal_number_config": {"num_decimal_places": 0 if dx_ax >= 8.0 else 1}},
+                y_axis_config={"decimal_number_config": {"num_decimal_places": 0 if dy_ax >= 8.0 else 1}},
                 tips=True,
             ).move_to(np.array([cx, cy + y_shift, 0.0]))
             self.axes_ranges[obj.id] = (xr, yr)
             self._obj_boxes[obj.id] = pbox
             self._scene_obstacles.append(pbox)
-            # Attach optional x/y axis labels & curve legend cleanly OUTSIDE the plot interior AND fit inside pbox
+            # Attach crisp x/y axis labels & legend cleanly outside tick labels (no intersecting card outline)
             extras: list[m.Mobject] = [ax]
-            lbl_fs = px_to_manim_font_size(max(20, self._px_scale.body_px - 3), self.profile.pixel_height)
-            min_leg_h = max(L.min_text_h, 0.22)
+            lbl_fs = px_to_manim_font_size(max(22, self._px_scale.body_px - 2), self.profile.pixel_height)
+            min_leg_h = max(L.min_text_h, 0.24)
             if getattr(obj, "x_label", ""):
                 xl_mob = m.Text(str(obj.x_label), font_size=lbl_fs, font=CAPTION_FONT, color=axis_col, **_FONT_KWARGS)
-                fit_mobject(xl_mob, max_width=x_len * 0.44, max_height=0.32, min_height=min_leg_h)
-                xl_mob.next_to(ax, m.DOWN, buff=0.08).align_to(ax, m.RIGHT)
+                fit_mobject(xl_mob, max_width=x_len * 0.44, max_height=0.34, min_height=min_leg_h)
+                xl_mob.next_to(ax.x_axis, m.DOWN, buff=0.22).align_to(ax, m.RIGHT)
                 extras.append(xl_mob)
             if getattr(obj, "y_label", ""):
                 yl_mob = m.Text(str(obj.y_label), font_size=lbl_fs, font=CAPTION_FONT, color=axis_col, **_FONT_KWARGS)
-                fit_mobject(yl_mob, max_width=x_len * 0.38, max_height=0.32, min_height=min_leg_h)
-                yl_mob.next_to(ax, m.UP, buff=0.08).align_to(ax, m.LEFT)
+                fit_mobject(yl_mob, max_width=x_len * 0.38, max_height=0.34, min_height=min_leg_h)
+                yl_mob.next_to(ax, m.UP, buff=0.14).align_to(ax, m.LEFT)
                 extras.append(yl_mob)
             if getattr(obj, "legend_items", None):
                 leg_rows = m.VGroup()
@@ -754,13 +779,13 @@ class V3Scene(StoryScene):
                     l_role = li[1] if len(li) > 1 else "primary"
                     l_col = getattr(T, ROLE_TO_THEME.get(l_role, "accent_primary"))
                     swatch = m.Dot(radius=0.06, color=l_col)
-                    l_txt = m.Text(str(li[0]), font_size=max(18, lbl_fs - 2), font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
-                    fit_mobject(l_txt, max_width=x_len * 0.46, max_height=0.28, min_height=min_leg_h)
-                    row_g = m.VGroup(swatch, l_txt).arrange(m.RIGHT, buff=0.07)
+                    l_txt = m.Text(str(li[0]), font_size=max(20, lbl_fs - 2), font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                    fit_mobject(l_txt, max_width=x_len * 0.46, max_height=0.30, min_height=min_leg_h)
+                    row_g = m.VGroup(swatch, l_txt).arrange(m.RIGHT, buff=0.08)
                     leg_rows.add(row_g)
                 if len(leg_rows) > 0:
-                    leg_rows.arrange(m.DOWN, aligned_edge=m.RIGHT, buff=0.05)
-                    leg_rows.next_to(ax, m.UP, buff=0.08).align_to(ax, m.RIGHT)
+                    leg_rows.arrange(m.DOWN, aligned_edge=m.RIGHT, buff=0.06)
+                    leg_rows.next_to(ax, m.UP, buff=0.14).align_to(ax, m.RIGHT)
                     extras.append(leg_rows)
             if len(extras) > 1:
                 ax_grp = m.VGroup(*extras)
@@ -772,7 +797,7 @@ class V3Scene(StoryScene):
         if obj.kind == "function_plot":
             if not obj.expr and (obj.points_list or getattr(obj, "sweep_keyframes", None)):
                 return self._build_data_series_mob(obj, color)
-            ax = self.registry.get(obj.axes_id or "")
+            ax = self._resolve_axes(obj.axes_id)
             if isinstance(ax, m.Axes) and obj.axes_id in self.axes_ranges:
                 xr, yr = self.axes_ranges[obj.axes_id]
             else:
@@ -784,7 +809,7 @@ class V3Scene(StoryScene):
         if obj.kind == "parametric_curve":
             if not obj.expr and (obj.points_list or getattr(obj, "sweep_keyframes", None)):
                 return self._build_data_series_mob(obj, color)
-            ax = self.registry.get(obj.axes_id or "")
+            ax = self._resolve_axes(obj.axes_id)
             if not isinstance(ax, m.Axes):
                 xr, yr = obj.x_range or [-2.0, 2.0], obj.y_range or [-2.0, 2.0]
                 ax = m.Axes(x_range=[xr[0], xr[1], 1.0], y_range=[yr[0], yr[1], 1.0], x_length=L.stage_w * 0.8, y_length=L.stage_h * 0.6).move_to(L.stage_center)
@@ -838,8 +863,8 @@ class V3Scene(StoryScene):
                     slot_h = eq_band_h / eq_tot
                     eq_center[1] = cy_eq + (0.5 * (eq_tot - 1) - eq_i) * slot_h
                     max_h_ratio = min(0.90, (slot_h * 0.82) / max(eq_band_h, 1e-6))
-            pad_x = 0.48 if obj.card else 0.0
-            pad_y = 0.28 if obj.card else 0.0
+            pad_x = 0.52 if obj.card else 0.0
+            pad_y = 0.36 if obj.card else 0.0
             fit_h = max(0.30, (eq_band_h * max_h_ratio if obj.card else max(0.45, eq_band_h * max_h_ratio)) - pad_y)
             fit_mobject(eq, max_width=max(0.6, eq_band_w * max_w_ratio - pad_x), max_height=fit_h)
             eq.move_to(eq_center)
@@ -869,7 +894,9 @@ class V3Scene(StoryScene):
 
         if obj.kind == "annotation":
             zones = self._cur_zones
-            raw_lbl = (obj.text or obj.label or "").strip()
+            kfs_ann = list(getattr(obj, "sweep_keyframes", []) or [])
+            longest_kf_lbl = max((kf.label for kf in kfs_ann if kf.label), key=len, default="") if kfs_ann else ""
+            raw_lbl = (obj.text or obj.label or longest_kf_lbl or "").strip()
             lbl_fs = px_to_manim_font_size(self._px_scale.math_label_px, self.profile.pixel_height)
             has_tex = any(tok in raw_lbl for tok in ("\\", "_", "^"))
             if has_tex:
@@ -881,12 +908,18 @@ class V3Scene(StoryScene):
                 txt = m.Text(raw_lbl, font_size=lbl_fs - 4, font=CAPTION_FONT, weight="SEMIBOLD", color=color, **_FONT_KWARGS)
             is_port = L.frame_h > L.frame_w
             fit_mobject(txt, max_width=L.safe_w * (0.84 if is_port else 0.34), max_height=0.64)
-            ax_mob = self.registry.get(obj.axes_id or "")
-            if not isinstance(ax_mob, m.Axes):
-                ax_mob = next((mob for mob in self.registry.values() if isinstance(mob, m.Axes)), None)
+            ax_mob = self._resolve_axes(obj.axes_id) if obj.axes_id else None
+            if ax_mob is None and not obj.coords:
+                ax_mob = next((self._resolve_axes(k) for k in self.registry if self._resolve_axes(k) is not None), None)
             ann_i = getattr(self, "_cur_ann_index", 0)
             ann_tot = max(1, getattr(self, "_cur_ann_total", 1))
-            if isinstance(ax_mob, m.Axes) and not is_port:
+            if obj.coords and len(obj.coords) >= 2 and not is_port and not obj.axes_id:
+                pos = np.array([
+                    max(-L.safe_w * 0.45 + txt.width * 0.5, min(L.safe_w * 0.45 - txt.width * 0.5, float(obj.coords[0]))),
+                    max(-L.stage_h * 0.45 + txt.height * 0.5, min(L.stage_h * 0.45 - txt.height * 0.5, float(obj.coords[1]))),
+                    0.0,
+                ])
+            elif isinstance(ax_mob, m.Axes) and not is_port:
                 fit_mobject(txt, max_width=L.safe_w * 0.32, max_height=0.58)
                 right_x = 0.5 * (ax_mob.get_right()[0] + L.safe_w * 0.5)
                 left_x = 0.5 * (-L.safe_w * 0.5 + ax_mob.get_left()[0])
@@ -967,7 +1000,7 @@ class V3Scene(StoryScene):
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
                 p0, p1 = obj.expr.split(";", 1)
                 fx, fy = compile_expr(p0, (obj.param_name,)), compile_expr(p1, (obj.param_name,))
-                ax = self.registry.get(obj.axes_id or "")
+                ax = self._resolve_axes(obj.axes_id)
                 def _mk_dot(t=tracker, f1=fx, f2=fy, a=ax, c=color, pn=obj.param_name):
                     v = t.get_value()
                     x, y = float(f1(**{pn: v})), float(f2(**{pn: v}))
@@ -1009,7 +1042,7 @@ class V3Scene(StoryScene):
                 tracker = self.params.setdefault(obj.param_name, m.ValueTracker(obj.param_init))
                 p0, p1 = obj.expr.split(";", 1)
                 fx, fy = compile_expr(p0, (obj.param_name,)), compile_expr(p1, (obj.param_name,))
-                ax = self.registry.get(obj.axes_id or "")
+                ax = self._resolve_axes(obj.axes_id)
                 c0 = obj.coords or [0.0, 0.0]
                 def _mk_vec(t=tracker, f1=fx, f2=fy, a=ax, c=color, pn=obj.param_name, orig=c0):
                     v = t.get_value()
@@ -1042,7 +1075,7 @@ class V3Scene(StoryScene):
         if obj.kind == "circle":
             pos = self._to_point(obj.coords or [0.0, 0.0], obj.axes_id)
             r = obj.radius or 1.0
-            ax = self.registry.get(obj.axes_id or "")
+            ax = self._resolve_axes(obj.axes_id)
             if isinstance(ax, m.Axes):
                 r = float(np.linalg.norm(ax.c2p(r, 0.0) - ax.c2p(0.0, 0.0)))
             else:
@@ -1156,7 +1189,7 @@ class V3Scene(StoryScene):
 
         if obj.kind == "angle_arc":
             tracker = self.params.setdefault(obj.param_name or "theta", m.ValueTracker(obj.param_init))
-            ax = self.registry.get(obj.axes_id or "")
+            ax = self._resolve_axes(obj.axes_id)
             r_math = obj.radius or 1.0
             r_scene = float(np.linalg.norm(ax.c2p(r_math, 0.0) - ax.c2p(0.0, 0.0))) if isinstance(ax, m.Axes) else r_math
             center = ax.c2p(0.0, 0.0) if isinstance(ax, m.Axes) else L.stage_center
@@ -1171,7 +1204,7 @@ class V3Scene(StoryScene):
 
         if obj.kind == "projection":
             tracker = self.params.setdefault(obj.param_name or "theta", m.ValueTracker(obj.param_init))
-            ax = self.registry.get(obj.axes_id or "")
+            ax = self._resolve_axes(obj.axes_id)
             p0, p1 = (obj.expr or "cos(theta); sin(theta)").split(";", 1) if (obj.expr and ";" in obj.expr) else ("cos(theta)", "sin(theta)")
             pn = obj.param_name or "theta"
             fx, fy = compile_expr(p0, (pn,)), compile_expr(p1, (pn,))
@@ -1417,42 +1450,46 @@ class V3Scene(StoryScene):
                 pb = _map_coord(cur_xy)
                 g_mech = m.VGroup()
                 if ck == "rod":
-                    body = m.Circle(radius=0.22, color=c_mob, fill_color=c_mob, fill_opacity=0.85, stroke_width=2.6).move_to(pb)
-                    half_span = 0.22
+                    g_mech.add(m.Line(pa + np.array([-0.45, 0.0, 0.0]), pa + np.array([0.45, 0.0, 0.0]), color=T.text_primary, stroke_width=4.0))
+                    body = m.Circle(radius=0.28, color=c_mob, fill_color=c_mob, fill_opacity=0.88, stroke_width=2.8).move_to(pb)
+                    half_span = 0.28
                 else:
-                    body = m.RoundedRectangle(corner_radius=0.08, width=0.52, height=0.46, color=c_mob, fill_color=c_mob, fill_opacity=0.88, stroke_width=2.5).move_to(pb)
-                    half_span = 0.26
+                    g_mech.add(m.Line(pa + np.array([0.0, -0.45, 0.0]), pa + np.array([0.0, 0.55, 0.0]), color=T.text_primary, stroke_width=4.0))
+                    body = m.RoundedRectangle(corner_radius=0.10, width=0.72, height=0.60, color=c_mob, fill_color=c_mob, fill_opacity=0.90, stroke_width=2.6).move_to(pb)
+                    half_span = 0.36
                 vec_ap = pb - pa
                 dist_ap = float(np.linalg.norm(vec_ap))
                 p_edge = (pb - (vec_ap / dist_ap) * half_span) if dist_ap > half_span + 0.04 else pb
                 if ck in ("spring", "spring_damper"):
                     sp = m.VMobject()
-                    sp.set_points_as_corners(_spring_pts(pa, p_edge, coils=8, amp=0.14))
-                    sp.set_stroke(color=T.text_muted if not getattr(T, "is_light", False) else T.text_primary, width=2.6)
+                    sp.set_points_as_corners(_spring_pts(pa, p_edge, coils=10, amp=0.18))
+                    sp.set_stroke(color=T.text_primary, width=3.4)
                     g_mech.add(sp)
                 if ck in ("damper", "spring_damper"):
-                    off = np.array([0.0, -0.22, 0.0]) if ck == "spring_damper" else np.zeros(3)
+                    off = np.array([0.0, -0.28, 0.0]) if ck == "spring_damper" else np.zeros(3)
                     mid = 0.5 * (pa + p_edge) + off
-                    g_mech.add(m.Line(pa + off, mid, color=T.accent_tertiary, stroke_width=3.0))
-                    g_mech.add(m.Line(mid, p_edge + off, color=T.accent_secondary, stroke_width=2.4))
+                    g_mech.add(m.Line(pa + off, mid, color=T.accent_secondary, stroke_width=3.2))
+                    g_mech.add(m.RoundedRectangle(corner_radius=0.04, width=0.38, height=0.20, fill_color=T.surface, fill_opacity=0.85, stroke_color=T.accent_secondary, stroke_width=2.4).move_to(mid))
+                    g_mech.add(m.Line(mid, p_edge + off, color=T.accent_secondary, stroke_width=2.8))
                 if ck == "rod":
-                    g_mech.add(m.Line(pa, p_edge, color=T.text_primary, stroke_width=2.8))
-                g_mech.add(m.Dot(pa, radius=0.06, color=T.text_muted))
+                    g_mech.add(m.Line(pa, p_edge, color=T.text_primary, stroke_width=3.2))
+                g_mech.add(m.Dot(pa, radius=0.075, color=T.text_primary))
                 g_mech.add(body)
                 if lbl_s:
-                    bt_fs = px_to_manim_font_size(max(30, int(self._px_scale.body_px)), self.profile.pixel_height)
-                    bt = m.Text(lbl_s[:8], font_size=bt_fs, font=CAPTION_FONT, weight="BOLD", color=T.text_primary, **_FONT_KWARGS)
-                    bt.next_to(body, m.UP, buff=0.28)
+                    bt_fs = px_to_manim_font_size(max(28, int(self._px_scale.body_px)), self.profile.pixel_height)
+                    bt = m.Text(lbl_s[:5], font_size=bt_fs, font=CAPTION_FONT, weight="BOLD", color=T.background, **_FONT_KWARGS)
+                    fit_mobject(bt, max_width=half_span * 1.5, max_height=0.36, min_height=max(L.min_text_h, 0.24))
+                    bt.move_to(body.get_center())
                     g_mech.add(bt)
                 return g_mech
 
+            mob_m = m.always_redraw(_mk_mech) if kfs else _mk_mech()
+            self._obj_boxes[obj.id] = self._manim_to_px_box(_mk_mech(), role="mechanical_body")
             if kfs:
-                mech_mob = m.always_redraw(_mk_mech)
-                mech_mob._param_tracker = tracker  # type: ignore[attr-defined]
-                mech_mob._sweep_key = sw_key  # type: ignore[attr-defined]
-                mech_mob._sweep_keyframes = kfs  # type: ignore[attr-defined]
-                return mech_mob
-            return _mk_mech()
+                mob_m._param_tracker = tracker  # type: ignore[attr-defined]
+                mob_m._sweep_key = sw_key  # type: ignore[attr-defined]
+                mob_m._sweep_keyframes = kfs  # type: ignore[attr-defined]
+            return mob_m
 
         return m.Dot(L.stage_center, color=color)
 

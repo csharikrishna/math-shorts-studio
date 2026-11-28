@@ -458,7 +458,7 @@ MATH_OPERATION_SPECS: list[ComponentSpec] = [
         math_grounding="Adaptive RK45/RK4 quadrature + strict finite checking + derived invariant evaluation",
         example_use_case="Damped/driven oscillators, pendulums, Lotka-Volterra phase portraits, circuits, energy dissipation.",
         compute_fn=lambda **kw: _run_sim_op(kw),
-        validate_fn=lambda d: ([] if (d.get("rhs_exprs") or d.get("natural_freq") is not None) else ["rhs_exprs or natural_freq required"]),
+        validate_fn=lambda d: ([] if ((d.get("rhs_exprs") or d.get("natural_freq") is not None) and bool(d.get("initial_state"))) else ["rhs_exprs (or natural_freq) and explicit initial_state required"]),
         test_fn=lambda: _test_general_sim_op(),
     ),
     ComponentSpec(

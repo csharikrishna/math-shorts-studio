@@ -158,11 +158,20 @@ def resolve_composition_layout(
 ) -> str:
     """Resolve content-aware layout archetype respecting aspect ratio and object mix."""
     comp = (composition or "auto").strip()
-    if comp in ("diagram_with_text", "annotated_chart", "annotated_overlay", "math_simulation", "model_with_readout", "progressive_derivation"):
+    if comp in ("diagram_with_text", "annotated_chart", "annotated_overlay", "math_simulation", "model_with_readout", "progressive_derivation", "vector_field_with_trajectory"):
         comp = "diagram_with_text"
-    elif comp in ("geometric_proof", "matrix_transform", "chapter_intro", "concept_summary"):
+    elif comp in ("geometric_proof", "matrix_transform", "chapter_intro", "concept_summary", "dual_time_series"):
         comp = "centered_focus"
-    elif comp in ("data_visualization", "time_frequency_split", "before_after_simulation", "multi_view_dashboard"):
+    elif comp in (
+        "data_visualization",
+        "time_frequency_split",
+        "before_after_simulation",
+        "multi_view_dashboard",
+        "physical_system_with_displacement",
+        "physical_system_with_phase_space",
+        "parameter_sweep_with_response",
+        "state_with_conserved_chart",
+    ):
         comp = "stacked_comparison" if aspect_label == "9:16" else "side_by_side_comparison"
     comp = adapt_composition_for_aspect(comp, aspect_label)
     if comp != "auto":
@@ -196,7 +205,7 @@ def fit_axes_pixel_box(
     panel_slot: str = "auto",
     has_side_annotations: bool = False,
 ) -> PixelBox:
-    """Compute generous, visually balanced axes box covering ~50-82% stage width/height cleanly."""
+    """Compute non-overlapping, well-proportioned axes panel preserving gutter for ticks & axis labels."""
     st = zones.stage_box
     is_vert = zones.aspect_label == "9:16"
     dx_data = max(abs(float(xr[1]) - float(xr[0])), 1e-6)
@@ -206,35 +215,43 @@ def fit_axes_pixel_box(
     if slot == "auto" and composition in ("side_by_side_comparison", "stacked_comparison"):
         slot = "left" if not is_vert else "top"
 
+    # Strictly disjoint panel rectangles with explicit center gutter (never overlap left/right!)
     if slot == "left" and not is_vert:
-        region = PixelBox(st.x, st.y, st.w * 0.56, st.h, role="axes")
+        region = PixelBox(st.x, st.y, st.w * 0.465, st.h, role="axes")
     elif slot == "right" and not is_vert:
-        region = PixelBox(st.x + st.w * 0.44, st.y, st.w * 0.56, st.h, role="axes")
+        region = PixelBox(st.x + st.w * 0.535, st.y, st.w * 0.465, st.h, role="axes")
     elif slot in ("left", "top") and (is_vert or composition == "stacked_comparison"):
-        region = PixelBox(st.x, st.y, st.w, st.h * 0.53, role="axes")
+        region = PixelBox(st.x, st.y, st.w, st.h * 0.465, role="axes")
     elif slot in ("right", "bottom") and (is_vert or composition == "stacked_comparison"):
-        region = PixelBox(st.x, st.y + st.h * 0.57, st.w, st.h * 0.40, role="axes")
+        region = PixelBox(st.x, st.y + st.h * 0.535, st.w, st.h * 0.465, role="axes")
+    elif slot == "top" and not is_vert:
+        region = PixelBox(st.x, st.y, st.w, st.h * 0.465, role="axes")
+    elif slot == "bottom" and not is_vert:
+        region = PixelBox(st.x, st.y + st.h * 0.535, st.w, st.h * 0.465, role="axes")
     elif composition == "diagram_with_text" and not is_vert and has_side_annotations:
-        region = PixelBox(st.x, st.y, st.w * 0.64, st.h * 0.94, role="axes")
+        region = PixelBox(st.x, st.y, st.w * 0.62, st.h * 0.94, role="axes")
     else:
         region = PixelBox(st.x, st.y, st.w * (0.94 if is_vert else 0.88), st.h * 0.92, role="axes")
 
+    # Reserve inner breathing room so tick labels & axis names stay cleanly inside `region`
+    pad_w_ratio = 0.86 if slot in ("left", "right") else 0.90
+    pad_h_ratio = 0.80 if zones.equation_band_px > 0 else 0.84
+
     if equal_aspect:
-        scale = min(region.w * 0.92 / dx_data, region.h * 0.92 / dy_data)
-        # Ensure equal-aspect square plots utilize full stage height cleanly (no tiny 18% thumbnails)
+        scale = min(region.w * pad_w_ratio / dx_data, region.h * pad_h_ratio / dy_data)
         w_out = dx_data * scale
         h_out = dy_data * scale
     else:
-        w_out = region.w * 0.92
-        h_out = region.h * 0.88
+        w_out = region.w * pad_w_ratio
+        h_out = region.h * pad_h_ratio
 
-    # Subtle slight nudge left in diagram_with_text to leave room for clean right-column cards
     offset_x = 0.0
     if composition == "diagram_with_text" and not is_vert and has_side_annotations and slot == "auto":
         offset_x = -(zones.width_px * 0.08)
 
-    cx = min(max(region.cx + offset_x, zones.side_margin_px + w_out * 0.5), zones.width_px - zones.side_margin_px - w_out * 0.5)
-    return PixelBox(x=cx - 0.5 * w_out, y=region.cy - 0.5 * h_out, w=w_out, h=h_out, role="axes")
+    cx = min(max(region.cx + offset_x, region.x + w_out * 0.5 + 8.0), region.x2 - w_out * 0.5 - 8.0)
+    cy = min(max(region.cy, region.y + h_out * 0.5 + 8.0), region.y2 - h_out * 0.5 - 8.0)
+    return PixelBox(x=cx - 0.5 * w_out, y=cy - 0.5 * h_out, w=w_out, h=h_out, role="axes")
 
 
 def clamp_box_to_safe_zone(box: PixelBox, zones: AdaptiveFrameZones, *, pad_px: float = 12.0) -> PixelBox:

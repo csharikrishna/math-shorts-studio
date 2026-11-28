@@ -236,28 +236,56 @@ def build_runtime_js(payload_json: str) -> str:
       if (hasTx) layers.appendChild(svgTarget);
 
       if (el.kind === "axes" && el.axes) {{
-        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
-        g.appendChild(svgEl("rect", {{ x: bx, y: by, width: bw, height: bh, fill: DATA.look.surface, "fill-opacity": 0.22, stroke: DATA.look.grid_line, "stroke-width": 1, rx: 10 }}));
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
+        g.appendChild(svgEl("rect", {{ x: bx, y: by, width: bw, height: bh, fill: DATA.look.surface, "fill-opacity": 0.24, stroke: DATA.look.grid_line, "stroke-width": 1.2, rx: 10 }}));
         const oxClamped = Math.max(bx, Math.min(bx + bw, el.axes.ox));
         const oyClamped = Math.max(by, Math.min(by + bh, el.axes.oy));
-        g.appendChild(svgEl("line", {{ x1: bx, y1: oyClamped, x2: bx + bw, y2: oyClamped, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
-        g.appendChild(svgEl("line", {{ x1: oxClamped, y1: by + bh, x2: oxClamped, y2: by, stroke: DATA.look.ink_muted, "stroke-width": 2 }}));
+        const xr = el.axes.xr || [0, 1], yr = el.axes.yr || [0, 1];
+        const xSpan = (xr[1] - xr[0]) || 1, ySpan = (yr[1] - yr[0]) || 1;
+        const fmtTick = (v) => {{
+          if (Math.abs(v) < 1e-6) return "0";
+          const av = Math.abs(v);
+          return av >= 10 || Math.abs(v - Math.round(v)) < 1e-3 ? String(Math.round(v * 10) / 10) : v.toFixed(1);
+        }};
+        const nTicks = 4;
+        for (let ti = 0; ti <= nTicks; ti++) {{
+          const tx = bx + (bw * ti) / nTicks;
+          const xVal = xr[0] + (xSpan * ti) / nTicks;
+          if (ti > 0 && ti < nTicks) {{
+            g.appendChild(svgEl("line", {{ x1: tx, y1: by, x2: tx, y2: by + bh, stroke: DATA.look.grid_line, "stroke-width": 1, "stroke-opacity": 0.45, "stroke-dasharray": "3 4" }}));
+          }}
+          g.appendChild(svgEl("line", {{ x1: tx, y1: oyClamped - 4, x2: tx, y2: oyClamped + 4, stroke: DATA.look.ink_muted, "stroke-width": 1.5 }}));
+          const xt = svgEl("text", {{ x: tx, y: by + bh + 20, fill: DATA.look.ink_muted, "font-size": 17, "text-anchor": "middle", "font-variant-numeric": "tabular-nums" }});
+          xt.textContent = fmtTick(xVal);
+          g.appendChild(xt);
+          const ty = by + bh - (bh * ti) / nTicks;
+          const yVal = yr[0] + (ySpan * ti) / nTicks;
+          if (ti > 0 && ti < nTicks) {{
+            g.appendChild(svgEl("line", {{ x1: bx, y1: ty, x2: bx + bw, y2: ty, stroke: DATA.look.grid_line, "stroke-width": 1, "stroke-opacity": 0.45, "stroke-dasharray": "3 4" }}));
+          }}
+          g.appendChild(svgEl("line", {{ x1: oxClamped - 4, y1: ty, x2: oxClamped + 4, y2: ty, stroke: DATA.look.ink_muted, "stroke-width": 1.5 }}));
+          const yt = svgEl("text", {{ x: bx - 8, y: ty + 5, fill: DATA.look.ink_muted, "font-size": 17, "text-anchor": "end", "font-variant-numeric": "tabular-nums" }});
+          yt.textContent = fmtTick(yVal);
+          g.appendChild(yt);
+        }}
+        g.appendChild(svgEl("line", {{ x1: bx, y1: oyClamped, x2: bx + bw, y2: oyClamped, stroke: DATA.look.ink_muted, "stroke-width": 2.2 }}));
+        g.appendChild(svgEl("line", {{ x1: oxClamped, y1: by + bh, x2: oxClamped, y2: by, stroke: DATA.look.ink_muted, "stroke-width": 2.2 }}));
         if (el.x_label) {{
-          const xl = svgEl("text", {{ x: bx + bw - 10, y: by + bh - 8, fill: DATA.look.ink_muted, "font-size": Math.max(16, DATA.typo.body_px - 6), "text-anchor": "end", "font-weight": "600" }});
+          const xl = svgEl("text", {{ x: bx + bw, y: by + bh + 42, fill: DATA.look.ink_primary, "font-size": Math.max(17, DATA.typo.body_px - 6), "text-anchor": "end", "font-weight": "600" }});
           xl.textContent = el.x_label;
           g.appendChild(xl);
         }}
         if (el.y_label) {{
-          const yl = svgEl("text", {{ x: bx + 12, y: by + 22, fill: DATA.look.ink_muted, "font-size": Math.max(16, DATA.typo.body_px - 6), "text-anchor": "start", "font-weight": "600" }});
+          const yl = svgEl("text", {{ x: bx, y: Math.max(18, by - 10), fill: DATA.look.ink_primary, "font-size": Math.max(17, DATA.typo.body_px - 6), "text-anchor": "start", "font-weight": "600" }});
           yl.textContent = el.y_label;
           g.appendChild(yl);
         }}
         if (el.legend_items && el.legend_items.length) {{
           el.legend_items.forEach((li, lIdx) => {{
-            const lx = bx + bw - 14;
-            const ly = by + 22 + lIdx * 24;
-            g.appendChild(svgEl("circle", {{ cx: lx - 8, cy: ly - 5, r: 5, fill: li.color }}));
-            const lt = svgEl("text", {{ x: lx - 18, y: ly, fill: DATA.look.ink_primary, "font-size": Math.max(15, DATA.typo.body_px - 7), "text-anchor": "end", "font-weight": "600" }});
+            const lx = bx + bw - 8;
+            const ly = Math.max(22, by + 20 + lIdx * 26);
+            g.appendChild(svgEl("circle", {{ cx: lx - 8, cy: ly - 5, r: 5.5, fill: li.color }}));
+            const lt = svgEl("text", {{ x: lx - 18, y: ly, fill: DATA.look.ink_primary, "font-size": Math.max(16, DATA.typo.body_px - 7), "text-anchor": "end", "font-weight": "600" }});
             lt.textContent = li.label;
             g.appendChild(lt);
           }});
@@ -271,7 +299,7 @@ def build_runtime_js(payload_json: str) -> str:
         const nVis = swi >= 0 ? activeLine.length : Math.max(2, Math.floor(activeLine.length * p));
         const ptsStr = activeLine.slice(0, nVis).map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
         svgTarget.appendChild(svgEl("polyline", {{
-          points: ptsStr, fill: "none", stroke: el.color, "stroke-width": 4, "stroke-linecap": "round", "stroke-linejoin": "round",
+          points: ptsStr, fill: "none", stroke: el.color, "stroke-width": 4.0, "stroke-linecap": "round", "stroke-linejoin": "round",
           "data-hf-elem": el.id
         }}));
       }} else if ((el.kind === "polygon" || el.kind === "probability_region") && el.polygon && el.polygon.length >= 3) {{
@@ -338,37 +366,54 @@ def build_runtime_js(payload_json: str) -> str:
           : el.mech.body_px;
         const ancPt = el.mech.anchor_px;
         const ck = el.mech.connector || "spring";
-        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
+        const g = svgEl("g", {{ opacity: p, "data-hf-elem": el.id, "data-hf-role": "panel" }});
         const dx = bodyPt[0] - ancPt[0], dy = bodyPt[1] - ancPt[1];
         const distM = Math.hypot(dx, dy) || 1;
+        // Fixed structural wall/ceiling anchor bracket
+        if (ck === "rod") {{
+          g.appendChild(svgEl("line", {{ x1: ancPt[0] - 42, y1: ancPt[1], x2: ancPt[0] + 42, y2: ancPt[1], stroke: DATA.look.ink_primary, "stroke-width": 4.5, "stroke-linecap": "round" }}));
+        }} else {{
+          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1] - 46, x2: ancPt[0], y2: ancPt[1] + 54, stroke: DATA.look.ink_primary, "stroke-width": 4.5, "stroke-linecap": "round" }}));
+          for (let hi = -3; hi <= 3; hi++) {{
+            const hy = ancPt[1] + hi * 14;
+            g.appendChild(svgEl("line", {{ x1: ancPt[0] - 12, y1: hy + 8, x2: ancPt[0], y2: hy, stroke: DATA.look.ink_muted, "stroke-width": 1.6 }}));
+          }}
+        }}
         if (ck === "spring" || ck === "spring_damper") {{
           const ux = dx / distM, uy = dy / distM, nx = -uy, ny = ux;
-          const ptsS = [`${{ancPt[0]}},${{ancPt[1]}}`, `${{(ancPt[0] + dx * 0.1).toFixed(1)}},${{(ancPt[1] + dy * 0.1).toFixed(1)}}`];
-          for (let ci = 0; ci < 8; ci++) {{
-            const tc = 0.12 + 0.76 * (ci + 0.5) / 8;
+          const nCoils = 10;
+          const ptsS = [`${{ancPt[0]}},${{ancPt[1]}}`, `${{(ancPt[0] + dx * 0.08).toFixed(1)}},${{(ancPt[1] + dy * 0.08).toFixed(1)}}`];
+          for (let ci = 0; ci < nCoils; ci++) {{
+            const tc = 0.10 + 0.80 * (ci + 0.5) / nCoils;
             const sgn = ci % 2 === 0 ? 1 : -1;
-            ptsS.push(`${{(ancPt[0] + dx * tc + nx * sgn * 14).toFixed(1)}},${{(ancPt[1] + dy * tc + ny * sgn * 14).toFixed(1)}}`);
+            ptsS.push(`${{(ancPt[0] + dx * tc + nx * sgn * 18).toFixed(1)}},${{(ancPt[1] + dy * tc + ny * sgn * 18).toFixed(1)}}`);
           }}
-          ptsS.push(`${{(ancPt[0] + dx * 0.9).toFixed(1)}},${{(ancPt[1] + dy * 0.9).toFixed(1)}}`, `${{bodyPt[0]}},${{bodyPt[1]}}`);
-          g.appendChild(svgEl("polyline", {{ points: ptsS.join(" "), fill: "none", stroke: DATA.look.ink_muted, "stroke-width": 3 }}));
+          ptsS.push(`${{(ancPt[0] + dx * 0.92).toFixed(1)}},${{(ancPt[1] + dy * 0.92).toFixed(1)}}`, `${{bodyPt[0]}},${{bodyPt[1]}}`);
+          g.appendChild(svgEl("polyline", {{ points: ptsS.join(" "), fill: "none", stroke: DATA.look.ink_muted, "stroke-width": 3.4, "stroke-linejoin": "round" }}));
         }}
         if (ck === "damper" || ck === "spring_damper") {{
-          const offY = ck === "spring_damper" ? 22 : 0;
-          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1] + offY, x2: bodyPt[0], y2: bodyPt[1] + offY, stroke: DATA.look.accent_secondary, "stroke-width": 3, "stroke-dasharray": "6 4" }}));
+          const offY = ck === "spring_damper" ? 30 : 0;
+          const midX = ancPt[0] + dx * 0.50;
+          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1] + offY, x2: midX, y2: ancPt[1] + offY + dy * 0.50, stroke: DATA.look.accent_secondary, "stroke-width": 3.2 }}));
+          g.appendChild(svgEl("rect", {{ x: midX - 20, y: ancPt[1] + offY + dy * 0.50 - 11, width: 40, height: 22, rx: 4, fill: DATA.look.surface, stroke: DATA.look.accent_secondary, "stroke-width": 2.6 }}));
+          g.appendChild(svgEl("line", {{ x1: midX, y1: ancPt[1] + offY + dy * 0.50, x2: bodyPt[0], y2: bodyPt[1] + offY, stroke: DATA.look.accent_secondary, "stroke-width": 3.0 }}));
         }}
         if (ck === "rod") {{
-          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1], x2: bodyPt[0], y2: bodyPt[1], stroke: DATA.look.ink_primary, "stroke-width": 3 }}));
+          g.appendChild(svgEl("line", {{ x1: ancPt[0], y1: ancPt[1], x2: bodyPt[0], y2: bodyPt[1], stroke: DATA.look.ink_primary, "stroke-width": 3.4 }}));
         }}
-        g.appendChild(svgEl("circle", {{ cx: ancPt[0], cy: ancPt[1], r: 7, fill: DATA.look.ink_muted }}));
+        g.appendChild(svgEl("circle", {{ cx: ancPt[0], cy: ancPt[1], r: 7, fill: DATA.look.ink_primary }}));
         if (ck === "rod") {{
-          g.appendChild(svgEl("circle", {{ cx: bodyPt[0], cy: bodyPt[1], r: 24, fill: el.color, stroke: DATA.look.ground, "stroke-width": 2.5 }}));
+          g.appendChild(svgEl("circle", {{ cx: bodyPt[0], cy: bodyPt[1], r: 30, fill: el.color, stroke: DATA.look.ground, "stroke-width": 3 }}));
         }} else {{
-          g.appendChild(svgEl("rect", {{ x: bodyPt[0] - 26, y: bodyPt[1] - 24, width: 52, height: 48, rx: 8, fill: el.color, stroke: DATA.look.ground, "stroke-width": 2.5 }}));
+          g.appendChild(svgEl("rect", {{ x: bodyPt[0] - 36, y: bodyPt[1] - 32, width: 72, height: 64, rx: 10, fill: el.color, stroke: DATA.look.ground, "stroke-width": 3 }}));
         }}
-        if (el.label) {{
-          const lb = svgEl("text", {{ x: bodyPt[0], y: bodyPt[1] + 6, fill: DATA.look.ground, "font-size": 18, "font-weight": "700", "text-anchor": "middle" }});
-          lb.textContent = el.label.slice(0, 8);
-          g.appendChild(lb);
+        const massTxt = svgEl("text", {{ x: bodyPt[0], y: bodyPt[1] + 7, fill: DATA.look.ground, "font-size": 21, "font-weight": "700", "text-anchor": "middle" }});
+        massTxt.textContent = (el.label || "m").slice(0, 8);
+        g.appendChild(massTxt);
+        if (swiM >= 0 && el.sweep_frames_px[swiM] && el.sweep_frames_px[swiM].label) {{
+          const rd = svgEl("text", {{ x: bodyPt[0], y: bodyPt[1] + 54, fill: DATA.look.ink_primary, "font-size": 17, "font-weight": "600", "text-anchor": "middle", "font-variant-numeric": "tabular-nums" }});
+          rd.textContent = el.sweep_frames_px[swiM].label.split("|").pop().trim();
+          g.appendChild(rd);
         }}
         svgTarget.appendChild(g);
       }} else if (el.kind === "graph_network" && el.network) {{
@@ -426,6 +471,12 @@ def build_runtime_js(payload_json: str) -> str:
         }}
         card.appendChild(inner);
         overlay.appendChild(card);
+        const availW = Math.max(200, (DATA.eq_box ? DATA.eq_box[2] : DATA.width * 0.85) - 32);
+        const rectInner = inner.getBoundingClientRect();
+        if (rectInner.width > availW) {{
+          const sEq = Math.max(0.55, availW / rectInner.width);
+          inner.style.transform = `scale(${{sEq.toFixed(3)}})`;
+        }}
       }} else if (el.kind === "matrix" && el.matrix) {{
         const mat = document.createElement("div");
         mat.className = "hf-matrix";
@@ -467,9 +518,22 @@ def build_runtime_js(payload_json: str) -> str:
         const annLabel = (swi >= 0 && el.sweep_frames_px[swi] && el.sweep_frames_px[swi].label)
           ? el.sweep_frames_px[swi].label
           : (el.text || el.label);
-        const txt = svgEl("text", {{ x: el.text_pos[0], y: el.text_pos[1], fill: el.color, "font-size": DATA.typo.body_px, "font-weight": "700", "text-anchor": "middle", opacity: p, "data-hf-elem": el.id }});
-        txt.textContent = annLabel;
-        svgTarget.appendChild(txt);
+        const isReadout = annLabel.includes("=") || annLabel.includes("|");
+        const fsAnn = isReadout ? Math.max(20, DATA.typo.body_px - 3) : DATA.typo.body_px;
+        if (isReadout) {{
+          const rw = Math.min(DATA.width * 0.42, Math.max(220, annLabel.length * fsAnn * 0.56 + 28));
+          const rh = fsAnn * 1.65;
+          const gAnn = svgEl("g", {{ opacity: p, "data-hf-elem": el.id }});
+          gAnn.appendChild(svgEl("rect", {{ x: el.text_pos[0] - rw * 0.5, y: el.text_pos[1] - rh * 0.68, width: rw, height: rh, rx: 8, fill: DATA.look.surface, stroke: DATA.look.surface_border, "stroke-width": 1.2 }}));
+          const txt = svgEl("text", {{ x: el.text_pos[0], y: el.text_pos[1], fill: el.color, "font-size": fsAnn, "font-weight": "600", "text-anchor": "middle", "font-variant-numeric": "tabular-nums" }});
+          txt.textContent = annLabel;
+          gAnn.appendChild(txt);
+          svgTarget.appendChild(gAnn);
+        }} else {{
+          const txt = svgEl("text", {{ x: el.text_pos[0], y: el.text_pos[1], fill: el.color, "font-size": fsAnn, "font-weight": "700", "text-anchor": "middle", opacity: p, "data-hf-elem": el.id }});
+          txt.textContent = annLabel;
+          svgTarget.appendChild(txt);
+        }}
       }}
     }}
   }}

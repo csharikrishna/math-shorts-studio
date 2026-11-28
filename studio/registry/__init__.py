@@ -59,13 +59,16 @@ def select_scene_backend(scene: object, requested: str = "auto") -> str:
     objs = getattr(scene, "objects", [])
     kinds = [str(getattr(o, "kind", "")) for o in objs]
     constructions = [str(getattr(c, "op", "")) for c in getattr(scene, "constructions", [])]
-    # ManimGX owns heavy geometric dissections, parametric morphisms, and Typst multi-line LaTeX
-    if any(k in ("angle_arc", "projection", "parametric_curve") for k in kinds):
+    # ManimGX owns heavy geometric dissections, vector fields, parametric morphisms, and Typst LaTeX
+    if any(k in ("angle_arc", "projection", "parametric_curve", "vector_field") for k in kinds):
         return "manimgx"
-    if any("pythagorean" in c or "rotate" in c or "triangle" in c or "ode" in c for c in constructions):
+    if any("pythagorean" in c or "rotate" in c or "triangle" in c for c in constructions):
         return "manimgx"
-    # HyperFrames excels cleanly on editorial tables, bar charts, network graphs, and clean UI typography
-    if any(k in ("table", "bar_chart", "graph_network") for k in kinds) and "axes" not in kinds:
+    # HyperFrames excels cleanly on editorial tables, bar charts, network graphs, time-series comparisons, and crisp numeric ticks
+    if any(k in ("table", "bar_chart", "graph_network") for k in kinds) or (
+        getattr(scene, "composition", "") in ("dual_time_series", "before_after_simulation", "time_frequency_split", "model_with_readout")
+        and "parametric_curve" not in kinds
+    ):
         return "hyperframes"
     return "manimgx"
 

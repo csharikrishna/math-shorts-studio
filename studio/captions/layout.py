@@ -35,7 +35,9 @@ _CAPTION_STOPWORDS = _ORPHAN_TAILS | {
     "around", "together", "another", "different", "higher", "lower", "larger", "smaller", "moving",
     "turning", "pulling", "scatter", "scattered", "exact", "exactly", "visually", "understand",
     "means", "shows", "builds", "creates", "becomes", "starts", "ends", "introduces", "introduce",
-    "explains", "explain", "keeps", "remains", "stays", "eventually", "actually", "really", "simply",
+    "explains", "explain", "keeps", "remains", "stays", "actually", "really",
+    "rely", "relies", "consumed", "consumes", "increases", "decreases", "grows", "shrinks",
+    "portrait", "simple", "single", "together", "combined", "instead", "tracking", "mapping",
 }
 _SOFT_BREAK_BEFORE = {
     "and", "or", "but", "so", "because", "while", "where", "when", "then", "which", "that", "unless", "whereas",
@@ -47,6 +49,7 @@ _CONCEPT_STEMS = (
     "oscill", "frequ", "amplit", "phase", "energy", "critic", "overdamp", "underdamp",
     "equilib", "traject", "potenti", "kinetic", "harmonic", "forc", "velocit", "displace",
     "inerti", "spring", "stiff", "laplac", "jacob", "linear", "curvat", "gradient",
+    "predator", "prey", "hamilton", "conserved", "period", "nullcline", "saddle",
 )
 
 

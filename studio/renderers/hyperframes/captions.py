@@ -17,8 +17,7 @@ def build_hyperframes_captions(
 ) -> tuple[CaptionIR, str, list[dict[str, Any]]]:
     """Build or consume precompiled CaptionIR and serialize identical cue payload cleanly."""
     sz = design.safe_zone
-    default_cap = "kinetic" if sz.aspect_label == "9:16" else "editorial"
-    cap_style = normalize_caption_style(caption_style, default=default_cap)
+    cap_style = normalize_caption_style(caption_style, default="editorial")
     cap_ir = caption_ir if caption_ir is not None else build_caption_ir(
         synced_beats,
         style=cap_style,
