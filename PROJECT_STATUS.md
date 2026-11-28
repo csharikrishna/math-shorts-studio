@@ -1,4 +1,24 @@
-# Math Shorts Studio — Project Status (V4.0 Simulation-Driven Educational Filmmaking)
+# Math Shorts Studio — Project Status (V4.1 Visual Intelligence, Adaptive Cinematography & Educational Quality)
+
+## V4.1 Implemented & Verified
+- **Confirmed Mathematical Reliability Fixes & Typed Constraints (`studio/ai/simulation.py`, `studio/ai/linked_models.py`, `studio/ai/validate_v3.py`, `studio/ai/v3_schema.py`)**
+  - Replaced misleading step-doubling label with true Cash–Karp adaptive Runge–Kutta 4(5) (`"rk45"`) vs explicit `"rk4_adaptive"`, enforced error tolerance rejection when `h <= min_h`, flagged undamped resonance singularities (`peak_gain=None`) cleanly instead of inventing finite amplitudes, removed silent damped-oscillator fallbacks and default `initial_state` padding, added explicit mass/force/unit metadata, supported `"energy"` / `"mechanical_energy"` derived aliases, and enforced `verify_v3_plan_detailed()` / `math_truth` checks across 8 typed constraints (`state_bounds`, `positivity`, `conservation_law`, `energy_dissipation`, `periodicity`, `numerical_accuracy`, `parameter_validity`, `physical_units`).
+  - Rejects hollow `trace` operations whose target object has no time/parameter curve geometry.
+- **Beat-Level Visual Intelligence & Linked Scientific Compositions (`studio/ai/visual_intelligence.py`, `studio/registry/compositions.py`, `studio/repair.py`, `studio/layout/solver.py`, `studio/ai/world_model.py`)**
+  - Implemented beat-level `VisualBeatDecision` reasoning (`plan_beat_visuals`) connected directly to layout composition, mathematical bindings, and scene animations across 6 registered linked compositions (`physical_system_displacement_graph`, `physical_system_phase_diagram`, `synchronized_time_series`, `parameter_sweep_response`, `state_conservation_view`, `multi_view_dashboard`).
+  - Added general layout and visual repair (`repair_plan_scenes`, disjoint `0.465`/`0.535` horizontal panel splitting via `fit_axes_pixel_box`, flat conserved-invariant `H(x,y)` `is_flat_invariant` y-range expansion, `"sweep"` & `"conserved_invariant"` bindings, carried-panel slot assignment, nonlinear equilibrium IC offsetting in `ode_phase_trajectory` + `math_models`, bare-axes curve injection, static point/body linking, and clean `editorial`/`minimal` phrase emphasis captions).
+- **Content-Aware QA, Cross-Renderer Metadata Parity & Manifest SHA Binding (`studio/qa/frames.py`, `studio/qa/engine.py`, `studio/provenance.py`, `studio/renderers/hybrid.py`, `studio/renderers/hyperframes/compiler.py`, `scenes/v3_scene.py`)**
+  - Upgraded `frames.py` to inspect interior axes primary-content coverage (catching visually empty coordinate axes despite border tick ink), chapter-scoped `(ch_pref, ax_id)` data-clipping checks, and independent-panel overlaps while exempting parent–child `axes_id` overlays.
+  - Fixed `hybrid.py` `seg_{idx:02d}_{backend}` scene-frame metadata merging, `hyperframes/compiler.py` `.hf-eq-card` top-clipping + inherited axis cleanup on `remove`, ManimGX portrait tick readability (`24px`), `math.ceil(0.65 * total_dyn)` dynamic scene coverage threshold in `audit_educational_quality()`, and cryptographic `qa_report_sha256` manifest binding (`inspect_manifest_verification`).
+- **Benchmark Improvement & Regression Suite (`tests/test_v41.py`, `docs/BENCHMARK_REPORT.md`)**
+  - **Representative Light/Dark Render Suite (`build/v41_exp1/`):** `osc_hf_light` (`100.0/100`), `osc_mgx_dark` (`100.0/100`), `lv_hf_dark` (`94.0/100`), `lv_mgx_light` (`94.0/100`), all `-15.1` to `-15.7 LUFS`, `60 fps`, `48000 Hz`, `drift=0.00 s`.
+  - **Harmonic Oscillator Documentary (`editorial_light`, `hybrid`, `16` scenes):** Upgraded from V4.0 `72.0/100` (`review_required`) to **`88.0/100` (`publication_approved`, `approved=True`, `edge_clips=0`, `empty_mids=0`, `overlaps=0`, `data_clips=0`, `production_certified=True`)**; derived `9:16` Short **`100.0/100` (`publication_approved`)**.
+  - **Lotka–Volterra Documentary (`midnight_studio`, `hybrid`, `14` scenes):** Upgraded from V4.0 `78.0/100` (`review_required`) to **`100.0/100` (`publication_approved`, `approved=True`, `0` blockers, `0` warnings, `3.45x` warm-cache speedup `69.80 s -> 20.26 s`, `production_certified=True`)**; derived `9:16` Short **`94.0/100` (`publication_approved`)**.
+  - **Test Suite:** **97 tests passing** (`tests/test_v41.py` + `test_v40.py` + `test_v39.py` + `test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
+
+---
+
+# Prior Baseline: Math Shorts Studio — Project Status (V4.0 Simulation-Driven Educational Filmmaking)
 
 ## V4.0 Implemented & Verified
 - **Kokoro Trailing-Bookmark Caption Integrity & Strict Semantic Highlighting (`studio/audio/tts.py`, `studio/captions/layout.py`)**

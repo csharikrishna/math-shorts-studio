@@ -1,6 +1,6 @@
 # Math Shorts Studio
 
-An autonomous educational mathematics & physics video engine (**V4.0**): **ConceptAnalysis -> CreativeBrief -> authoritative locked `ScriptIR` -> general `simulation.py` ODE/spectral/recurrence solvers & `LinkedMathModelSpec` -> ManimGX GPU / HyperFrames Chromium CDP + offline KaTeX `0.19.1` / Hybrid rendering -> Kokoro-82M word-aligned semantic `CaptionIR` (`editorial`/`kinetic`/`minimal`/`dialogue`/`accessible`/`off`) -> EBU R128 mastering -> certified `ProductionManifest` & multi-scene dynamic QA**, in `9:16` Shorts or `16:9` documentaries.
+An autonomous educational mathematics & physics video engine (**V4.1**): **ConceptAnalysis -> CreativeBrief -> authoritative locked `ScriptIR` -> beat-level `visual_intelligence.py` & linked compositions -> strict `simulation.py` Cash-Karp RK45 ODE/spectral/recurrence solvers & typed mathematical constraints -> ManimGX GPU / HyperFrames Chromium CDP + offline KaTeX `0.19.1` / Hybrid rendering -> Kokoro-82M word-aligned semantic `CaptionIR` -> EBU R128 mastering -> SHA-256 `qa_report_sha256` certified `ProductionManifest` & content-aware frame QA**, in `9:16` Shorts or `16:9` documentaries.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ The Gemini key is read from `GEMINI_API_KEY` (or `gemini_api`) in the environmen
 | `--topic` | A field ("Number Theory") gets a concept slate scored for surprise × visual fit; a specific topic goes straight to scripting. |
 | `--prompt` | An explicit concept to script and stage. |
 | `--plan PATH` | Render a saved `ShortPlan` JSON. AI runs save theirs to `plans/`. |
-| `--model` | Gemini model. Default: `$GEMINI_MODEL`, then `gemini-3.5-flash-lite` → `3.1-flash-lite` → `3.5-flash` → `3.8-flash`. Lite models come first because they answer in seconds while the flagship models are often overloaded. Gemini 2.x/1.5 return 404 for new API keys. |
+| `--model` | Gemini model. Default: `$GEMINI_MODEL`, then `gemini-3.1-flash-lite` → `3.5-flash-lite` → `3.5-flash` → `3.8-flash` → `gemini-4-hydrogen` → `gemma-4-31b-it` → `gemma-4-26b-a4b-it`. Daily-exhausted (`429`) models are skipped cleanly without long retry stalls. |
 | `--format` | `shorts_hd` (1080×1920@60), `shorts_fast` (720×1280@30), `widescreen_hd` (1920×1080@60), `widescreen_fast` (1280×720@30). |
 | `--theme` | `light`, `dark`, `midnight_studio`, `obsidian_chalk`, `cartesian_stone`, `editorial_paper` (`--look-theme` alias; WCAG AA validated). |
 | `--caption-style` | `editorial`, `kinetic`, `minimal`, `dialogue`, `accessible`, `off` (unified `CaptionIR` across ASS/SRT/VTT, ManimGX, and HyperFrames). |

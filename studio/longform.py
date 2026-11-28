@@ -453,6 +453,14 @@ def create_longform_plan(
                 b = b.model_copy(deep=True, update={"scene_id": sc_id, "beat_id": f"{b.chapter_id}__{sc_id}"})
             normalized_beats.append(b)
         doc_script.beats = normalized_beats
+        if doc_script.locked:
+            # Record post-repair beat normalization as a distinct unapproved revision before re-locking.
+            commit_script_revision(
+                doc_script,
+                stage="editorial_repair",
+                notes="Normalized beat boundaries and unique beat_ids prior to final approval",
+                approve=False,
+            )
         approve_script_ir(doc_script, notes="Global ScriptIR approved and permanently locked prior to scene compilation")
         script_cache_file.write_text(doc_script.model_dump_json(indent=2), encoding="utf-8")
 

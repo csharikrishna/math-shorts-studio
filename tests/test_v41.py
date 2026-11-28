@@ -422,6 +422,39 @@ class TestV41ReliabilityAndVisualIntelligence(unittest.TestCase):
         self.assertIn("data-hf-role", html_str)
         self.assertIn("data-hf-elem", html_str)
 
+    def test_08_post_repair_script_ir_normalization_reapproval(self) -> None:
+        from studio.creative.script_ir import NarrationBeatIR, ScriptIR, approve_script_ir, commit_script_revision
+
+        script = ScriptIR(
+            topic="Pendulum",
+            title="Pendulum",
+            beats=[
+                NarrationBeatIR(
+                    beat_id="c1__s1",
+                    scene_id="s1",
+                    chapter_id="c1",
+                    spoken_text="Why does friction eventually trap every swinging pendulum inside a spiral basin?",
+                    educational_purpose="Hook the core attractor mechanism",
+                    visual_intent="Show damped pendulum trajectory spiraling inward.",
+                )
+            ],
+        )
+        approve_script_ir(script, notes="Repair pass lock")
+        self.assertTrue(script.locked)
+
+        # Simulate post-repair beat normalization modifying scene_id/beat_id before final lock
+        script.beats = [
+            script.beats[0].model_copy(
+                deep=True,
+                update={"scene_id": "s1_p1", "beat_id": "c1__s1_p1"},
+            )
+        ]
+        if script.locked:
+            commit_script_revision(script, stage="editorial_repair", notes="Normalized beat boundaries", approve=False)
+        approve_script_ir(script, notes="Final global lock")
+        self.assertTrue(script.locked)
+        self.assertEqual(script.approved_revision, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

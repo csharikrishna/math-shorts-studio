@@ -154,3 +154,27 @@ Topic generated completely autonomously with zero core edits for the topic: `"Lo
 | --- | --- | --- | --- | --- |
 | **Derived Portrait Short** | `manimgx` / `midnight_studio` / `kinetic` (`SHORT_lotka_volterra_predator_prey_oscillations_and_ph_shorts_hd.mp4`) | `37.40 s` (`2,071,459 B`, `3` sc) | `50.203 s` (`4.903 s` QA) / `1924.12 MB` | `1080x1920 @ 60 fps`, `-15.1 LUFS`, `-2.5 dBFS`, `drift=0.00 s`, `15` frames (`edge_clips=0`, `empty_mids=0`), `84` TTS words (`15` cues), `det_verified=3`, `num_tested=2`; **`94.0/100`** (`publication_approved`, `certified=True`) |
 | **Full Documentary** | `hybrid` / `midnight_studio` / `editorial` (`LF_lotka_volterra_predator_prey_oscillations_and_ph_widescreen_hd.mp4`) | `185.32 s` vs `180.0 s` (`+2.9%`, `6,571,762 B`, `14` sc) | `269.622 s` cold (`108.27s` TTS, `134.91s` render, `6.30s` asm, `19.77s` QA) -> **`26.155 s`** warm (**`10.3x`**) / `4349.17 MB` | `1920x1080 @ 60 fps`, `-15.1 LUFS`, `-1.9 dBFS`, `drift=0.00 s`, `49` frames (`14/14` scenes, `edge_clips=0`, `empty_mids=0`, `median_stage_w=70.1%`), `411` TTS words (`61` cues), `animated_scenes=10/14`, `det_verified=10`, `num_tested=9`, `unsupported=0`, `failed=0`; **`78.0/100`** (`review_required` — `c3__scene_2` low pixel delta warning) |
+
+---
+
+## 9. V4.1 Visual Intelligence, Linked Compositions & Reliability Benchmarks
+
+All V4.1 full documentaries and derived portrait Shorts below were built on clean commit `77709f3865e48c631d02705a3f8c2abb328abe3c` (`git_dirty=False`, `qa_report_sha256` verified) on the same local Windows workstation (`h264_nvenc`, Kokoro-82M CPU TTS, offline Chromium CDP + vendored KaTeX `0.19.1`, `production_certified=True`).
+
+### A. Representative Multi-Component Light/Dark Experiments (`build/v41_exp1/`)
+
+| Artifact | Backend / Theme / Duration | File Size | Loudness & Sync | QA Outcome & Visual Inspection |
+| --- | --- | --- | --- | --- |
+| `osc_hf_light.mp4` | `hyperframes` / `light` / `14.90 s` | `935,860 B` | `-15.7 LUFS`, `-2.8 dBFS`, `drift=0.00 s` | **`100.0/100`** (`publication_approved`, `0` blockers, `0` warnings, `edge_clips=0`, `empty_mids=0`, `overlaps=0`, `data_clips=0`) |
+| `osc_mgx_dark.mp4` | `manimgx` / `midnight_studio` / `14.90 s` | `829,335 B` | `-15.2 LUFS`, `-2.2 dBFS`, `drift=0.00 s` | **`100.0/100`** (`publication_approved`, `0` blockers, `0` warnings) |
+| `lv_hf_dark.mp4` | `hyperframes` / `midnight_studio` / `18.50 s` | `956,218 B` | `-15.6 LUFS`, `-2.8 dBFS`, `drift=0.00 s` | **`94.0/100`** (`publication_approved`, closed orbit + vector field + flat `H(x,y)` invariant verified visually) |
+| `lv_mgx_light.mp4` | `manimgx` / `light` / `18.60 s` | `1,041,370 B` | `-15.1 LUFS`, `-2.8 dBFS`, `drift=0.00 s` | **`94.0/100`** (`publication_approved`, `layout: no problems in 4 samples`) |
+
+### B. V4.1 Regenerated Harmonic Oscillator & Lotka–Volterra Documentaries + Shorts (Before vs. After vs. V4.0 Baseline)
+
+| Deliverable | Configuration & Output | Duration & Size | Wall Time (Cold -> Warm) | Content-Aware QA & Verified Improvement |
+| --- | --- | --- | --- | --- |
+| **Harmonic Oscillator Documentary** | `hybrid` / `editorial_light` / `editorial` (`LF_damped_harmonic_oscillators_resonance_curves_and_widescreen_hd.mp4`) | `272.12 s` (`9,924,566 B`, `7` ch, `16` sc) | `113.008 s` | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.1 LUFS`, `-2.2 dBFS`, `drift=0.00 s`, `51` frames (`16/16` sc), `edge_clips=0`, `empty_mids=0`, `overlaps=0`, `data_clips=0`, `94` cues (`585` words), `det_verified=14`, `num_tested=15`; **`88.0/100`** (`publication_approved`, up from V4.0 **`72.0/100`**; honest `+13.4%` duration advisory & `2` motion warnings retained) |
+| **Harmonic Oscillator Short** | `manimgx` / `editorial_light` / `editorial` (`SHORT_damped_harmonic_oscillators_resonance_curves_and_shorts_hd.mp4`) | `40.00 s` (`1,650,975 B`) | `15.553 s` | `1080x1920 @ 60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.5 dBFS`, `drift=0.00 s`; **`100.0/100`** (`publication_approved`, `certified=True`) |
+| **Lotka–Volterra Documentary** | `hybrid` / `midnight_studio` / `editorial` (`LF_lotka_volterra_predator_prey_oscillations_and_ph_widescreen_hd.mp4`) | `185.32 s` (`6,818,663 B`, `5` ch, `14` sc) | `69.801 s` cold -> **`20.257 s`** warm (**`3.45x`**) | `1920x1080 @ 60.00 fps`, `48000 Hz`, `-15.1 LUFS`, `-1.9 dBFS`, `drift=0.00 s`, `49` frames (`14/14` sc), `edge_clips=0`, `empty_mids=0`, `overlaps=0`, `data_clips=0`, `dynamic_gaps=0/8`, `61` cues (`411` words), `det_verified=10`, `num_tested=9`; **`100.0/100`** (`publication_approved`, `0` blockers, `0` warnings, up from V4.0 **`78.0/100`**; fixed `[15,5]` empty-orbit & `[83s]` panel-overlap failures visually verified on contact sheet) |
+| **Lotka–Volterra Short** | `manimgx` / `midnight_studio` / `editorial` (`SHORT_lotka_volterra_predator_prey_oscillations_and_ph_shorts_hd.mp4`) | `37.40 s` (`1,534,156 B`) | `17.764 s` | `1080x1920 @ 60.00 fps`, `48000 Hz`, `-15.2 LUFS`, `-2.5 dBFS`, `drift=0.00 s`; **`94.0/100`** (`publication_approved`, `certified=True`) |
