@@ -790,7 +790,13 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                             verified_claims.append(f"{where}: conservation_law(drift={rel_drift:.2e})")
                 elif cl.kind == "energy_dissipation":
                     derived_m = dict(m_data.get("derived") or {})
-                    e_seq = list(derived_m.get("total_energy") or [])
+                    e_seq = list(
+                        derived_m.get("total_energy")
+                        or derived_m.get("energy")
+                        or derived_m.get("mechanical_energy")
+                        or (derived_m.get(cl.state_var) if cl.state_var else None)
+                        or []
+                    )
                     if not e_seq and cl.expr:
                         from studio.ai.simulation import evaluate_derived_observables, SimulationResult
 

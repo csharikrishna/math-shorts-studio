@@ -550,7 +550,12 @@ def create_longform_plan(
                 })
             if ch_beats:
                 lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
+            from studio.repair import repair_scene_deterministically
+
             for r_idx in range(1, MAX_REPAIRS + 1):
+                ch_plan, _ = repair_scene_deterministically(ch_plan)
+                if ch_beats:
+                    lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
                 from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
 
                 det_r = _v3_det(ch_plan, require_claims=True)
@@ -568,7 +573,7 @@ def create_longform_plan(
                     "Fix EVERY listed VideoPlanV3 validation issue strictly WITHOUT altering scene_id or spoken narration:\n- "
                     + "\n- ".join(issues)
                     + "\nRULES WHEN FIXING:\n"
-                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; for energy dissipation use `energy_dissipation` (or set explicit `state_var` matching `state_vars`/`derived_exprs`), for conservation use `conservation_law`, for positive states use `positivity`, and for oscillatory `x`/`v` bounds use symmetric negative-to-positive `lower_bound`/`upper_bound` (never `lower_bound=0.0` on a sign-changing oscillator state!).\n"
+                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; for energy dissipation use `energy_dissipation` ONLY on models with positive damping and explicit `derived_exprs={'total_energy': '...'}` or explicit `mass`+`stiffness` (if the model is undamped/conservative, use `conservation_law` instead!); for positive states use `positivity`; and for oscillatory `x`/`v` bounds use symmetric negative-to-positive `lower_bound`/`upper_bound` (never `lower_bound=0.0` on a sign-changing oscillator state!).\n"
                     "- For `ode_equilibrium`, `(x_val, expected_value)` MUST be a true fixed point where BOTH `dx_expr == 0` and `dy_expr == 0` (e.g. `(0, 0)` or nontrivial interior root); for oscillating/non-equilibrium states, use `simulation_trajectory_bounds` instead.\n"
                     "- Never redeclare a persistent object ID from an earlier scene without a preceding `remove`, and never animate an object before its `create` event.\n"
                     "- For `markov_stochastic_invariant`, reference a `matrix` or `bar_chart` in `object_ids` whose entries verify row sums = 1.0 and invariant stationary distribution.\n"
@@ -612,11 +617,16 @@ def create_longform_plan(
         return idx, mat
 
     llm_workers = max(1, min(len(lf_plan.chapters), int(os.environ.get("STUDIO_LLM_WORKERS", "1"))))
-    with ThreadPoolExecutor(max_workers=llm_workers) as pool:
+    pool = ThreadPoolExecutor(max_workers=llm_workers)
+    try:
         futs = [pool.submit(_compile_chapter_from_script, idx, ch) for idx, ch in enumerate(lf_plan.chapters, 1)]
         for fut in as_completed(futs):
             c_idx, mat = fut.result()
             ordered_plans[c_idx - 1] = mat
+        pool.shutdown(wait=True)
+    except Exception:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
 
     chapter_plans: list[VideoPlanV3] = [cp for cp in ordered_plans if cp is not None]
     _atomic_write_json(logs_dir / "longform_plan_final.json", lf_plan.model_dump())

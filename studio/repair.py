@@ -175,7 +175,16 @@ def repair_scene_deterministically(
 
         # Link any unlinked static point targeted by trace/animate_param to a curve/model if available
         scene_curves = [o for o in sc.objects if o.kind in ("data_series", "parametric_curve") and o.model_id]
+        scene_ids = {o.id for o in sc.objects}
         for ev in sc.events:
+            if ev.target_id not in scene_ids and ev.target_id in models_by_id:
+                bound = next(
+                    (o for o in sc.objects if o.model_id == ev.target_id and o.kind in ("mechanical_body", "point", "data_series")),
+                    next((o for o in sc.objects if o.model_id == ev.target_id), None),
+                )
+                if bound is not None:
+                    notes.append(f"{sc.scene_id}: remapped event target model_id '{ev.target_id}' -> object '{bound.id}'")
+                    ev.target_id = bound.id
             if ev.op in ("trace", "animate_param"):
                 tgt = next((o for o in sc.objects if o.id == ev.target_id), None)
                 if tgt is not None and tgt.kind == "point" and not (tgt.model_id and tgt.model_output):
