@@ -553,9 +553,12 @@ def create_longform_plan(
             from studio.repair import repair_scene_deterministically
 
             for r_idx in range(1, MAX_REPAIRS + 1):
-                ch_plan, _ = repair_scene_deterministically(ch_plan)
-                if ch_beats:
-                    lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
+                try:
+                    ch_plan, _ = repair_scene_deterministically(ch_plan)
+                    if ch_beats:
+                        lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
+                except Exception:
+                    pass
                 from studio.ai.validate_v3 import verify_v3_plan_detailed as _v3_det
 
                 det_r = _v3_det(ch_plan, require_claims=True)
