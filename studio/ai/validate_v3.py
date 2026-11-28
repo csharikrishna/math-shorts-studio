@@ -703,12 +703,16 @@ def verify_v3_plan_detailed(plan: VideoPlanV3, require_claims: bool = False) -> 
                     else:
                         s_vars_m = list(m_data.get("state_vars") or [])
                         states_m = list(m_data.get("states") or [])
-                        col_idx = 0
-                        if cl.state_var and cl.state_var in s_vars_m:
-                            col_idx = s_vars_m.index(cl.state_var)
-                        series = [float(st[col_idx]) for st in states_m if len(st) > col_idx] if states_m else [float(p[min(1, len(p) - 1)]) for p in pts_l]
-                        lo_b = cl.lower_bound if cl.lower_bound is not None else cl.a_bound
-                        hi_b = cl.upper_bound if cl.upper_bound is not None else cl.b_bound
+                        derived_m = dict(m_data.get("derived") or {})
+                        if cl.state_var and cl.state_var in derived_m and derived_m[cl.state_var]:
+                            series = [float(v) for v in derived_m[cl.state_var]]
+                        else:
+                            col_idx = 0
+                            if cl.state_var and cl.state_var in s_vars_m:
+                                col_idx = s_vars_m.index(cl.state_var)
+                            series = [float(st[col_idx]) for st in states_m if len(st) > col_idx] if states_m else [float(p[min(1, len(p) - 1)]) for p in pts_l]
+                        lo_b = cl.lower_bound if cl.lower_bound is not None else (cl.a_bound if cl.kind == "state_bounds" else None)
+                        hi_b = cl.upper_bound if cl.upper_bound is not None else (cl.b_bound if cl.kind == "state_bounds" else None)
                         mn_v, mx_v = min(series), max(series)
                         span_v = max(abs(st[i] - states_m[0][i]) for st in states_m for i in range(len(st))) if states_m else (mx_v - mn_v)
                         if cl.kind == "state_bounds" and lo_b is None and hi_b is None:

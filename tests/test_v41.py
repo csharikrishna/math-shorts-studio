@@ -174,6 +174,7 @@ class TestV41ReliabilityAndVisualIntelligence(unittest.TestCase):
                     claims=[
                         StructuredClaim(kind="positivity", model_id="lv", state_var="x"),
                         StructuredClaim(kind="state_bounds", model_id="lv", state_var="x", lower_bound=1.0, upper_bound=60.0),
+                        StructuredClaim(kind="state_bounds", model_id="lv", state_var="conserved_invariant", lower_bound=-5.0, upper_bound=5.0),
                         StructuredClaim(kind="conservation_law", model_id="lv", expected_value=0.05),
                         StructuredClaim(kind="physical_units", model_id="lv", units={"x": "prey", "y": "predators"}),
                     ],

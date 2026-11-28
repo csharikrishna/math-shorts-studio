@@ -568,7 +568,7 @@ def create_longform_plan(
                     "Fix EVERY listed VideoPlanV3 validation issue strictly WITHOUT altering scene_id or spoken narration:\n- "
                     + "\n- ".join(issues)
                     + "\nRULES WHEN FIXING:\n"
-                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; use `simulation_trajectory_bounds` with `model_id` for conserved simulation invariants.\n"
+                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; for energy dissipation use `energy_dissipation` (or set explicit `state_var` matching `state_vars`/`derived_exprs`), for conservation use `conservation_law`, for positive states use `positivity`, and for oscillatory `x`/`v` bounds use symmetric negative-to-positive `lower_bound`/`upper_bound` (never `lower_bound=0.0` on a sign-changing oscillator state!).\n"
                     "- For `ode_equilibrium`, `(x_val, expected_value)` MUST be a true fixed point where BOTH `dx_expr == 0` and `dy_expr == 0` (e.g. `(0, 0)` or nontrivial interior root); for oscillating/non-equilibrium states, use `simulation_trajectory_bounds` instead.\n"
                     "- Never redeclare a persistent object ID from an earlier scene without a preceding `remove`, and never animate an object before its `create` event.\n"
                     "- For `markov_stochastic_invariant`, reference a `matrix` or `bar_chart` in `object_ids` whose entries verify row sums = 1.0 and invariant stationary distribution.\n"
