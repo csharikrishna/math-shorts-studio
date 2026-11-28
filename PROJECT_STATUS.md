@@ -14,7 +14,8 @@
   - **Representative Light/Dark Render Suite (`build/v41_exp1/`):** `osc_hf_light` (`100.0/100`), `osc_mgx_dark` (`100.0/100`), `lv_hf_dark` (`94.0/100`), `lv_mgx_light` (`94.0/100`), all `-15.1` to `-15.7 LUFS`, `60 fps`, `48000 Hz`, `drift=0.00 s`.
   - **Harmonic Oscillator Documentary (`editorial_light`, `hybrid`, `16` scenes):** Upgraded from V4.0 `72.0/100` (`review_required`) to **`88.0/100` (`publication_approved`, `approved=True`, `edge_clips=0`, `empty_mids=0`, `overlaps=0`, `data_clips=0`, `production_certified=True`)**; derived `9:16` Short **`100.0/100` (`publication_approved`)**.
   - **Lotka–Volterra Documentary (`midnight_studio`, `hybrid`, `14` scenes):** Upgraded from V4.0 `78.0/100` (`review_required`) to **`100.0/100` (`publication_approved`, `approved=True`, `0` blockers, `0` warnings, `3.45x` warm-cache speedup `69.80 s -> 20.26 s`, `production_certified=True`)**; derived `9:16` Short **`94.0/100` (`publication_approved`)**.
-  - **Test Suite:** **97 tests passing** (`tests/test_v41.py` + `test_v40.py` + `test_v39.py` + `test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
+  - **Held-Out Unseen Topic (`"Nonlinear Damped Pendulums, Separatrices, and Phase Portraits"`, `light`, `hybrid`, `13` scenes, clean commit `d2bc406`):** Derived `32.70 s` Short **`100.0/100` (`publication_approved`, `certified=True`)**; `154.02 s` Documentary **`42.0/100` (`rejected`, `11.27x` warm-cache speedup `264.58 s -> 23.48 s`, `math_accuracy=passed`, `-15.1 LUFS`, `drift=0.00 s`)** — strict V4.1 frame QA caught `bar_chart`/`mechanical_body` panel overlaps (`c1__scene_1`, `c3__scene_3`) cleanly.
+  - **Test Suite:** **99 tests passing** (`tests/test_v41.py` + `test_v40.py` + `test_v39.py` + `test_v38.py` + `test_v37.py` + `test_generalization.py` + `test_v35.py` + `test_v34.py` + `test_v3.py` + `test_v2_modules.py` + `test_core.py`).
 
 ---
 
