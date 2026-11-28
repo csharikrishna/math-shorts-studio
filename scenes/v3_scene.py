@@ -746,7 +746,7 @@ class V3Scene(StoryScene):
                     "stroke_width": 2.2,
                     "include_tip": True,
                     "include_numbers": True,
-                    "font_size": 22,
+                    "font_size": px_to_manim_font_size(24 if L.frame_h > L.frame_w else 20, self.profile.pixel_height),
                     "line_to_number_buff": 0.18,
                     "decimal_number_config": {"num_decimal_places": 0 if dx_ax >= 8.0 and dy_ax >= 8.0 else 1},
                 },

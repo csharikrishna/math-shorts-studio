@@ -300,13 +300,16 @@ class HybridRenderBackend(RenderBackend):
             seg_raw_mp4s.append(seg_mp4)
 
         merged_meta_hyb: dict[str, list] = {}
-        for s_idx_m in range(len(parts)):
-            m_p = bdir / f"seg_{s_idx_m:02d}" / "scene_frame_metadata.json"
-            if m_p.exists():
-                try:
-                    merged_meta_hyb.update(json.loads(m_p.read_text(encoding="utf-8")))
-                except Exception:
-                    pass
+        for s_idx_m, part_m in enumerate(parts):
+            seg_d_m = bdir / f"seg_{s_idx_m:02d}_{part_m.backend}"
+            for m_name in ("scene_frame_metadata.json", "hf_render_meta.json"):
+                m_p = seg_d_m / m_name
+                if m_p.exists():
+                    try:
+                        merged_meta_hyb.update(json.loads(m_p.read_text(encoding="utf-8")))
+                        break
+                    except Exception:
+                        pass
         if merged_meta_hyb:
             (bdir / "scene_frame_metadata.json").write_text(json.dumps(merged_meta_hyb, indent=2), encoding="utf-8")
 

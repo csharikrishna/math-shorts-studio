@@ -206,18 +206,28 @@ def inspect_video_scene_aware(
 
         # Plan-level object map for differentiating axes/chrome vs primary mathematical objects
         plan_scene_map = {str(getattr(sc, "scene_id", "")): sc for sc in (getattr(plan, "scenes", []) or [])} if plan is not None else {}
+        child_axes_by_scene: dict[str, dict[str, str]] = {}
         if plan_scene_map:
-            ax_bounds_all: dict[str, tuple[list[float], list[float], bool]] = {}
-            for sc_obj in plan_scene_map.values():
-                is_z = any(str(getattr(e, "op", "")) == "zoom" for e in getattr(sc_obj, "events", [])) or str(getattr(sc_obj, "composition", "")) == "spotlight_zoom"
-                for o in getattr(sc_obj, "objects", []):
-                    if getattr(o, "kind", "") == "axes":
-                        ax_bounds_all[str(o.id)] = (list(o.x_range or [-4.0, 4.0]), list(o.y_range or [-2.5, 2.5]), is_z)
+            ax_bounds_all: dict[tuple[str, str], tuple[list[float], list[float], bool]] = {}
             for sc_id_p, sc_obj in plan_scene_map.items():
+                ch_pref = sc_id_p.split("__", 1)[0] if "__" in sc_id_p else ""
                 is_z = any(str(getattr(e, "op", "")) == "zoom" for e in getattr(sc_obj, "events", [])) or str(getattr(sc_obj, "composition", "")) == "spotlight_zoom"
                 for o in getattr(sc_obj, "objects", []):
-                    if getattr(o, "kind", "") in ("data_series", "parametric_curve") and getattr(o, "points_list", None) and getattr(o, "axes_id", None) in ax_bounds_all:
-                        axr, ayr, axz = ax_bounds_all[str(o.axes_id)]
+                    if getattr(o, "axes_id", None):
+                        child_axes_by_scene.setdefault(sc_id_p, {})[str(o.id)] = str(o.axes_id)
+                        ch_ax_m = child_axes_by_scene.setdefault(ch_pref, {})
+                        ch_ax_m[str(o.id)] = str(o.axes_id)
+                    if getattr(o, "kind", "") == "axes":
+                        ax_bounds_all[(ch_pref, str(o.id))] = (list(o.x_range or [-4.0, 4.0]), list(o.y_range or [-2.5, 2.5]), is_z)
+            for sc_id_p, sc_obj in plan_scene_map.items():
+                ch_pref = sc_id_p.split("__", 1)[0] if "__" in sc_id_p else ""
+                is_z = any(str(getattr(e, "op", "")) == "zoom" for e in getattr(sc_obj, "events", [])) or str(getattr(sc_obj, "composition", "")) == "spotlight_zoom"
+                for o in getattr(sc_obj, "objects", []):
+                    ax_key = (ch_pref, str(getattr(o, "axes_id", "") or ""))
+                    if ax_key not in ax_bounds_all:
+                        ax_key = ("", str(getattr(o, "axes_id", "") or ""))
+                    if getattr(o, "kind", "") in ("data_series", "parametric_curve") and getattr(o, "points_list", None) and ax_key in ax_bounds_all:
+                        axr, ayr, axz = ax_bounds_all[ax_key]
                         if is_z or axz:
                             continue
                         pts_p = o.points_list
@@ -259,15 +269,25 @@ def inspect_video_scene_aware(
             sc_meta_list = meta_boxes.get(tgt.scene_id, [])
             if tgt.scene_id and sc_meta_list and tgt.scene_id not in checked_overlap_scenes:
                 checked_overlap_scenes.add(tgt.scene_id)
+                sc_ch_pref = tgt.scene_id.split("__", 1)[0] if "__" in tgt.scene_id else ""
+                sc_child_map = {
+                    **child_axes_by_scene.get(sc_ch_pref, {}),
+                    **child_axes_by_scene.get(tgt.scene_id, {}),
+                }
                 panel_entries = [m_e for m_e in sc_meta_list if m_e.get("kind") in ("axes", "matrix", "table", "bar_chart", "graph_network", "mechanical_body") and isinstance(m_e.get("box"), list) and len(m_e["box"]) == 4]
                 for i_a in range(len(panel_entries)):
                     for i_b in range(i_a + 1, len(panel_entries)):
-                        ba = panel_entries[i_a]["box"]
-                        bb = panel_entries[i_b]["box"]
+                        ea, eb = panel_entries[i_a], panel_entries[i_b]
+                        id_a, id_b = str(ea.get("id", "")), str(eb.get("id", ""))
+                        ax_a = str(ea.get("axes_id") or sc_child_map.get(id_a, ""))
+                        ax_b = str(eb.get("axes_id") or sc_child_map.get(id_b, ""))
+                        if (ax_a and ax_a == id_b) or (ax_b and ax_b == id_a):
+                            continue
+                        ba, bb = ea["box"], eb["box"]
                         ix = max(0.0, min(ba[0] + ba[2], bb[0] + bb[2]) - max(ba[0], bb[0]))
                         iy = max(0.0, min(ba[1] + ba[3], bb[1] + bb[3]) - max(ba[1], bb[1]))
                         if ix > 14.0 and iy > 14.0:
-                            panel_overlap_findings.append(f"{tgt.scene_id}: {panel_entries[i_a].get('id')} overlaps {panel_entries[i_b].get('id')} ({int(ix)}x{int(iy)}px)")
+                            panel_overlap_findings.append(f"{tgt.scene_id}: {id_a} overlaps {id_b} ({int(ix)}x{int(iy)}px)")
 
             # Differentiate bare axes chrome vs actual mathematical curve/geometry inside axes interior
             axes_metas = [m_e for m_e in sc_meta_list if m_e.get("kind") == "axes" and isinstance(m_e.get("box"), list) and len(m_e["box"]) == 4]
