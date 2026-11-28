@@ -195,7 +195,7 @@ class GeminiProvider(LLMProvider):
                         f"Fix ONLY the JSON validation error below and output complete valid JSON matching `{schema.__name__}`:\n"
                         f"ERROR: {val_exc}\n\nBAD_JSON:\n{raw_txt}"
                     )
-                    r_obj, m_used, dur = self._call_with_fallback(repair_prompt, json_cfg, m_used)
+                    r_obj, m_used, dur = self._call_with_fallback(repair_prompt, json_cfg, model)
                     raw_txt = getattr(r_obj, "text", "") or ""
             assert obj_parsed is not None
             return obj_parsed, r_obj, m_used, dur, raw_txt
