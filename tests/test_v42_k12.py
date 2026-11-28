@@ -164,6 +164,12 @@ class TestV42AndK12(unittest.TestCase):
             self.assertIn("data-hf-elem", html_str)
             self.assertGreater(dur_s, 1.0)
 
+        # Standard lesson (>= 3 min) includes prerequisite & misconception bridge scene
+        std_req = LessonRequest(grade=5, topic="Adding fractions with different denominators", duration_minutes=4.5)
+        std_spec, std_plan, _, _ = generate_k12_lesson_plan(std_req, provider=None)
+        self.assertEqual(std_spec.production_mode, "standard_lesson")
+        self.assertGreaterEqual(len(std_plan.scenes), 4)
+
     def test_local_studio_server_roundtrip(self) -> None:
         srv, url = create_studio_server(port=0, use_llm=False)
         try:

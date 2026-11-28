@@ -234,16 +234,33 @@ def run_plan(plan_path: Path, **kwargs) -> Path:
             if issues:
                 raise ValueError("Invalid VideoPlanV3:\n- " + "\n- ".join(issues))
             stem = kwargs.pop("output_stem", f"V3_{plan_path.stem}")
-            mp4 = run_pipeline(
-                V3_SCENE_SCRIPT,
-                scene_name="V3Scene",
-                output_stem=stem,
-                extra_env={"STUDIO_V3_PLAN": str(plan_path)},
-                **kwargs,
-            )
+            req_backend = str(kwargs.pop("backend", os.environ.get("STUDIO_BACKEND", "manimgx"))).lower()
             fmt_p = str(kwargs.get("format_name", "shorts_hd"))
             thm_p = str(kwargs.get("theme_name", "midnight_studio"))
             cap_p = str(kwargs.get("caption_style") or "editorial")
+            if req_backend == "hyperframes":
+                from studio.renderers import get_backend
+                bdir_p = PROJECT_ROOT / "build" / f"{stem}_{fmt_p}"
+                out_mp4 = OUTPUT_DIR / f"{stem}_{fmt_p}.mp4"
+                res_hf = get_backend("hyperframes").render(
+                    plan3,
+                    slug=stem,
+                    format_name=fmt_p,
+                    look_name=thm_p,
+                    out_path=out_mp4,
+                    build_dir=bdir_p,
+                    caption_style=cap_p,
+                    tts_engine=str(kwargs.get("tts_engine", "kokoro")),
+                )
+                mp4 = res_hf.video_path
+            else:
+                mp4 = run_pipeline(
+                    V3_SCENE_SCRIPT,
+                    scene_name="V3Scene",
+                    output_stem=stem,
+                    extra_env={"STUDIO_V3_PLAN": str(plan_path)},
+                    **kwargs,
+                )
             bdir_p = PROJECT_ROOT / "build" / f"{stem}_{fmt_p}"
             from studio.provenance import build_and_write_manifest
 
@@ -253,7 +270,7 @@ def run_plan(plan_path: Path, **kwargs) -> Path:
                 title=plan3.title,
                 mp4_path=mp4,
                 plan=plan3,
-                backend="manimgx",
+                backend=req_backend,
                 format_name=fmt_p,
                 look_name=thm_p,
                 caption_style=cap_p,

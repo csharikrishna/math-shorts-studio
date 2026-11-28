@@ -165,6 +165,35 @@ def build_deterministic_k12_plan(
         )
     )
 
+    # Optional prerequisite & misconception bridge scenes for standard/detailed lessons (>= 3 min)
+    if spec.production_mode in ("standard_lesson", "detailed_lesson"):
+        prereq_txt = ", ".join(spec.curriculum_ref.prerequisites) or f"Foundations for {req.topic}"
+        scenes.append(
+            SceneV3(
+                scene_id="s1b_prerequisites",
+                purpose="Prerequisite check and misconception warning",
+                narration=(
+                    f"Before we solve a full problem, let us check what we already know: {prereq_txt}. "
+                    f"<bookmark mark='prereq_focus'/> Keep in mind a common mistake to avoid: {worked.common_mistake}"
+                ),
+                composition="centered_focus",
+                objects=[
+                    SceneObject(
+                        id="prereq_card",
+                        kind="concept_card",
+                        persist=False,
+                        label="Prerequisites & Watch-Out",
+                        steps_list=[f"Prerequisite: {prereq_txt}", f"Common Mistake: {worked.common_mistake}"],
+                        color_role="secondary",
+                    )
+                ],
+                events=[
+                    AnimationEvent(t=0.1, op="reveal", target_id="prereq_card"),
+                    AnimationEvent(t=2.0, op="scale", target_id="prereq_card", bookmark="prereq_focus", scale_factor=1.10),
+                ],
+            )
+        )
+
     # Scene 2: Worked Example (Deterministic verified steps)
     if domain == "adding_fractions":
         s2_objs = [
@@ -200,20 +229,32 @@ def build_deterministic_k12_plan(
         )
     )
 
-    # Scene 3: Check Your Understanding & Recap
+    # Scene 3: Check Your Understanding & Recap (think-then-reveal)
     s3_objs = [
         SceneObject(
             id="quiz_card",
             kind="concept_card",
-            label="Quick Check & Key Takeaway",
+            persist=False,
+            panel_slot="top",
+            label="Quick Check",
             steps_list=[
                 f"Question: {question.question}",
                 f"Choices: {', '.join(question.choices)}",
+            ],
+            color_role="secondary",
+        ),
+        SceneObject(
+            id="ans_card",
+            kind="concept_card",
+            persist=False,
+            panel_slot="bottom",
+            label="Verified Answer & Recap",
+            steps_list=[
                 f"Verified Answer: {question.correct_answer}",
                 f"Avoid mistake: {worked.common_mistake}",
             ],
-            color_role="secondary",
-        )
+            color_role="primary",
+        ),
     ]
     s3_nar = (
         f"Now try this quick check yourself: {question.question} "
@@ -225,11 +266,11 @@ def build_deterministic_k12_plan(
             scene_id="s3_practice_recap",
             purpose="Practice question, misconception check, and recap",
             narration=s3_nar,
-            composition="centered_focus",
+            composition="stacked_comparison" if aspect == "9:16" else "centered_focus",
             objects=s3_objs,
             events=[
                 AnimationEvent(t=0.1, op="reveal", target_id="quiz_card"),
-                AnimationEvent(t=1.2, op="scale", target_id="quiz_card", bookmark="reveal_ans", scale_factor=1.05),
+                AnimationEvent(t=0.8, op="reveal", target_id="ans_card", bookmark="reveal_ans"),
             ],
         )
     )

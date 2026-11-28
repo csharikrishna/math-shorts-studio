@@ -1560,4 +1560,127 @@ class V3Scene(StoryScene):
             curve.set_points_as_corners(scene_pts)
             curve.set_stroke(color=color, width=3.2)
             return curve
+        if obj.kind == "fraction_bar":
+            den = max(1, int(obj.denominator or 4))
+            num = max(0, min(den * 2, int(obj.numerator if obj.numerator is not None else 1)))
+            sub = max(1, int(obj.subdivisions or 1))
+            total = den * sub
+            filled = num * sub
+            bar_w = min(L.stage_w * (0.42 if obj.panel_slot in ("left", "right") else 0.72), 6.2)
+            part_w = bar_w / max(1, total)
+            grp = m.VGroup()
+            for i in range(total):
+                rect = m.Rectangle(
+                    width=max(0.08, part_w - 0.04),
+                    height=0.82,
+                    fill_color=color if i < filled else T.panel_bg,
+                    fill_opacity=0.92 if i < filled else 0.35,
+                    stroke_color=T.text_primary,
+                    stroke_width=2.0,
+                )
+                rect.move_to(np.array([-0.5 * bar_w + (i + 0.5) * part_w, 0.0, 0.0]))
+                grp.add(rect)
+            if obj.label:
+                lbl = m.Text(obj.label, font_size=28, font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                lbl.next_to(grp, m.UP, buff=0.22)
+                grp.add(lbl)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
+        if obj.kind == "fraction_circle":
+            den = max(1, int(obj.denominator or 4))
+            num = max(0, min(den, int(obj.numerator if obj.numerator is not None else 1)))
+            sub = max(1, int(obj.subdivisions or 1))
+            total = den * sub
+            filled = num * sub
+            grp = m.VGroup()
+            for i in range(total):
+                sec = m.Sector(
+                    outer_radius=1.35,
+                    start_angle=np.pi / 2 - 2 * np.pi * (i + 1) / total,
+                    angle=2 * np.pi / total,
+                    fill_color=color if i < filled else T.panel_bg,
+                    fill_opacity=0.9 if i < filled else 0.3,
+                    stroke_color=T.text_primary,
+                    stroke_width=2.0,
+                )
+                grp.add(sec)
+            if obj.label:
+                lbl = m.Text(obj.label, font_size=28, font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                lbl.next_to(grp, m.UP, buff=0.22)
+                grp.add(lbl)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
+        if obj.kind == "array_grid":
+            rows = max(1, min(10, int(obj.rows or 3)))
+            cols = max(1, min(10, int(obj.cols or 4)))
+            cnt = int(obj.count) if obj.count is not None else rows * cols
+            cell = min(0.62, 4.2 / max(rows, cols))
+            grp = m.VGroup()
+            idx = 0
+            for r_i in range(rows):
+                for c_i in range(cols):
+                    sq = m.Square(
+                        side_length=cell * 0.86,
+                        fill_color=color if idx < cnt else T.panel_bg,
+                        fill_opacity=0.9 if idx < cnt else 0.35,
+                        stroke_color=T.text_primary,
+                        stroke_width=1.6,
+                    )
+                    sq.move_to(np.array([(c_i - 0.5 * (cols - 1)) * cell, (0.5 * (rows - 1) - r_i) * cell, 0.0]))
+                    grp.add(sq)
+                    idx += 1
+            if obj.label:
+                lbl = m.Text(obj.label, font_size=28, font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                lbl.next_to(grp, m.UP, buff=0.22)
+                grp.add(lbl)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
+        if obj.kind == "counting_group":
+            cnt = max(0, min(40, int(obj.count if obj.count is not None else 5)))
+            gsz = max(1, min(10, int(obj.group_size or 5)))
+            cols = min(gsz, max(1, cnt))
+            rows = max(1, (cnt + gsz - 1) // gsz)
+            step = min(0.7, 4.4 / max(cols, rows))
+            grp = m.VGroup()
+            for i in range(cnt):
+                r_i, c_i = i // gsz, i % gsz
+                dot = m.Dot(
+                    np.array([(c_i - 0.5 * (cols - 1)) * step, (0.5 * (rows - 1) - r_i) * step, 0.0]),
+                    radius=step * 0.32,
+                    color=color,
+                )
+                grp.add(dot)
+            if obj.label:
+                lbl = m.Text(obj.label, font_size=28, font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                lbl.next_to(grp, m.UP, buff=0.22)
+                grp.add(lbl)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
+        if obj.kind == "equation_balance":
+            grp = m.VGroup()
+            beam = m.Line(np.array([-2.4, 0.2, 0.0]), np.array([2.4, 0.2, 0.0]), color=T.text_primary, stroke_width=4.0)
+            fulc = m.Triangle(fill_color=T.accent_secondary, fill_opacity=0.95, stroke_width=0).scale(0.35).move_to(np.array([0.0, -0.25, 0.0]))
+            l_txt = m.Text(obj.lhs_text or "x + 2", font_size=28, font=CAPTION_FONT, color=color, **_FONT_KWARGS).move_to(np.array([-2.0, 0.65, 0.0]))
+            r_txt = m.Text(obj.rhs_text or "5", font_size=28, font=CAPTION_FONT, color=color, **_FONT_KWARGS).move_to(np.array([2.0, 0.65, 0.0]))
+            grp.add(beam, fulc, l_txt, r_txt)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
+        if obj.kind == "concept_card":
+            grp = m.VGroup()
+            steps = list(obj.steps_list or [])[:4]
+            card_w = min(L.stage_w * 0.85, 9.5)
+            card_h = max(1.6, 0.9 + len(steps) * 0.55)
+            box = m.RoundedRectangle(width=card_w, height=card_h, corner_radius=0.18, fill_color=T.panel_bg, fill_opacity=0.92, stroke_color=color, stroke_width=2.5)
+            grp.add(box)
+            title_m = m.Text((obj.label or "Key Idea")[:64], font_size=26, font=CAPTION_FONT, color=color, **_FONT_KWARGS)
+            fit_mobject(title_m, max_width=card_w * 0.88, min_height=L.min_text_h)
+            title_m.move_to(np.array([0.0, 0.5 * card_h - 0.42, 0.0]))
+            grp.add(title_m)
+            for si, st_s in enumerate(steps):
+                row_m = m.Text(f"{si + 1}. {st_s}"[:74], font_size=22, font=CAPTION_FONT, color=T.text_primary, **_FONT_KWARGS)
+                fit_mobject(row_m, max_width=card_w * 0.88, min_height=L.min_text_h)
+                row_m.move_to(np.array([0.0, 0.5 * card_h - 0.95 - si * 0.52, 0.0]))
+                grp.add(row_m)
+            grp.move_to(self._slot_center(obj, getattr(self, "_cur_scene_comp", "auto")))
+            return grp
         return m.Dot(self._slot_center(obj), color=color)
