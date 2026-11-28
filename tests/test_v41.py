@@ -455,6 +455,51 @@ class TestV41ReliabilityAndVisualIntelligence(unittest.TestCase):
         self.assertTrue(script.locked)
         self.assertEqual(script.approved_revision, 3)
 
+    def test_09_repair_links_pendulum_mechanical_body_to_ode_model(self) -> None:
+        from studio.repair import repair_scene_deterministically
+
+        pend_model = LinkedMathModelSpec(
+            model_id="pendulum_model",
+            kind="dynamical_simulation",
+            state_vars=["theta", "omega"],
+            rhs_exprs=["omega", "-0.5*omega - 2.0*sin(theta)"],
+            initial_state=[2.5, 0.0],
+            t_range=[0.0, 10.0],
+            steps=100,
+        )
+        plan = VideoPlanV3(
+            topic="Pendulum",
+            title="Pendulum",
+            math_models=[pend_model],
+            scenes=[
+                SceneV3(
+                    scene_id="sc1",
+                    purpose="Swinging pendulum",
+                    narration="Watch the pendulum swing and lose amplitude under damping.",
+                    objects=[
+                        SceneObject(id="ax", kind="axes", x_range=[-4.0, 4.0], y_range=[-4.0, 4.0]),
+                        SceneObject(id="field", kind="vector_field", axes_id="ax", x_range=[-4.0, 4.0], y_range=[-4.0, 4.0], dx_expr="y", dy_expr="-0.5*y - 2.0*sin(x)"),
+                        SceneObject(id="pendulum_body", kind="mechanical_body", connector_kind="rod", coords=[0.0, -1.0]),
+                    ],
+                    events=[
+                        AnimationEvent(t=0.0, op="create", target_id="ax"),
+                        AnimationEvent(t=0.05, op="create", target_id="field"),
+                        AnimationEvent(t=0.1, op="create", target_id="pendulum_body"),
+                        AnimationEvent(t=0.3, op="animate_param", target_id="pendulum_body", param_range=[0.0, 1.57]),
+                    ],
+                    claims=[
+                        StructuredClaim(kind="simulation_trajectory_bounds", model_id="pendulum_model", lower_bound=-4.0, upper_bound=4.0),
+                    ],
+                )
+            ],
+        )
+        repaired, notes = repair_scene_deterministically(plan)
+        self.assertEqual(validate_v3_plan(repaired, require_claims=True), [])
+        body = next(o for o in repaired.scenes[0].objects if o.id == "pendulum_body")
+        self.assertEqual(body.model_id, "pendulum_model")
+        self.assertEqual(body.model_output, "sweep")
+        self.assertTrue(notes)
+
 
 if __name__ == "__main__":
     unittest.main()

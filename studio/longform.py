@@ -580,11 +580,36 @@ def create_longform_plan(
                     issues.extend(dyn_msgs[:3])
                 if not issues:
                     break
+                sim_hints: list[str] = []
+                if any(k in msg for msg in issues for k in ("simulation_trajectory_bounds", "state_bounds", "positivity")):
+                    from studio.ai.simulation import simulate_model as _sim_hint_fn
+
+                    for _mm in ch_plan.math_models:
+                        if _mm.kind in ("dynamical_simulation", "ode_system", "pendulum", "lotka_volterra", "harmonic_oscillator"):
+                            try:
+                                _sr = _sim_hint_fn(_mm)
+                                _spans = [
+                                    f"{sv} in [{min(vals):.3f}, {max(vals):.3f}]"
+                                    for sv, vals in _sr.series.items()
+                                    if vals
+                                ]
+                                if _spans:
+                                    sim_hints.append(f"- Model '{_mm.model_id}' actual simulated ranges: {', '.join(_spans)}")
+                            except Exception:
+                                pass
+                sim_hint_block = (
+                    "\nOBSERVED SIMULATION RANGES (use these exact simulated extrema instead of guessing narrow bounds or positivity on sign-changing states):\n"
+                    + "\n".join(sim_hints)
+                    + "\n"
+                    if sim_hints
+                    else ""
+                )
                 fix_prompt = (
                     "Fix EVERY listed VideoPlanV3 validation issue strictly WITHOUT altering scene_id or spoken narration:\n- "
                     + "\n- ".join(issues)
+                    + sim_hint_block
                     + "\nRULES WHEN FIXING:\n"
-                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; for energy dissipation use `energy_dissipation` ONLY on models with positive damping and explicit `derived_exprs={'total_energy': '...'}` or explicit `mass`+`stiffness` (if the model is undamped/conservative, use `conservation_law` instead!); for positive states use `positivity`; and for oscillatory `x`/`v` bounds use symmetric negative-to-positive `lower_bound`/`upper_bound` (never `lower_bound=0.0` on a sign-changing oscillator state!).\n"
+                    "- Never attach polygon claims (`nonzero_area`, `square`, `right_triangle`, `area_conservation`) to non-polygons or equations; for energy dissipation use `energy_dissipation` ONLY on models with positive damping and explicit `derived_exprs={'total_energy': '...'}` or explicit `mass`+`stiffness` (if the model is undamped/conservative, use `conservation_law` instead!); for positive states use `positivity`; and NEVER assert `positivity` on oscillatory/rotational states (like pendulum angles or velocities) that cross zero — use `simulation_trajectory_bounds` with `lower_bound`/`upper_bound` covering the true simulated extrema.\n"
                     "- For `ode_equilibrium`, `(x_val, expected_value)` MUST be a true fixed point where BOTH `dx_expr == 0` and `dy_expr == 0` (e.g. `(0, 0)` or nontrivial interior root); for oscillating/non-equilibrium states, use `simulation_trajectory_bounds` instead.\n"
                     "- Never redeclare a persistent object ID from an earlier scene without a preceding `remove`, and never animate an object before its `create` event.\n"
                     "- For `markov_stochastic_invariant`, reference a `matrix` or `bar_chart` in `object_ids` whose entries verify row sums = 1.0 and invariant stationary distribution.\n"
@@ -595,6 +620,10 @@ def create_longform_plan(
                     f"\nCurrent JSON:\n{ch_plan.model_dump_json(exclude_none=True)}"
                 )
                 ch_plan, _ = director.provider.generate_structured(fix_prompt, VideoPlanV3, system=ch_system, temperature=0.25)
+                try:
+                    ch_plan, _ = repair_scene_deterministically(ch_plan)
+                except Exception:
+                    pass
                 if ch_beats:
                     lock_script_to_plan(ch_plan, ch_script, stage="approved", restore_locked_spoken_text=True, strict_ids=True)
                 with log_lock:
