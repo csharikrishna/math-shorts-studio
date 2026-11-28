@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from studio.ai.v3_schema import SceneObject, VideoPlanV3
+from studio.ai.v3_schema import AnimationEvent, SceneObject, VideoPlanV3
 from studio.ai.visual_intelligence import apply_visual_intelligence_and_fit
 from studio.ai.world_model import materialize_constructions
 
@@ -57,7 +57,7 @@ def diagnose_scene_visual_defects(plan: VideoPlanV3, frame_audit: Any | None = N
             if o.kind in ("data_series", "parametric_curve") and pts_o:
                 if len(pts_o) >= 2 and _nonfinite_or_zero_span(pts_o):
                     sc_issues.append(f"collapsed_curve: '{o.id}' has zero spatial span (likely equilibrium initial condition)")
-            elif o.kind == "data_series" and not pts_o and not o.model_id:
+            elif o.kind == "data_series" and not pts_o and not o.model_id and not o.expr:
                 sc_issues.append(f"empty_curve: '{o.id}' has no plotted points and no model_id")
 
         # 2. Curve exceeds owning axes bounds on non-zoomed views
@@ -81,7 +81,11 @@ def diagnose_scene_visual_defects(plan: VideoPlanV3, frame_audit: Any | None = N
                             )
 
         # 3. Multiple large containers lacking disjoint panel slots
-        containers = [o for o in active.values() if o.kind in ("axes", "mechanical_body", "matrix", "table", "bar_chart")]
+        containers = [
+            o for o in active.values()
+            if o.kind in ("axes", "matrix", "table", "bar_chart", "graph_network")
+            or (o.kind == "mechanical_body" and not o.axes_id)
+        ]
         if len(containers) >= 2:
             slots = [getattr(c, "panel_slot", "auto") for c in containers]
             missing = [c.id for c in containers if getattr(c, "panel_slot", "auto") in ("auto", "")]
@@ -89,12 +93,14 @@ def diagnose_scene_visual_defects(plan: VideoPlanV3, frame_audit: Any | None = N
             if missing or len(non_null) != len(set(non_null)):
                 sc_issues.append(f"panel_slot_collision: containers {[c.id for c in containers]} share/lack panel_slots ({slots})")
 
-        # 4. Dynamic trace/animate_param targeting an unlinked static point
+        # 4. Dynamic trace/animate_param targeting an unlinked static point or unlinked mechanical_body
         for ev in sc.events:
             if ev.op in ("trace", "animate_param") and ev.target_id in active:
                 tgt = active[ev.target_id]
-                if tgt.kind == "point" and not (tgt.model_id and tgt.model_output):
+                if tgt.kind == "point" and not (tgt.model_id and tgt.model_output) and not (tgt.param_name and tgt.expr and ";" in tgt.expr):
                     sc_issues.append(f"unlinked_motion_target: '{ev.op}' on static point '{tgt.id}' lacking model_id/model_output")
+                elif tgt.kind == "mechanical_body" and not (tgt.model_id and tgt.model_output):
+                    sc_issues.append(f"unlinked_motion_target: '{ev.op}' on mechanical_body '{tgt.id}' lacking model_id/model_output")
 
         # 5. Unresolved '?' placeholder text in scene labels/equations
         for o in sc.objects:
@@ -123,84 +129,183 @@ def diagnose_scene_visual_defects(plan: VideoPlanV3, frame_audit: Any | None = N
     return defects
 
 
-def _infer_non_equilibrium_ic(model: Any) -> list[float] | None:
-    """Shift an equilibrium initial condition cleanly so autonomous ODE trajectories remain visible."""
-    ic = list(getattr(model, "initial_state", []) or [])
-    if len(ic) >= 2:
-        return [
-            round(float(ic[0]) * 1.45 + (1.0 if abs(ic[0]) < 1e-4 else 0.0), 3),
-            round(float(ic[1]) * 0.72 + (0.5 if abs(ic[1]) < 1e-4 else 0.0), 3),
-        ]
-    return None
+def _infer_non_equilibrium_pair(x_v: float, y_v: float) -> tuple[float, float]:
+    return (
+        round(float(x_v) * 1.45 + (1.0 if abs(x_v) < 1e-4 else 0.0), 3),
+        round(float(y_v) * 0.72 + (0.5 if abs(y_v) < 1e-4 else 0.0), 3),
+    )
 
 
 def repair_scene_deterministically(
     plan: VideoPlanV3,
     scene_id: str | None = None,
 ) -> tuple[VideoPlanV3, list[str]]:
-    """Repair layout collisions, unlinked points, bare axes, collapsed equilibrium starts, and '?' placeholders deterministically."""
+    """Repair layout collisions, unlinked points/bodies, bare axes, collapsed equilibrium starts, and '?' placeholders deterministically."""
     out = plan.model_copy(deep=True)
     notes: list[str] = []
     models_by_id = {m.model_id: m for m in out.math_models}
 
-    # Shift collapsed equilibrium models if an evaluated curve had zero span
+    # First pass: fix collapsed equilibrium initial conditions on math_models AND ode_phase_trajectory constructions
+    from studio.ai.linked_models import evaluate_linked_math_model
+
+    for mod in out.math_models:
+        if mod.kind == "dynamical_simulation" and len(mod.initial_state) >= 2:
+            try:
+                m_res = evaluate_linked_math_model(mod)
+                pts_chk = m_res.get("phase_orbit") or m_res.get("time_series_x") or []
+                if pts_chk and _nonfinite_or_zero_span(pts_chk):
+                    nx, ny = _infer_non_equilibrium_pair(mod.initial_state[0], mod.initial_state[1])
+                    mod.initial_state = [nx, ny]
+                    notes.append(f"global: shifted collapsed equilibrium model '{mod.model_id}' initial_state -> {[nx, ny]}")
+            except Exception:
+                pass
+
     for sc in out.scenes:
         if scene_id and sc.scene_id != scene_id:
             continue
+        collapsed_axes: set[str] = set()
+        kept_objs: list[SceneObject] = []
+        cons_out_ids = {oid for c in sc.constructions for oid in c.output_ids}
         for o in sc.objects:
             pts_o = o.points_list or o.vertices
-            if o.kind in ("data_series", "parametric_curve") and pts_o and _nonfinite_or_zero_span(pts_o) and o.model_id in models_by_id:
-                mod = models_by_id[o.model_id]
-                new_ic = _infer_non_equilibrium_ic(mod)
-                if new_ic is not None:
-                    mod.initial_state = new_ic
-                    notes.append(f"{sc.scene_id}: shifted collapsed model '{mod.model_id}' initial_state -> {new_ic}")
+            if o.kind in ("data_series", "parametric_curve") and pts_o and _nonfinite_or_zero_span(pts_o):
+                if o.model_id and o.model_id in models_by_id:
+                    o.points_list = []
+                    kept_objs.append(o)
+                else:
+                    collapsed_axes.add(o.id)
+                    if o.id not in cons_out_ids:
+                        o.points_list = []
+                        kept_objs.append(o)
+                    continue
+            kept_objs.append(o)
+        sc.objects = kept_objs
+        for c in sc.constructions:
+            if c.op == "ode_phase_trajectory" and (collapsed_axes & set(c.output_ids) or not c.output_ids):
+                p = c.params
+                init_s = list(p.initial_state or [])
+                x0 = float(p.x0 if p.x0 is not None else (init_s[0] if len(init_s) >= 1 else 1.5))
+                y0 = float(p.y0 if p.y0 is not None else (init_s[1] if len(init_s) >= 2 else 0.0))
+                nx, ny = _infer_non_equilibrium_pair(x0, y0)
+                p.x0, p.y0 = nx, ny
+                if len(init_s) >= 2:
+                    p.initial_state = [nx, ny]
+                notes.append(f"{sc.scene_id}: shifted collapsed construction '{c.op}' -> ({nx}, {ny})")
 
     out = materialize_constructions(out)
+    models_by_id = {m.model_id: m for m in out.math_models}
+    dyn_models = [m for m in out.math_models if m.kind == "dynamical_simulation"]
+    any_models = list(out.math_models)
 
-    # Repair scene-local objects: static trace dots, '?' placeholders
+    # Second pass: track live carried objects across scenes so Scene 2 points/axes see Scene 1 models & curves
+    carried_map: dict[str, SceneObject] = {}
+    removed_ids: set[str] = set()
+    created_ids: set[str] = set()
+
     for sc in out.scenes:
-        if scene_id and sc.scene_id != scene_id:
-            continue
-        axes_objs = [o for o in sc.objects if o.kind == "axes"]
-        primary_ax = axes_objs[0] if axes_objs else None
+        active_map: dict[str, SceneObject] = {k: v for k, v in carried_map.items() if k not in removed_ids}
         for o in sc.objects:
-            if o.text and _QUESTION_TOKEN_RE.search(o.text.strip()):
-                cleaned = re.sub(r"\s*=\s*\?(?!\S)", "", o.text).strip(" ?:")
-                o.text = cleaned or o.id.replace("_", " ").title()
-                notes.append(f"{sc.scene_id}: cleaned placeholder text on '{o.id}' -> '{o.text}'")
-            if o.tex and _QUESTION_TOKEN_RE.search(o.tex.strip()):
-                o.tex = re.sub(r"\s*=\s*\?(?!\S)", "", o.tex).strip(" ?")
-                notes.append(f"{sc.scene_id}: cleaned placeholder tex on '{o.id}'")
+            active_map[o.id] = o
 
-        # Link any unlinked static point targeted by trace/animate_param to a curve/model if available
-        scene_curves = [o for o in sc.objects if o.kind in ("data_series", "parametric_curve") and o.model_id]
-        scene_ids = {o.id for o in sc.objects}
+        if not scene_id or sc.scene_id == scene_id:
+            for o in sc.objects:
+                if o.text and _QUESTION_TOKEN_RE.search(o.text.strip()):
+                    cleaned = re.sub(r"\s*=\s*\?(?!\S)", "", o.text).strip(" ?:")
+                    o.text = cleaned or o.id.replace("_", " ").title()
+                    notes.append(f"{sc.scene_id}: cleaned placeholder text on '{o.id}' -> '{o.text}'")
+                if o.tex and _QUESTION_TOKEN_RE.search(o.tex.strip()):
+                    o.tex = re.sub(r"\s*=\s*\?(?!\S)", "", o.tex).strip(" ?")
+                    notes.append(f"{sc.scene_id}: cleaned placeholder tex on '{o.id}'")
+                if o.kind == "data_series" and not o.points_list and not o.expr and not o.model_id and (dyn_models or any_models):
+                    ref_m = dyn_models[0] if dyn_models else any_models[0]
+                    o.model_id = ref_m.model_id
+                    o.model_output = "time_series_x" if ref_m.kind == "dynamical_simulation" else "response_curve"
+                    notes.append(f"{sc.scene_id}: bound empty data_series '{o.id}' -> '{ref_m.model_id}.{o.model_output}'")
+
+            # Add missing curve/trajectory onto bare axes when chapter has an active math_model
+            axes_objs = [o for o in active_map.values() if o.kind == "axes"]
+            plotted_objs = [
+                o for o in active_map.values()
+                if o.kind in ("data_series", "parametric_curve", "function_plot", "vector_field", "bar_chart", "mechanical_body")
+            ]
+            if axes_objs and not plotted_objs:
+                pts_models = [o.model_id for o in active_map.values() if o.kind == "point" and o.model_id in models_by_id]
+                ref_mid = pts_models[0] if pts_models else (dyn_models[0].model_id if dyn_models else (any_models[0].model_id if any_models else None))
+                if ref_mid is not None:
+                    ax_t = axes_objs[0]
+                    cid_auto = f"{ax_t.id}_series"
+                    if cid_auto not in active_map:
+                        out_f = "time_series_x" if models_by_id[ref_mid].kind == "dynamical_simulation" else "response_curve"
+                        new_curve = SceneObject(
+                            id=cid_auto,
+                            kind="data_series",
+                            persist=True,
+                            color_role="primary",
+                            axes_id=ax_t.id,
+                            model_id=ref_mid,
+                            model_output=out_f,
+                            label=models_by_id[ref_mid].label or out_f.replace("_", " "),
+                        )
+                        sc.objects.append(new_curve)
+                        active_map[cid_auto] = new_curve
+                        sc.events.insert(0, AnimationEvent(t=0.2, op="draw", target_id=cid_auto))
+                        notes.append(f"{sc.scene_id}: added '{cid_auto}' ({ref_mid}.{out_f}) to populate bare axes '{ax_t.id}'")
+
+            # Ensure mechanical_body or point targeted by trace/animate_param has valid model binding & create event
+            active_curves = [o for o in active_map.values() if o.kind in ("data_series", "parametric_curve") and o.model_id]
+            for ev in list(sc.events):
+                if ev.target_id not in active_map and ev.target_id in models_by_id:
+                    bound = next(
+                        (o for o in active_map.values() if o.model_id == ev.target_id and o.kind in ("mechanical_body", "point", "data_series")),
+                        next((o for o in active_map.values() if o.model_id == ev.target_id), None),
+                    )
+                    if bound is not None:
+                        notes.append(f"{sc.scene_id}: remapped event target model_id '{ev.target_id}' -> '{bound.id}'")
+                        ev.target_id = bound.id
+
+                tgt = active_map.get(ev.target_id)
+                if tgt is not None and ev.op in ("trace", "animate_param"):
+                    if tgt.kind == "point" and not (tgt.model_id and tgt.model_output) and not (tgt.param_name and tgt.expr and ";" in tgt.expr):
+                        ref_curve = next((c for c in active_curves if c.axes_id == tgt.axes_id), active_curves[0] if active_curves else None)
+                        ref_mid = ref_curve.model_id if ref_curve else (dyn_models[0].model_id if dyn_models else None)
+                        if ref_mid:
+                            tgt.model_id = ref_mid
+                            tgt.model_output = "time_point"
+                            ev.op = "animate_param"
+                            if not ev.param_range:
+                                ev.param_range = [0.0, 1.0]
+                            notes.append(f"{sc.scene_id}: linked point '{tgt.id}' -> '{ref_mid}.time_point'")
+                        else:
+                            ev.op = "focus"
+                            notes.append(f"{sc.scene_id}: converted unlinked dot trace '{tgt.id}' -> 'focus'")
+                    elif tgt.kind == "mechanical_body" and not (tgt.model_id and tgt.model_output):
+                        ref_mid = tgt.model_id or (dyn_models[0].model_id if dyn_models else None)
+                        if ref_mid:
+                            tgt.model_id = ref_mid
+                            tgt.model_output = "sweep"
+                            if not ev.param_range:
+                                ev.param_range = [0.0, 1.0]
+                            notes.append(f"{sc.scene_id}: linked mechanical_body '{tgt.id}' -> '{ref_mid}.sweep'")
+
+            # Auto-insert create event when scene animates/focuses an existing object before creation
+            for ev in list(sc.events):
+                if ev.op in ("create", "draw", "reveal", "trace", "sequence", "parallel"):
+                    created_ids.add(ev.target_id)
+                elif ev.target_id in active_map and ev.target_id not in created_ids:
+                    sc.events.insert(0, AnimationEvent(t=0.0, op="create", target_id=ev.target_id))
+                    created_ids.add(ev.target_id)
+                    notes.append(f"{sc.scene_id}: prepended create for '{ev.target_id}' before '{ev.op}'")
+
+        for o in sc.objects:
+            carried_map[o.id] = o
+            removed_ids.discard(o.id)
         for ev in sc.events:
-            if ev.target_id not in scene_ids and ev.target_id in models_by_id:
-                bound = next(
-                    (o for o in sc.objects if o.model_id == ev.target_id and o.kind in ("mechanical_body", "point", "data_series")),
-                    next((o for o in sc.objects if o.model_id == ev.target_id), None),
-                )
-                if bound is not None:
-                    notes.append(f"{sc.scene_id}: remapped event target model_id '{ev.target_id}' -> object '{bound.id}'")
-                    ev.target_id = bound.id
-            if ev.op in ("trace", "animate_param"):
-                tgt = next((o for o in sc.objects if o.id == ev.target_id), None)
-                if tgt is not None and tgt.kind == "point" and not (tgt.model_id and tgt.model_output):
-                    ref_curve = next((c for c in scene_curves if c.axes_id == tgt.axes_id), scene_curves[0] if scene_curves else None)
-                    if ref_curve is not None:
-                        tgt.model_id = ref_curve.model_id
-                        tgt.model_output = "time_point"
-                        if not ev.param_range:
-                            ev.param_range = [0.0, 1.0]
-                        ev.op = "animate_param"
-                        notes.append(f"{sc.scene_id}: linked point '{tgt.id}' to '{ref_curve.model_id}.time_point'")
-                    elif primary_ax is not None:
-                        ev.op = "focus"
-                        notes.append(f"{sc.scene_id}: converted unlinked dot trace on '{tgt.id}' to 'focus'")
+            if ev.op in ("create", "draw", "reveal", "trace", "sequence", "parallel"):
+                created_ids.add(ev.target_id)
+            if ev.op == "remove" and ev.target_id:
+                removed_ids.add(ev.target_id)
 
-    # Re-materialize models + apply visual intelligence (bounds fitting, disjoint panel slots, default labels)
+    # Re-materialize newly linked models + fit bounds & disjoint panel slots across carried objects
     out = materialize_constructions(out)
     out = apply_visual_intelligence_and_fit(out)
     return out, notes
@@ -239,7 +344,6 @@ def repair_plan_scenes(
             }
         )
 
-    # Optional bounded single-scene LLM repair when residual defects remain
     if provider is not None and after:
         from studio.ai.v3_schema import SceneV3
 
@@ -265,12 +369,11 @@ def repair_plan_scenes(
             except Exception:
                 pass
 
-    # Optional HyperFrames single-scene render & visual inspection confirmation
     if preview_verify and flagged_ids:
         from studio.preview import render_single_scene_preview
 
         preview_dir = out_dir or (Path("build") / "repair_previews")
-        for sid in flagged_ids[:max(1, max_scenes_preview)]:
+        for sid in flagged_ids[: max(1, max_scenes_preview)]:
             try:
                 prev_res = render_single_scene_preview(
                     repaired,

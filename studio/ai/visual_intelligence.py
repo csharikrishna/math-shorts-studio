@@ -258,25 +258,37 @@ def apply_visual_intelligence_and_fit(plan: VideoPlanV3, *, aspect_label: str = 
                         items.append([ch.label[:20], ch.color_role])
                 ax.legend_items = items[:3]
 
-    # 2. Enforce disjoint multi-panel slot assignments within each scene when multiple panels co-occur
+    # 2. Enforce disjoint multi-panel slot assignments across both new and carried live panels
+    live_panels_prev: dict[str, SceneObject] = {}
+    removed_prev: set[str] = set()
     for sc in out.scenes:
+        active_map: dict[str, SceneObject] = {k: v for k, v in live_panels_prev.items() if k not in removed_prev}
+        for o in sc.objects:
+            active_map[o.id] = o
         major_panels = [
-            o for o in sc.objects
+            o for o in active_map.values()
             if o.kind in ("axes", "table", "matrix", "bar_chart", "graph_network")
             or (o.kind == "mechanical_body" and not o.axes_id)
         ]
         if len(major_panels) >= 2:
-            slots = ("top", "bottom") if aspect_label == "9:16" else ("left", "right")
-            used = {o.panel_slot for o in major_panels if o.panel_slot in ("left", "right", "top", "bottom")}
-            cursor_s = 0
+            slots = ("top", "bottom", "right", "left") if aspect_label == "9:16" else ("left", "right", "bottom", "top")
+            seen_slots: set[str] = set()
             for o in major_panels:
-                if o.panel_slot in ("auto", "center"):
-                    while cursor_s < len(slots) and slots[cursor_s] in used:
-                        cursor_s += 1
-                    if cursor_s < len(slots):
-                        o.panel_slot = slots[cursor_s]  # type: ignore[assignment]
-                        used.add(slots[cursor_s])
+                cur_s = getattr(o, "panel_slot", "auto") or "auto"
+                if cur_s in ("left", "right", "top", "bottom") and cur_s not in seen_slots:
+                    seen_slots.add(cur_s)
+                else:
+                    nxt = next((s for s in slots if s not in seen_slots), None)
+                    if nxt is not None:
+                        o.panel_slot = nxt  # type: ignore[assignment]
+                        seen_slots.add(nxt)
             if sc.composition in ("auto", "centered_focus"):
                 sc.composition = "stacked_comparison" if aspect_label == "9:16" else "side_by_side_comparison"  # type: ignore[assignment]
+        for o in sc.objects:
+            live_panels_prev[o.id] = o
+            removed_prev.discard(o.id)
+        for ev in sc.events:
+            if ev.op == "remove" and ev.target_id:
+                removed_prev.add(ev.target_id)
 
     return out
