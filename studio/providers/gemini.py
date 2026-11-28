@@ -22,9 +22,9 @@ DEFAULT_GEMINI_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
     "gemini-3.8-flash",
+    "gemini-4-hydrogen",
     "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
-    "gemini-4-hydrogen",
 )
 TRANSIENT_CODES = {429, 500, 502, 503, 504}
 _SCHEMA_CACHE_LOCK = threading.Lock()
@@ -48,7 +48,13 @@ class GeminiProvider(LLMProvider):
     ) -> None:
         super().__init__(free_only=free_only, timeout_s=timeout_s)
         key = api_key or gemini_api_key()
-        self._client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000)))
+        self._client = genai.Client(
+            api_key=key,
+            http_options=types.HttpOptions(
+                timeout=int(timeout_s * 1000),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
         env_model = os.environ.get("GEMINI_MODEL")
         self.models = (env_model,) if env_model else (models or DEFAULT_GEMINI_MODELS)
         self.retries_per_model = retries_per_model
@@ -59,7 +65,9 @@ class GeminiProvider(LLMProvider):
         chain = (model,) if model else self.models
         last_err: Exception | None = None
         for tpm_cycle in range(3):
-            active_chain = [m for m in chain if m not in _DAILY_EXHAUSTED_MODELS] or list(chain)
+            active_chain = [m for m in chain if m not in _DAILY_EXHAUSTED_MODELS]
+            if not active_chain:
+                break
             min_retry_s: float | None = None
             had_transient = False
             for m in active_chain:
