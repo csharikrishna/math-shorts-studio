@@ -24,6 +24,7 @@ DEFAULT_GEMINI_MODELS = (
     "gemini-3.8-flash",
     "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
+    "gemini-4-hydrogen",
 )
 TRANSIENT_CODES = {429, 500, 502, 503, 504}
 _SCHEMA_CACHE_LOCK = threading.Lock()
@@ -42,7 +43,7 @@ class GeminiProvider(LLMProvider):
         api_key: str | None = None,
         models: tuple[str, ...] | None = None,
         free_only: bool = True,
-        timeout_s: float = 95.0,
+        timeout_s: float = 120.0,
         retries_per_model: int = 3,
     ) -> None:
         super().__init__(free_only=free_only, timeout_s=timeout_s)
@@ -74,11 +75,11 @@ class GeminiProvider(LLMProvider):
                         if getattr(exc, "code", None) == 400 and ("too many states" in msg_l or "schema" in msg_l):
                             raise ProviderError(f"Gemini schema complexity error on {m}: {exc}") from exc
                         if exc.code == 429:
-                            if "perday" in msg_l or "per_day" in msg_l or "free_tier_requests" in msg_l:
-                                _DAILY_EXHAUSTED_MODELS.add(m)
-                                break
                             rm = _re.search(r"retry in\s+([\d.]+)s", msg_l)
                             r_sec = float(rm.group(1)) if rm else 12.0
+                            if "perday" in msg_l or "per_day" in msg_l or "free_tier_requests" in msg_l or r_sec > 120.0:
+                                _DAILY_EXHAUSTED_MODELS.add(m)
+                                break
                             if r_sec <= 10.0 and attempt < self.retries_per_model:
                                 time.sleep(r_sec + 1.0)
                                 continue
