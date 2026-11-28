@@ -7,7 +7,7 @@ from pathlib import Path
 from studio.ai.knowledge import KnowledgeClaim, KnowledgeNode, KnowledgeTree
 from studio.audio.pronounce import normalize_for_speech
 from studio.audio.tts import AudioTimeline, SyncedBeat
-from studio.providers import FreeOnlyPolicyError, OpenRouterProvider, get_provider
+from studio.providers import FreeOnlyPolicyError, NvidiaProvider, OpenRouterProvider, get_provider
 from studio.qa.engine import QualityReport, safe_sympy_from_expr, verify_storyboard_image, verify_symbolic_derivative
 from studio.storage.cache import JobStore
 from studio.timeline import MasterTimeline
@@ -24,6 +24,43 @@ class TestV2Modules(unittest.TestCase):
         p = get_provider("ollama", model="qwen2.5:7b")
         self.assertEqual(p.name, "ollama")
         self.assertTrue(p.free_only)
+
+    def test_nvidia_provider_wiring_and_structured_repair(self):
+        import os
+        from unittest.mock import patch
+        from pydantic import BaseModel
+        from studio.ai.env import nvidia_api_key
+
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvapi-test-token"}):
+            self.assertEqual(nvidia_api_key(), "nvapi-test-token")
+            nv = get_provider("nvidia")
+        self.assertIsInstance(nv, NvidiaProvider)
+        self.assertEqual(nv.name, "nvidia")
+        self.assertEqual(nv.default_model, "nvidia/nemotron-3.5-lightning-30b-a3b")
+        self.assertEqual(nv.base_url, "https://integrate.api.nvidia.com/v1")
+
+        class _MiniSchema(BaseModel):
+            topic: str
+            steps: int
+
+        seen_payloads: list[dict] = []
+
+        def _fake_post(payload: dict) -> dict:
+            seen_payloads.append(payload)
+            if len(seen_payloads) == 1:
+                content = 'Here is the JSON:\n```json\n{"topic": "Pendulum"}\n```'
+            else:
+                content = '{"topic": "Pendulum", "steps": 3}'
+            return {"choices": [{"message": {"content": content}}], "usage": {"prompt_tokens": 12, "completion_tokens": 8}}
+
+        nv._post = _fake_post  # type: ignore[method-assign]
+        parsed, resp = nv.generate_structured("Describe pendulum", _MiniSchema)
+        self.assertEqual((parsed.topic, parsed.steps), ("Pendulum", 3))
+        self.assertEqual(resp.provider, "nvidia")
+        self.assertEqual(nv.usage.requests, 2)
+        self.assertEqual(seen_payloads[0]["response_format"], {"type": "json_object"})
+        self.assertEqual(seen_payloads[0]["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(seen_payloads[0]["max_tokens"], 16384)
 
     def test_pronunciation_normalizer(self):
         self.assertIn("sine of 3x", normalize_for_speech("Look at sin(3x)"))

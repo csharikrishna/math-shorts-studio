@@ -295,7 +295,7 @@ def main() -> None:
     parser.add_argument("--prompt", type=str, help="Explicit concept for Gemini to script and stage")
     parser.add_argument("--ai", action="store_true", help="Use the Gemini director (implied by --topic/--prompt)")
     parser.add_argument("--plan", type=Path, help="Render an existing ShortPlan JSON (no Gemini call)")
-    parser.add_argument("--provider", type=str, default="gemini", choices=["gemini", "openrouter", "ollama", "llamacpp"], help="AI provider (default: gemini)")
+    parser.add_argument("--provider", type=str, default="gemini", choices=["gemini", "nvidia", "openrouter", "ollama", "llamacpp"], help="AI provider (default: gemini)")
     parser.add_argument("--engine", type=str, default="v3", choices=["v3", "v2", "legacy"], help="v3: composable object-event VideoPlanV3 (default); v2: VideoPlan; legacy: ShortPlan")
     parser.add_argument("--allow-paid", action="store_true", help="Disable strict free-only model enforcement")
     parser.add_argument("--model", type=str, default=None, help="AI model override")

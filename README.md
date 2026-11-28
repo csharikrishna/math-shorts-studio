@@ -26,7 +26,7 @@ uv run python -m studio.pipeline scenes/taylor_series.py --format widescreen_hd
 
 Outputs: `output/<Name>_<format>.mp4`. Each build also leaves `build/<Name>_<format>/` with the raw render, storyboard PNGs, an `.srt` subtitle file, `timeline.json` and the audio stems.
 
-The Gemini key is read from `GEMINI_API_KEY` (or `gemini_api`) in the environment or in `.env`. It is never logged.
+API keys (`GEMINI_API_KEY` / `gemini_api`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) are read from the environment or `.env` and are never logged.
 
 ## CLI options
 
@@ -35,7 +35,8 @@ The Gemini key is read from `GEMINI_API_KEY` (or `gemini_api`) in the environmen
 | `--topic` | A field ("Number Theory") gets a concept slate scored for surprise × visual fit; a specific topic goes straight to scripting. |
 | `--prompt` | An explicit concept to script and stage. |
 | `--plan PATH` | Render a saved `ShortPlan` JSON. AI runs save theirs to `plans/`. |
-| `--model` | Gemini model. Default: `$GEMINI_MODEL`, then `gemini-3.1-flash-lite` → `3.5-flash-lite` → `3.5-flash` → `3.8-flash` → `gemini-4-hydrogen` → `gemma-4-31b-it` → `gemma-4-26b-a4b-it`. Daily-exhausted (`429`) models are skipped cleanly without long retry stalls. |
+| `--provider` | AI provider: `gemini` (default), `nvidia` (`nvidia/nemotron-3.5-lightning-30b-a3b` via NVIDIA NIM), `openrouter`, `ollama`, `llamacpp`. |
+| `--model` | Model override (`$GEMINI_MODEL` for `gemini`, `$NVIDIA_MODEL` for `nvidia`). Default Gemini chain: `gemini-3.1-flash-lite` → `3.5-flash-lite` → `3.5-flash` → `3.8-flash` → `gemini-4-hydrogen` → `gemma-4-31b-it` → `gemma-4-26b-a4b-it`. |
 | `--format` | `shorts_hd` (1080×1920@60), `shorts_fast` (720×1280@30), `widescreen_hd` (1920×1080@60), `widescreen_fast` (1280×720@30). |
 | `--theme` | `light`, `dark`, `midnight_studio`, `obsidian_chalk`, `cartesian_stone`, `editorial_paper` (`--look-theme` alias; WCAG AA validated). |
 | `--caption-style` | `editorial`, `kinetic`, `minimal`, `dialogue`, `accessible`, `off` (unified `CaptionIR` across ASS/SRT/VTT, ManimGX, and HyperFrames). |
